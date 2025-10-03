@@ -1,0 +1,63 @@
+# 🔐 Compliance, Parsing, Pydantic
+pydantic>=2.6
+python-dotenv>=1.1.1
+typing_extensions>=4.14.1
+
+# 📡 Google DocAI
+google-cloud-documentai>=2.23
+google-api-core>=2.25.1
+google-auth>=2.40.3
+googleapis-common-protos>=1.70.0
+
+# 🔁 Retry, Fallback, Async
+tenacity>=8.2
+aiobreaker>=1.0
+aiohttp>=3.8
+
+# 📊 Observability
+opentelemetry-api>=1.27
+opentelemetry-sdk>=1.27
+prometheus-client>=0.16
+structlog>=24.1.0
+
+# 🌐 API Gateway (FastAPI)
+fastapi>=0.104
+uvicorn>=0.23
+asgi-correlation-id>=4.2
+slowapi>=0.1.9
+starlette>=0.35
+
+# 🔐 Security
+cryptography>=42.0
+
+# 🤖 OpenAI API
+openai>=1.30.1
+
+# 📄 Document + Spreadsheet Generation
+python-docx>=1.1.0
+openpyxl>=3.1.2
+
+# 📕 PDF Parsing (if used outside DocAI)
+PyMuPDF>=1.24.0
+
+opentelemetry-instrumentation-fastapi==0.57b0
+prometheus-fastapi-instrumentator>=6.0.0
+google-cloud-firestore>=2.17.0
+google-cloud-storage>=2.17.0
+jinja2>=3.1.4
+
+# 🧩 Google API clients (Drive, Sheets)
+google-api-python-client>=2.130.0
+google-auth-httplib2>=0.2.0
+google-auth-oauthlib>=1.2.0
+
+pydantic-settings
+
+opentelemetry-sdk
+
+opentelemetry-exporter-otlp
+google-api-python-client>=2.130.0
+backoff>=2.2.0
+pybreaker>=1.4.0
+gspread>=6.0.0
+pytest>=8.0.0
