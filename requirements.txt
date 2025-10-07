@@ -61,3 +61,5 @@ backoff>=2.2.0
 pybreaker>=1.4.0
 gspread>=6.0.0
 pytest>=8.0.0
+pylint>=3.0.0
+pytest-cov>=4.1.0

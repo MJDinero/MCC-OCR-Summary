@@ -1,0 +1,21 @@
+[MASTER]
+ignore=tests
+jobs=0
+extension-pkg-whitelist=
+
+[MESSAGES CONTROL]
+disable=
+    C0114,  # missing-module-docstring (selectively allow in tests)
+    C0115,  # missing-class-docstring
+    C0116,  # missing-function-docstring
+    R0903,  # too-few-public-methods
+    R0801,  # duplicate-code (allow for similarity across service wrappers)
+
+[BASIC]
+good-names=i,j,k,_,cfg,db,fp,id
+
+[FORMAT]
+max-line-length=120
+
+[REPORT]
+score=no
