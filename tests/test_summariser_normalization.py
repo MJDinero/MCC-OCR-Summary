@@ -41,3 +41,20 @@ def test_mock_openai_backend():
     out = s.summarise('Short text about a visit')
     # Canned fields appear
     assert out['Medical Summary'].startswith('Provider Seen') or 'Medical Summary' in out
+
+
+def test_merge_field_handles_dict_list_types():
+    # Use Summariser with a fake backend returning collected chunks mimicking internal structure
+    class BackendCF:
+        def __init__(self):
+            self.calls = 0
+        def summarise(self, text: str):
+            self.calls += 1
+            if self.calls == 1:
+                return {"clinical_findings": {"note": "mild swelling"}}
+            return {"clinical_findings": ["ok", "normal"]}
+
+    s = Summariser(BackendCF())
+    out = s.summarise("Line one. Line two that forces multi chunk?" * 2)
+    # Expect merged clinical findings includes serialized dict value
+    assert 'mild swelling' in out['Medical Summary']

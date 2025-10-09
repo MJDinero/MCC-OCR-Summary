@@ -434,16 +434,21 @@ class Summariser:
                 seen: set[str] = set()
                 ordered: List[str] = []
                 for v in vals:
-                    if not isinstance(v, str):
-                        try:
+                    try:
+                        logging.debug(f"Normalizing field={key!r} value_type={type(v).__name__}")
+                        if isinstance(v, (dict, list)):
+                            v = json.dumps(v, ensure_ascii=False)
+                        elif isinstance(v, (int, float)):
                             v = str(v)
-                        except Exception:
-                            continue
-                    v_norm = v.strip()
+                        if not isinstance(v, str):
+                            v = str(v)
+                        v_norm = v.strip()
+                    except Exception:
+                        continue
                     if v_norm and v_norm not in seen:
                         seen.add(v_norm)
                         ordered.append(v_norm)
-                return '\n'.join(ordered)
+                return '\n'.join(ordered) if ordered else 'N/A'
 
             def _merge_list_field(key: str) -> List[str]:
                 items: List[str] = []
