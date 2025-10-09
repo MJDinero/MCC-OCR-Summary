@@ -6,7 +6,7 @@ annotated-types==0.7.0
 anyio==4.11.0
 asgi-correlation-id==4.3.4
 asgiref==3.9.2
-astroid==3.3.11
+astroid==3.1.0
 attrs==25.3.0
 backoff==2.2.1
 cachetools==5.5.2
@@ -33,7 +33,7 @@ google-cloud-core==2.4.3
 google-cloud-documentai==2.23.0
 google-cloud-firestore==2.21.0
 google-cloud-logging==3.10.0
-google-cloud-storage==3.4.0
+google-cloud-storage==2.18.0
 google-crc32c==1.7.1
 google-resumable-media==2.7.2
 googleapis-common-protos==1.70.0
@@ -49,7 +49,7 @@ httpx==0.27.2
 idna==3.10
 importlib_metadata==8.7.0
 iniconfig==2.1.0
-isort==6.1.0
+isort==5.13.2
 Jinja2==3.1.6
 jiter==0.11.0
 limits==5.6.0
@@ -57,8 +57,10 @@ lxml==6.0.2
 MarkupSafe==3.0.3
 mccabe==0.7.0
 multidict==6.6.4
+mypy==1.10.0
+mypy_extensions==1.1.0
 oauthlib==3.3.1
-openai==1.30.1
+openai==1.93.3
 openpyxl==3.1.5
 opentelemetry-api==1.36.0
 opentelemetry-exporter-otlp==1.36.0
@@ -75,7 +77,7 @@ opentelemetry-util-http==0.57b0
 packaging==25.0
 platformdirs==4.4.0
 pluggy==1.6.0
-prometheus-fastapi-instrumentator==7.1.0
+prometheus-fastapi-instrumentator==6.0.0
 prometheus_client==0.20.0
 propcache==0.3.2
 proto-plus==1.26.1
@@ -88,11 +90,12 @@ pydantic==2.9.2
 pydantic-settings==2.5.2
 pydantic_core==2.23.4
 Pygments==2.19.2
-pylint==3.3.8
+pylint==3.1.0
 PyMuPDF==1.26.4
 pyparsing==3.2.5
-pytest==8.4.2
-pytest-cov==7.0.0
+PyPDF2==3.0.1
+pytest==8.1.1
+pytest-cov==4.1.0
 python-docx==1.2.0
 python-dotenv==1.1.1
 python-multipart==0.0.9
@@ -100,6 +103,8 @@ PyYAML==6.0.3
 requests==2.32.5
 requests-oauthlib==2.0.0
 rsa==4.9.1
+ruff==0.5.4
+setuptools==80.9.0
 slowapi==0.1.9
 sniffio==1.3.1
 starlette==0.36.3
@@ -115,6 +120,7 @@ uvicorn==0.27.1
 uvloop==0.21.0
 watchfiles==1.1.0
 websockets==15.0.1
+wheel==0.45.1
 wrapt==1.17.3
 yarl==1.20.1
 zipp==3.23.0
