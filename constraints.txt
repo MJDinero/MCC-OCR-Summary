@@ -1,0 +1,7 @@
+###############################################
+# Central constraints for dependency resolution
+# Rationale: google-cloud-* libs currently require protobuf <5.0.0.
+# We observed runtime/import issues with protobuf 5.x, so we cap below 5.
+# Adjust cautiously; upgrade only after validating compatibility.
+###############################################
+protobuf<5.0.0

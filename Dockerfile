@@ -12,13 +12,17 @@ WORKDIR /app
 # System deps (build) layer
 FROM base AS build
 # commit: install only wheel-friendly dependencies; no compiler toolchain needed
-COPY requirements.txt ./
+COPY requirements.txt constraints.txt ./
 RUN pip install --upgrade pip && \
-    pip install --prefix=/install -r requirements.txt && \
-    find /install -type d -name "__pycache__" -prune -exec rm -rf {} +
+	pip install --prefix=/install -r requirements.txt -c constraints.txt && \
+	pip check && \
+	find /install -type d -name "__pycache__" -prune -exec rm -rf {} +
+
+ARG GIT_SHA=dev
 
 # Final slim image
 FROM base AS final
+ARG GIT_SHA=dev
 COPY --from=build /install /usr/local
 
 # Install curl while still root (needed for HEALTHCHECK)
@@ -33,6 +37,11 @@ COPY src/ /app/src/
 ENV PYTHONPATH=/app/src
 
 EXPOSE 8080
+
+LABEL org.opencontainers.image.revision="${GIT_SHA}" \
+	org.opencontainers.image.source="https://github.com/MJDinero/MCC-OCR-Summary" \
+	org.opencontainers.image.title="mcc-ocr-summary" \
+	org.opencontainers.image.description="OCR + summarisation service for MCC claims (batch splitting supported)"
 
 # HEALTHCHECK uses curl installed above
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 CMD curl -fsS http://127.0.0.1:8080/healthz || exit 1

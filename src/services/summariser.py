@@ -442,4 +442,13 @@ class Summariser:
             raise SummarizationError(f"Unexpected summarisation error: {exc}") from exc
 
 
-__all__ = ["Summariser", "SummarizationBackend", "OpenAIBackend"]
+class StructuredSummariser(Summariser):
+    """Explicit alias for the Bible-compliant structured summariser variant.
+
+    Provided to allow unambiguous selection in application wiring / dependency
+    injection without changing existing test references to `Summariser`.
+    """
+    pass
+
+
+__all__ = ["Summariser", "StructuredSummariser", "SummarizationBackend", "OpenAIBackend"]

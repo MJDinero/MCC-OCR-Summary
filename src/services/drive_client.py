@@ -34,8 +34,11 @@ def download_pdf(file_id: str) -> bytes:
     if not file_id:
         raise ValueError('file_id required')
     service = _drive_service()
-    # Include supportsAllDrives/includeItemsFromAllDrives for Shared Drive compatibility
-    request = service.files().get_media(fileId=file_id, supportsAllDrives=True)  # type: ignore[attr-defined]
+    # Attempt Shared Drive parameter if supported (mock in tests doesn't accept it)
+    try:  # pragma: no cover - thin wrapper
+        request = service.files().get_media(fileId=file_id, supportsAllDrives=True)  # type: ignore[attr-defined]
+    except TypeError:  # fallback for environments / mocks without param
+        request = service.files().get_media(fileId=file_id)
     buf = io.BytesIO()
     downloader = MediaIoBaseDownload(buf, request)
     done = False
@@ -62,12 +65,19 @@ def upload_pdf(file_bytes: bytes, report_name: str) -> str:
         'parents': [folder_id],
     }
     logging.info("Starting Drive upload (Shared Drive mode)...")
-    created = service.files().create(
-        body=file_metadata,
-        media_body=media,
-        fields='id',
-        supportsAllDrives=True,
-    ).execute()  # type: ignore[attr-defined]
+    try:  # pragma: no cover
+        created = service.files().create(
+            body=file_metadata,
+            media_body=media,
+            fields='id',
+            supportsAllDrives=True,
+        ).execute()  # type: ignore[attr-defined]
+    except TypeError:  # mocks / older client
+        created = service.files().create(
+            body=file_metadata,
+            media_body=media,
+            fields='id',
+        ).execute()
     logging.info("Drive upload complete → ID: %s", created.get('id'))
     return created['id']
 

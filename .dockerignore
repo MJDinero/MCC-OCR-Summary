@@ -1,21 +1,25 @@
+###############################################################################
+# Docker build context exclusions (pruned & deduplicated)
+###############################################################################
+.git
+.gitignore
 __pycache__
-*.pyc
+**/__pycache__
+*.py[cod]
 .pytest_cache
 .mypy_cache
 .venv
 venv
 dist
 build
-.git
-tests
 *.log
 *.coverage
+.coverage
 htmlcov
-/.idea
-/.vscode
-README.md
-.env
-__pycache__/
-*.pyc
-.env
-.git
+.idea
+.vscode
+.DS_Store
+*.swp
+tests
+.env*
+# Keep README.md (useful for image introspection) – remove if you prefer smaller context

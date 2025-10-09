@@ -35,6 +35,7 @@ jobs:
           DOC_AI_OCR_PROCESSOR_ID: dummy
           OPENAI_API_KEY: dummy
           STUB_MODE: 'true'
+          USE_STRUCTURED_SUMMARISER: 'true'
         run: |
           pytest
 

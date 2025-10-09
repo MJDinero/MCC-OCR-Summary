@@ -1,14 +1,25 @@
-"""FastAPI application entrypoint (slimmed MVP version)."""
+"""FastAPI application entrypoint (slimmed MVP version).
+
+batch-v11 connectivity hardening:
+ - Force stdout logging early with basicConfig (before configure_logging)
+ - Sanitize OPENAI_API_KEY (strip whitespace/newlines) before use
+ - Explicit startup markers
+"""
 from __future__ import annotations
 
 import io
 import logging
+import sys
+import socket
+import time
+import os
+from contextlib import suppress
 from fastapi import FastAPI, File, UploadFile, Depends, Request, Query
 from fastapi.responses import StreamingResponse, JSONResponse, PlainTextResponse
 
 from src.config import get_config
 from src.services.docai_helper import OCRService
-from src.services.summariser import Summariser, OpenAIBackend
+from src.services.summariser import Summariser, StructuredSummariser, OpenAIBackend
 from src.services.pdf_writer import PDFWriter, MinimalPDFBackend
 from src.errors import ValidationError, OCRServiceError, SummarizationError, PDFGenerationError
 from src.logging_setup import configure_logging
@@ -18,6 +29,15 @@ try:  # pragma: no cover - optional during refactor
     from src.services.drive_client import download_pdf, upload_pdf  # type: ignore
 except Exception:  # pragma: no cover
     download_pdf = upload_pdf = None  # type: ignore
+
+# Force basic stdout logging early (will be complemented by structured config in configure_logging)
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s %(message)s",
+    stream=sys.stdout,
+    force=True,
+)
+logging.info("\u2705 Logging initialized (stdout)")
 
 _API_LOG = logging.getLogger("api")
 
@@ -32,7 +52,19 @@ def create_app() -> FastAPI:
     app = FastAPI(title="MCC-OCR-Summary", version="0.2.0")
     app.state.config = cfg
     app.state.ocr_service = OCRService(cfg.doc_ai_processor_id or 'missing-processor')
-    app.state.summariser = Summariser(OpenAIBackend(api_key=cfg.openai_api_key))
+    # Sanitize API key (strip whitespace/newlines) to avoid header formatting errors
+    sanitized_key = (cfg.openai_api_key or '').strip().replace('\n', '')
+    if cfg.openai_api_key and sanitized_key != cfg.openai_api_key:
+        _API_LOG.info("openai_api_key_sanitized", extra={"original_len": len(cfg.openai_api_key), "sanitized_len": len(sanitized_key)})
+    # Determine model with fallback precedence: env OPENAI_MODEL > default list
+    fallback_models = [m for m in [cfg.openai_model, "gpt-4o-mini", "gpt-4o", "gpt-4.1-mini"] if m]
+    selected_model = fallback_models[0]
+    _API_LOG.info("openai_model_selected", extra={"model": selected_model, "candidates": fallback_models})
+    structured_enabled = bool(cfg.use_structured_summariser)
+    variant = 'structured-v1' if structured_enabled else 'legacy'
+    _API_LOG.info("summariser_variant_selected", extra={"variant": variant, "structured": structured_enabled})
+    summariser_cls = StructuredSummariser if structured_enabled else Summariser
+    app.state.summariser = summariser_cls(OpenAIBackend(api_key=sanitized_key, model=selected_model))
     app.state.pdf_writer = PDFWriter(MinimalPDFBackend())
     # Convenience alias so other code can access report folder quickly
     app.state.drive_report_folder_id = cfg.drive_report_folder_id
@@ -57,9 +89,33 @@ def create_app() -> FastAPI:
         return JSONResponse(status_code=500, content={"detail": str(exc)})
 
     # Health route (primary)
-    @app.get('/healthz')
-    async def healthz():
+    # Unified health payload
+    def _health_payload():  # small helper for consistent body
         return {"status": "ok"}
+
+    @app.get('/healthz', summary="Healthz")
+    async def healthz():
+        return _health_payload()
+
+    # Redundant aliases - sometimes platform/frontends or external checks use different conventions.
+    @app.get('/health', include_in_schema=False)
+    async def health_alias():
+        return _health_payload()
+
+    @app.get('/readyz', include_in_schema=False)
+    async def readyz():
+        return _health_payload()
+
+    @app.get('/', include_in_schema=False)
+    async def root_health():
+        return _health_payload()
+
+    # Lightweight middleware to debug path resolution issues (can be removed later)
+    @app.middleware('http')
+    async def _path_debug_mw(request: Request, call_next):  # pragma: no cover - diagnostic only
+        if request.url.path in {'/healthz', '/health', '/readyz', '/'}:
+            _API_LOG.debug("health_probe", extra={"path": request.url.path})
+        return await call_next(request)
 
     @app.post('/process')
     async def process_upload(
@@ -127,12 +183,61 @@ def create_app() -> FastAPI:
         # Log route table for diagnostics
         routes = [getattr(r, 'path', str(r)) for r in app.router.routes]
         _API_LOG.info("boot_canary: service=mcc-ocr-summary routes=%s", routes)
+        _API_LOG.info("service_startup_marker", extra={"phase": "post-config", "version": app.version})
+        # Log OpenAI SDK version for observability
+        try:
+            import openai  # type: ignore
+            _API_LOG.info("openai_sdk_version", extra={"version": getattr(openai, '__version__', 'unknown')})
+        except Exception:
+            _API_LOG.info("openai_sdk_version_unavailable")
+        # DNS pre-resolution for api.openai.com (diagnostic early warning)
+        try:
+            resolved_ip = socket.gethostbyname("api.openai.com")
+            _API_LOG.info("openai_dns_resolution", extra={"host": "api.openai.com", "ip": resolved_ip})
+        except Exception as e:  # pragma: no cover - environment specific
+            _API_LOG.error("openai_dns_resolution_failed", extra={"error": str(e)})
         # Fallback health route injection if missing (parity with MCC_Phase1 style)
         if not any(getattr(r, 'path', '') in {'/healthz', '/healthz/'} for r in app.router.routes):
             @_API_LOG.info("Injecting fallback /healthz route")
             @app.get('/healthz')  # type: ignore
             async def _health_fallback():  # pragma: no cover
                 return {"status": "ok"}
+
+    # Temporary connectivity diagnostic endpoint (to be removed after batch-v10 validation)
+    @app.get('/ping_openai')
+    async def ping_openai():  # pragma: no cover - external call
+        import requests  # local import to avoid mandatory dependency if removed later
+        payload: dict[str, object] = {"ts": time.time()}
+        host = "api.openai.com"
+        start = time.perf_counter()
+        try:
+            ip = socket.gethostbyname(host)
+            payload["dns_ip"] = ip
+        except Exception as e:  # DNS failure
+            payload["dns_error"] = str(e)
+            _API_LOG.error("ping_openai_dns_failure", extra=payload)
+            return payload
+        # Perform lightweight model list request
+        api_key_raw = os.getenv("OPENAI_API_KEY", "")
+        api_key = api_key_raw.strip().replace('\n', '')
+        if api_key_raw and api_key != api_key_raw:
+            payload["api_key_sanitized"] = True
+        headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
+        try:
+            resp = requests.get("https://api.openai.com/v1/models", headers=headers, timeout=15)
+            elapsed = round(time.perf_counter() - start, 3)
+            payload.update({
+                "status": resp.status_code,
+                "elapsed_s": elapsed,
+                "text_head": resp.text[:120],
+            })
+            level = _API_LOG.info if 200 <= resp.status_code < 300 else _API_LOG.warning
+            level("ping_openai_result", extra=payload)
+            return payload
+        except Exception as e:
+            payload["error"] = str(e)
+            _API_LOG.error("ping_openai_exception", extra=payload)
+            return payload
 
     return app
 

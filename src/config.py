@@ -27,6 +27,9 @@ class AppConfig(BaseSettings):
     region: str = Field('us', validation_alias=AliasChoices('REGION', 'DOC_AI_LOCATION'))
     doc_ai_processor_id: str = Field('', validation_alias='DOC_AI_PROCESSOR_ID')
     openai_api_key: str | None = Field(None, validation_alias='OPENAI_API_KEY')
+    openai_model: str | None = Field(None, validation_alias='OPENAI_MODEL')
+    # Feature flag (defaults enabled) to force StructuredSummariser usage.
+    use_structured_summariser: bool = Field(True, validation_alias='USE_STRUCTURED_SUMMARISER')
     drive_input_folder_id: str = Field('', validation_alias='DRIVE_INPUT_FOLDER_ID')
     drive_report_folder_id: str = Field('', validation_alias='DRIVE_REPORT_FOLDER_ID')
     # Google credentials path is read by google-auth automatically; keep for documentation completeness

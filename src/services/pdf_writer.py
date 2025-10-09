@@ -7,7 +7,7 @@ module works without optional dependencies during early development.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Protocol, Sequence
+from typing import Protocol, Sequence, Dict
 from io import BytesIO
 import logging
 
@@ -29,14 +29,14 @@ class PDFBackend(Protocol):  # pragma: no cover - interface only
 
 class ReportLabBackend:
     def build(self, title: str, sections: Sequence[tuple[str, str]]) -> bytes:  # pragma: no cover - depends on external lib
-        try:
-            from reportlab.lib.pagesizes import LETTER
-            from reportlab.pdfgen import canvas
-        except Exception as exc:  # import failure
+        try:  # noqa: WPS501
+            from reportlab.lib.pagesizes import LETTER  # type: ignore
+            from reportlab.pdfgen import canvas  # type: ignore
+        except Exception as exc:  # pragma: no cover
             raise PDFGenerationError(f"reportlab not installed: {exc}") from exc
         buf = BytesIO()
         c = canvas.Canvas(buf, pagesize=LETTER)
-        width, height = LETTER
+        _width, height = LETTER
         y = height - 72
         c.setFont("Helvetica-Bold", 16)
         c.drawString(72, y, title)
@@ -139,12 +139,27 @@ class PDFWriter:
     backend: PDFBackend
     title: str = "Document Summary"
 
-    def build(self, summary: str) -> bytes:
-        if not summary or not summary.strip():
-            raise PDFGenerationError("Summary text empty")
-        sections = [("Summary", summary.strip())]
+    def build(self, summary: Dict[str, str] | str) -> bytes:
+        # Accept legacy string but prefer dict
+        if isinstance(summary, str):
+            if not summary.strip():
+                raise PDFGenerationError("Summary text empty")
+            sections_seq = [("Summary", summary.strip())]
+        else:
+            if not summary:
+                raise PDFGenerationError("Summary structure empty")
+            # Preserve deterministic ordering
+            order = ["Patient Information", "Medical Summary", "Billing Highlights", "Legal / Notes"]
+            sections_seq = []
+            for key in order:
+                if key in summary:
+                    val = (summary[key] or '').strip() or 'N/A'
+                    sections_seq.append((key, val))
+            # Add any extra keys deterministically
+            for k in sorted(k for k in summary.keys() if k not in {o for o,_ in sections_seq}):
+                sections_seq.append((k, (summary[k] or '').strip()))
         try:
-            result = self.backend.build(self.title, sections)
+            result = self.backend.build(self.title, sections_seq)
             if _PDF_CALLS:
                 _PDF_CALLS.labels(status="success").inc()
             return result
