@@ -5,6 +5,7 @@ SERVICE_NAME="mcc-ocr-summary"
 REGION="${REGION:-us-central1}"
 PROJECT="${PROJECT_ID:?PROJECT_ID env var required}"
 IMAGE="gcr.io/$PROJECT/$SERVICE_NAME:$(git rev-parse --short HEAD)"
+APP_VERSION="v11h-$(git rev-parse --short HEAD)"
 
 echo "Building image: $IMAGE" >&2
 gcloud builds submit --tag "$IMAGE" .
@@ -24,6 +25,7 @@ gcloud run deploy "$SERVICE_NAME" \
   --set-env-vars OPENAI_API_KEY="${OPENAI_API_KEY:-}" \
   --set-env-vars OPENAI_MODEL="${OPENAI_MODEL:-}" \
   --set-env-vars USE_STRUCTURED_SUMMARISER="${USE_STRUCTURED_SUMMARISER:-true}" \
+  --set-env-vars APP_VERSION="${APP_VERSION}" \
   --set-env-vars ALLOWED_ORIGINS="${ALLOWED_ORIGINS:-*}" \
   --set-env-vars STUB_MODE="${STUB_MODE:-false}" \
   --set-env-vars DOC_AI_FORM_PARSER_ID="${DOC_AI_FORM_PARSER_ID:-}" \

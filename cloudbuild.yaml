@@ -1,0 +1,36 @@
+steps:
+  - name: 'gcr.io/cloud-builders/docker'
+    id: build-image
+    args: ['build','-t','gcr.io/$PROJECT_ID/mcc-ocr-summary:$SHORT_SHA','--build-arg','GIT_SHA=$SHORT_SHA','.' ]
+  - name: 'python:3.11'
+    id: unit-tests
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        pip install -r requirements-dev.txt
+        pytest -q --maxfail=1 --cov=src --cov-fail-under=85
+  - name: 'python:3.11'
+    id: smoke-test
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        pip install -r requirements-dev.txt
+        python scripts/smoke_test.py
+  - name: 'gcr.io/cloud-builders/gcloud'
+    id: deploy
+    args:
+      - run
+      - deploy
+      - mcc-ocr-summary
+      - --image=gcr.io/$PROJECT_ID/mcc-ocr-summary:$SHORT_SHA
+      - --region=us-central1
+      - --platform=managed
+      - --allow-unauthenticated
+      - --set-env-vars=PROJECT_ID=$PROJECT_ID,DOC_AI_LOCATION=us,DOC_AI_OCR_PROCESSOR_ID=processor-placeholder,USE_STRUCTURED_SUMMARISER=true
+timeout: '1200s'
+images:
+  - gcr.io/$PROJECT_ID/mcc-ocr-summary:$SHORT_SHA
+substitutions:
+  _TAG=v11h-candidate

@@ -417,13 +417,29 @@ class Summariser:
             ]
 
             full_medical_summary = '\n'.join(narrative_parts + index_sections).strip()
+            avg_chunk = round(sum(len(c) for c in chunks) / len(chunks), 2)
             _LOG.info(
                 "summariser_generation_complete",
                 extra={
                     "chunks": len(chunks),
+                    "avg_chunk_chars": avg_chunk,
                     "diagnoses": len(diagnoses_list),
                     "providers": len(providers_list),
                     "medications": len(meds_list),
+                },
+            )
+            _LOG.info(
+                "summariser_merge_complete",
+                extra={
+                    "event": "chunk_merge_complete",
+                    "emoji": "📄",
+                    "chunk_count": len(chunks),
+                    "avg_chunk_chars": avg_chunk,
+                    "list_sections": {
+                        "diagnoses": len(diagnoses_list),
+                        "providers": len(providers_list),
+                        "medications": len(meds_list),
+                    },
                 },
             )
             # Adapt to legacy output contract expected by PDF writer
@@ -433,6 +449,10 @@ class Summariser:
                 'Billing Highlights': 'N/A',
                 'Legal / Notes': 'N/A',
             }
+            # Provide structured lists on the returned dict under side-channel keys for enhanced PDF writer
+            display["_diagnoses_list"] = "\n".join(diagnoses_list)
+            display["_providers_list"] = "\n".join(providers_list)
+            display["_medications_list"] = "\n".join(meds_list)
             return display
         except TransientSummarizationError as exc:
             raise SummarizationError(f"Transient summarisation failed after retries: {exc}") from exc

@@ -158,6 +158,22 @@ class PDFWriter:
             # Add any extra keys deterministically
             for k in sorted(k for k in summary.keys() if k not in {o for o,_ in sections_seq}):
                 sections_seq.append((k, (summary[k] or '').strip()))
+        # Detect structured lists via side-channel keys injected by Summariser
+        if isinstance(summary, dict):
+            diag_list = [s for s in (summary.get("_diagnoses_list", "").splitlines()) if s.strip()]
+            prov_list = [s for s in (summary.get("_providers_list", "").splitlines()) if s.strip()]
+            med_list = [s for s in (summary.get("_medications_list", "").splitlines()) if s.strip()]
+            any_lists = any([diag_list, prov_list, med_list])
+            if any_lists:
+                divider = ("\n" + ("=" * 38) + "\nStructured Indices\n" + ("=" * 38) + "\n")
+                sections_seq.append(("—", divider.strip()))
+                def _fmt_block(title: str, items: list[str]) -> str:
+                    if not items:
+                        return f"{title}:\nN/A"
+                    return f"{title}:\n" + "\n".join(f"• {i}" for i in items)
+                sections_seq.append(("Diagnoses", _fmt_block("Diagnoses", diag_list)))
+                sections_seq.append(("Providers", _fmt_block("Providers", prov_list)))
+                sections_seq.append(("Medications", _fmt_block("Medications / Prescriptions", med_list)))
         try:
             result = self.backend.build(self.title, sections_seq)
             if _PDF_CALLS:

@@ -62,7 +62,11 @@ def create_app() -> FastAPI:
     _API_LOG.info("openai_model_selected", extra={"model": selected_model, "candidates": fallback_models})
     structured_enabled = bool(cfg.use_structured_summariser)
     variant = 'structured-v1' if structured_enabled else 'legacy'
-    _API_LOG.info("summariser_variant_selected", extra={"variant": variant, "structured": structured_enabled})
+    if structured_enabled:
+        _API_LOG.info("structured_summariser_active", extra={"event": "structured_active", "variant": variant, "emoji": "✅"})
+    else:
+        _API_LOG.warning("legacy_summariser_active", extra={"event": "legacy_active", "variant": variant, "emoji": "⚠️"})
+    _API_LOG.info("summariser_variant_selected", extra={"variant": variant, "structured": structured_enabled, "USE_STRUCTURED_SUMMARISER": structured_enabled})
     summariser_cls = StructuredSummariser if structured_enabled else Summariser
     app.state.summariser = summariser_cls(OpenAIBackend(api_key=sanitized_key, model=selected_model))
     app.state.pdf_writer = PDFWriter(MinimalPDFBackend())

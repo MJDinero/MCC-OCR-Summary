@@ -19,6 +19,13 @@ from __future__ import annotations
 from functools import lru_cache
 from pydantic import Field, AliasChoices
 from pydantic_settings import BaseSettings, SettingsConfigDict
+import os
+
+
+def parse_bool(value: str | None) -> bool:
+    if value is None:
+        return False
+    return str(value).strip().lower() in {"1", "true", "yes", "on"}
 
 
 class AppConfig(BaseSettings):
@@ -29,7 +36,8 @@ class AppConfig(BaseSettings):
     openai_api_key: str | None = Field(None, validation_alias='OPENAI_API_KEY')
     openai_model: str | None = Field(None, validation_alias='OPENAI_MODEL')
     # Feature flag (defaults enabled) to force StructuredSummariser usage.
-    use_structured_summariser: bool = Field(True, validation_alias='USE_STRUCTURED_SUMMARISER')
+    # Raw env capture (still allow pydantic to populate) then we post-process to strict bool via parse_bool
+    use_structured_summariser_raw: str | bool | None = Field(True, validation_alias='USE_STRUCTURED_SUMMARISER')
     drive_input_folder_id: str = Field('', validation_alias='DRIVE_INPUT_FOLDER_ID')
     drive_report_folder_id: str = Field('', validation_alias='DRIVE_REPORT_FOLDER_ID')
     # Google credentials path is read by google-auth automatically; keep for documentation completeness
@@ -38,6 +46,13 @@ class AppConfig(BaseSettings):
     # Hard (safe) defaults
     max_pdf_bytes: int = 20 * 1024 * 1024  # 20MB limit for uploaded PDFs
     model_config = SettingsConfigDict(env_file='.env', extra='ignore', case_sensitive=False)
+
+    @property
+    def use_structured_summariser(self) -> bool:  # accessor applying robust parsing
+        raw = self.use_structured_summariser_raw
+        if isinstance(raw, bool):
+            return raw
+        return parse_bool(str(raw))
 
     def validate_required(self) -> None:
         # Primary value-based validation (empty / falsy fields)
