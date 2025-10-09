@@ -21,6 +21,7 @@ to avoid downstream breakage.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
 from typing import List, Protocol, Dict, Any, Optional
 import logging
 import math
@@ -221,6 +222,19 @@ class OpenAIBackend:  # pragma: no cover - network heavy, exercised in integrati
         raise TransientSummarizationError(f"Retries exhausted: {last_exc}")
 
     def summarise(self, text: str) -> Dict[str, Any]:  # pragma: no cover - network
+        # Lightweight offline/mock mode: if api_key indicates mock usage, return deterministic canned structure.
+        if self.api_key and isinstance(self.api_key, str) and self.api_key.lower().startswith("mock"):
+            _LOG.info("summariser_mock_backend", extra={"chars": len(text), "model": self.model})
+            snippet = text.strip().split('\n')[0][:120]
+            return {
+                'provider_seen': 'Unknown Provider',
+                'reason_for_visit': snippet or 'N/A',
+                'clinical_findings': 'No clinical findings extracted (mock mode).',
+                'treatment_plan': 'No treatment plan extracted (mock mode).',
+                'diagnoses': [],
+                'providers': [],
+                'medications': [],
+            }
         char_count = len(text)
         approx_tokens = math.ceil(char_count / 4)
         meta = {"char_count": char_count, "approx_tokens": approx_tokens, "model": self.model}
@@ -316,7 +330,12 @@ class Summariser:
         return self.backend.summarise(chunk)
 
     def summarise(self, text: str) -> Dict[str, str]:
-        if not text or not text.strip():
+        # Defensive guard: handle non-string inputs gracefully (should be str under normal API contract)
+        if text is None:
+            raise SummarizationError("Input text empty")
+        if not isinstance(text, str):
+            text = str(text)
+        if not text.strip():
             raise SummarizationError("Input text empty")
         try:
             sanitized = _sanitize_text(text, self.chunk_hard_max)
@@ -329,6 +348,49 @@ class Summariser:
             for idx, ch in enumerate(chunks, start=1):
                 _LOG.info("summariser_chunk_start", extra={"index": idx, "size": len(ch)})
                 part = self._summarise_chunk(ch)
+                # Normalise unexpected value types (e.g. dict) to safe string forms before merge logic.
+                # Keep list fields intact for list-merge handling.
+                list_fields = {"diagnoses", "providers", "medications"}
+                for k, v in list(part.items()):
+                    if k in list_fields:
+                        # ensure list fields are either list[str] or left as-is if string; convert singletons
+                        if isinstance(v, (set, tuple)):
+                            part[k] = list(v)
+                        elif v is None:
+                            part[k] = []
+                        # if dict slipped in, flatten dict values
+                        elif isinstance(v, dict):
+                            flat = []
+                            for subk, subv in v.items():
+                                subv_s = str(subv).strip() if subv is not None else ''
+                                if subv_s:
+                                    flat.append(subv_s)
+                            part[k] = flat
+                        elif not isinstance(v, list) and not isinstance(v, str):
+                            part[k] = [str(v)]
+                    else:
+                        if isinstance(v, dict):
+                            # Flatten dict into "key: value; ..." deterministic ordering by insertion
+                            comp = "; ".join(
+                                f"{dk}: {str(dv).strip()}" for dk, dv in v.items() if str(dv).strip()
+                            )
+                            part[k] = comp
+                            _LOG.info(
+                                "summariser_value_coerced",
+                                extra={"key": k, "original_type": "dict", "length": len(comp)},
+                            )
+                        elif isinstance(v, (list, tuple, set)):
+                            joined = ", ".join(str(x).strip() for x in v if str(x).strip())
+                            part[k] = joined
+                            _LOG.info(
+                                "summariser_value_coerced",
+                                extra={"key": k, "original_type": type(v).__name__, "length": len(joined)},
+                            )
+                        elif v is None:
+                            part[k] = ""
+                if idx == 1:
+                    type_map = {k: type(v).__name__ for k, v in part.items()}
+                    _LOG.info("summariser_chunk_types", extra={"index": idx, "types": type_map})
                 collected.append(part)
                 _LOG.info("summariser_chunk_complete", extra={"index": idx})
 
@@ -347,19 +409,36 @@ class Summariser:
                     'legal_notes': 'Legal / Notes',
                 }
                 display_legacy: Dict[str, str] = {}
+                def _safe_strip(val: Any) -> str:
+                    if isinstance(val, str):
+                        return val.strip()
+                    try:
+                        return str(val).strip()
+                    except Exception:
+                        return ''
                 for sk, heading in mapping.items():
-                    display_legacy[heading] = (src.get(sk) or '').strip() or 'N/A'
+                    raw_val = src.get(sk)
+                    # treat None explicitly as missing
+                    if raw_val is None:
+                        display_legacy[heading] = 'N/A'
+                        continue
+                    coerced = _safe_strip(raw_val)
+                    display_legacy[heading] = coerced if coerced else 'N/A'
                 return display_legacy
 
             # Merge strategy
             def _merge_field(key: str) -> str:
-                vals = [c.get(key, '') for c in collected if c.get(key)]
+                vals = [c.get(key, '') for c in collected if c.get(key) is not None]
                 if not vals:
                     return ''
-                # Deduplicate while preserving order
-                seen = set()
+                seen: set[str] = set()
                 ordered: List[str] = []
                 for v in vals:
+                    if not isinstance(v, str):
+                        try:
+                            v = str(v)
+                        except Exception:
+                            continue
                     v_norm = v.strip()
                     if v_norm and v_norm not in seen:
                         seen.add(v_norm)
@@ -370,14 +449,33 @@ class Summariser:
                 items: List[str] = []
                 for c in collected:
                     raw = c.get(key)
+                    if not raw:
+                        continue
                     if isinstance(raw, list):
-                        items.extend([str(x).strip() for x in raw if str(x).strip()])
+                        for x in raw:
+                            xs = str(x).strip()
+                            if xs:
+                                items.append(xs)
+                    elif isinstance(raw, (set, tuple)):
+                        for x in raw:
+                            xs = str(x).strip()
+                            if xs:
+                                items.append(xs)
+                    elif isinstance(raw, dict):
+                        # Append dict values (flatten) – keys not semantically needed here
+                        for dv in raw.values():
+                            dvs = str(dv).strip()
+                            if dvs:
+                                items.append(dvs)
                     elif isinstance(raw, str) and raw.strip():
-                        # Attempt to split on commas or semicolons if multiple packed
                         parts = [p.strip() for p in raw.split(',') if p.strip()]
                         items.extend(parts if len(parts) > 1 else [raw.strip()])
-                # Deduplicate
-                seen = set()
+                    else:
+                        # Fallback: coerce to string
+                        coerced = str(raw).strip()
+                        if coerced:
+                            items.append(coerced)
+                seen: set[str] = set()
                 deduped: List[str] = []
                 for it in items:
                     if it not in seen:
@@ -468,6 +566,12 @@ class StructuredSummariser(Summariser):
     Provided to allow unambiguous selection in application wiring / dependency
     injection without changing existing test references to `Summariser`.
     """
+    def summarise_text(self, text: str) -> Dict[str, str]:
+        """Convenience wrapper kept for backwards compatibility with earlier smoke scripts."""
+        _LOG.info("summariser_text_wrapper", extra={"event": "summarise_text_called", "len": len(text) if isinstance(text, str) else None})
+        result = self.summarise(text)
+        _LOG.info("summariser_text_wrapper_complete", extra={"event": "summarise_text_done", "keys": list(result.keys())})
+        return result
     pass
 
 
