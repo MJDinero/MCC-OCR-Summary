@@ -71,11 +71,16 @@ class AppConfig(BaseSettings):
         # which purposely clear environment variables still detect the absence.
         # This covers scenarios where upstream tooling injects fallback defaults.
         import os as _os  # local import to avoid polluting module namespace
+        # NOTE (v11j-fix): REGION has a safe default ('us') so we no longer require the
+        # explicit env var to be present when a non-empty value already exists. This
+        # prevents startup failures in environments where REGION was omitted but a
+        # sensible default is acceptable. All other variables remain strictly required.
+        strict_env_presence = {"PROJECT_ID", "DOC_AI_PROCESSOR_ID", "OPENAI_API_KEY", "DRIVE_INPUT_FOLDER_ID", "DRIVE_REPORT_FOLDER_ID"}
         for name, value, env_name in required_pairs:
-            if env_name not in _os.environ and name not in missing:
-                # Only mark as missing if value appears to be an auto default (non-empty)
-                # but the explicit env variable was not provided.
+            if env_name not in _os.environ and env_name in strict_env_presence and name not in missing:
                 if value not in (None, ""):
+                    # Even if value is non-empty but came from a default and env is absent
+                    # we enforce explicit provisioning for strict vars.
                     missing.append(name)
         if missing:
             raise RuntimeError("Missing required configuration values: " + ", ".join(sorted(set(missing))))
