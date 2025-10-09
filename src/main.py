@@ -34,6 +34,8 @@ def create_app() -> FastAPI:
     app.state.ocr_service = OCRService(cfg.doc_ai_processor_id or 'missing-processor')
     app.state.summariser = Summariser(OpenAIBackend(api_key=cfg.openai_api_key))
     app.state.pdf_writer = PDFWriter(MinimalPDFBackend())
+    # Convenience alias so other code can access report folder quickly
+    app.state.drive_report_folder_id = cfg.drive_report_folder_id
 
     # Dependency accessors
     def get_ocr() -> OCRService: return app.state.ocr_service  # pragma: no cover
