@@ -1,178 +1,147 @@
-"""FastAPI application entrypoint for MCC-OCR-Summary service."""
+"""FastAPI application entrypoint (slimmed MVP version)."""
 from __future__ import annotations
 
 import io
-import uuid
 import logging
-from typing import Annotated
-
-from fastapi import FastAPI, File, UploadFile, Depends, Request
+from fastapi import FastAPI, File, UploadFile, Depends, Request, Query
 from fastapi.responses import StreamingResponse, JSONResponse, PlainTextResponse
-from fastapi.middleware.cors import CORSMiddleware
 
 from src.config import get_config
 from src.services.docai_helper import OCRService
 from src.services.summariser import Summariser, OpenAIBackend
 from src.services.pdf_writer import PDFWriter, MinimalPDFBackend
-from src.errors import (
-    ValidationError,
-    OCRServiceError,
-    SummarizationError,
-    PDFGenerationError,
-)
-from src.logging_setup import configure_logging, set_request_id
+from src.errors import ValidationError, OCRServiceError, SummarizationError, PDFGenerationError
+from src.logging_setup import configure_logging
 
-try:  # pragma: no cover - optional metrics dependency
-    from prometheus_client import Counter, Histogram  # type: ignore
-    _HTTP_REQUESTS = Counter(
-        "http_requests_total", "Total HTTP requests", ["method", "path", "status"]
-    )
-    _HTTP_LATENCY = Histogram(
-        "http_request_latency_seconds", "HTTP request latency seconds", ["method", "path"]
-    )
+# drive_client will be added shortly
+try:  # pragma: no cover - optional during refactor
+    from src.services.drive_client import download_pdf, upload_pdf  # type: ignore
 except Exception:  # pragma: no cover
-    _HTTP_REQUESTS = None  # type: ignore
-    _HTTP_LATENCY = None  # type: ignore
+    download_pdf = upload_pdf = None  # type: ignore
 
 _API_LOG = logging.getLogger("api")
 
 
 def create_app() -> FastAPI:
     configure_logging()
+    try:  # refresh cache for tests altering env
+        get_config.cache_clear()  # type: ignore[attr-defined]
+    except Exception:  # pragma: no cover
+        pass
     cfg = get_config()
-
-    app = FastAPI(title="MCC-OCR-Summary", version="0.1.0")
-    app.add_middleware(
-        CORSMiddleware,
-    allow_origins=cfg.cors_origins,
-        allow_methods=["*"],
-        allow_headers=["*"],
-    )
-
-    # Expose config on state for tests / dynamic overrides
+    app = FastAPI(title="MCC-OCR-Summary", version="0.2.0")
     app.state.config = cfg
-
-    # Service singletons (attached to state for easier test overrides)
-    app.state.ocr_service = OCRService(cfg.doc_ai_ocr_parser_id or cfg.doc_ai_form_parser_id)
+    app.state.ocr_service = OCRService(cfg.doc_ai_processor_id or 'missing-processor')
     app.state.summariser = Summariser(OpenAIBackend(api_key=cfg.openai_api_key))
     app.state.pdf_writer = PDFWriter(MinimalPDFBackend())
 
-    # Lifespan cleanup
-    @app.on_event("shutdown")
-    async def _shutdown():  # pragma: no cover - trivial
-        app.state.ocr_service.close()
+    # Dependency accessors
+    def get_ocr() -> OCRService: return app.state.ocr_service  # pragma: no cover
+    def get_sm() -> Summariser: return app.state.summariser  # pragma: no cover
+    def get_pdf() -> PDFWriter: return app.state.pdf_writer  # pragma: no cover
 
-    # Dependencies
-    def get_ocr() -> OCRService:  # pragma: no cover - trivial accessor
-        return app.state.ocr_service
-
-    def get_summariser() -> Summariser:  # pragma: no cover
-        return app.state.summariser
-
-    def get_pdf_writer() -> PDFWriter:  # pragma: no cover
-        return app.state.pdf_writer
-
-    # Exception handlers
+    # Exception handlers -> JSON
     @app.exception_handler(ValidationError)
-    async def _validation_handler(_req: Request, exc: ValidationError):
+    async def _val_handler(_r: Request, exc: ValidationError):
         return JSONResponse(status_code=400, content={"detail": str(exc)})
-
     @app.exception_handler(OCRServiceError)
-    async def _ocr_handler(_req: Request, exc: OCRServiceError):
+    async def _ocr_handler(_r: Request, exc: OCRServiceError):
         return JSONResponse(status_code=502, content={"detail": str(exc)})
-
     @app.exception_handler(SummarizationError)
-    async def _sum_handler(_req: Request, exc: SummarizationError):
+    async def _sum_handler(_r: Request, exc: SummarizationError):
         return JSONResponse(status_code=500, content={"detail": str(exc)})
-
     @app.exception_handler(PDFGenerationError)
-    async def _pdf_handler(_req: Request, exc: PDFGenerationError):
+    async def _pdf_handler(_r: Request, exc: PDFGenerationError):
         return JSONResponse(status_code=500, content={"detail": str(exc)})
 
-    @app.middleware("http")
-    async def _request_id_mw(request: Request, call_next):  # type: ignore
-        rid = request.headers.get("x-request-id") or str(uuid.uuid4())
-        set_request_id(rid)
-        method = request.method
-        path = request.scope.get("path", "")
-        import time
-        start = time.perf_counter()
-        try:
-            response = await call_next(request)
-            return response
-        finally:
-            duration = time.perf_counter() - start
-            status = getattr(locals().get('response', None), 'status_code', 500)
-            if _HTTP_REQUESTS:
-                try:
-                    _HTTP_REQUESTS.labels(method=method, path=path, status=str(status)).inc()
-                    if _HTTP_LATENCY:
-                        _HTTP_LATENCY.labels(method=method, path=path).observe(duration)
-                except Exception:  # pragma: no cover
-                    pass
-            if 'response' in locals():
-                response.headers["x-request-id"] = rid
-
-
-    @app.get("/healthz")
+    # Health route (primary)
+    @app.get('/healthz')
     async def healthz():
         return {"status": "ok"}
 
-    try:  # pragma: no cover - simple wiring
-        from prometheus_client import generate_latest, CONTENT_TYPE_LATEST  # type: ignore
-
-        @app.get("/metrics")  # type: ignore
-        async def metrics():  # noqa: D401
-            if not app.state.config.enable_metrics:
-                return JSONResponse(status_code=404, content={"detail": "Metrics disabled"})
-            data = generate_latest()
-            return PlainTextResponse(data.decode("utf-8"), media_type=CONTENT_TYPE_LATEST)
-    except Exception:  # pragma: no cover
-        pass
-
-    @app.post("/process")
-    async def process(
+    @app.post('/process')
+    async def process_upload(
         file: UploadFile = File(...),
         ocr: OCRService = Depends(get_ocr),
-        sm: Summariser = Depends(get_summariser),
-        pdf: PDFWriter = Depends(get_pdf_writer),
+        sm: Summariser = Depends(get_sm),
+        pdf: PDFWriter = Depends(get_pdf),
     ):
-        # Basic metadata validation before reading whole file
-        filename = file.filename or "upload.pdf"
+        """(Legacy) Direct upload endpoint maintained for simple local testing."""
+        filename = file.filename or 'upload.pdf'
         if not filename.lower().endswith('.pdf'):
-            raise ValidationError("File must have .pdf extension")
-        if file.content_type not in ("application/pdf", "application/octet-stream"):
-            raise ValidationError("Invalid content type; expected application/pdf")
+            raise ValidationError('File must have .pdf extension')
         data = await file.read()
-        size = len(data)
-        if size == 0:
-            raise ValidationError("Empty file upload")
-        if size > cfg.max_pdf_bytes:
-            raise ValidationError(f"File exceeds maximum allowed size of {cfg.max_pdf_bytes} bytes")
-        _API_LOG.info(
-            "process_start", extra={"filename": filename, "size": size, "request_id": getattr(cfg, 'request_id', None)}
-        )
-        # OCR expects path or bytes; we supply bytes
+        if not data:
+            raise ValidationError('Empty file')
+        if len(data) > cfg.max_pdf_bytes:
+            raise ValidationError('File too large')
         ocr_doc = ocr.process(data)
-        text = ocr_doc.get("text", "")
-        summary = sm.summarise(text)
-        pdf_bytes = pdf.build(summary)
-        return StreamingResponse(
-            io.BytesIO(pdf_bytes),
-            media_type="application/pdf",
-            headers={"Content-Disposition": "attachment; filename=summary.pdf"},
-        )
+        summary_struct = sm.summarise(ocr_doc.get('text', ''))
+        pdf_bytes = pdf.build(summary_struct)
+        return StreamingResponse(io.BytesIO(pdf_bytes), media_type='application/pdf')
 
-    # Defer validation to startup so test fixtures can set env before evaluation
-    @app.on_event("startup")
-    async def _validate_cfg():  # pragma: no cover - simple guard
+    @app.get('/process_drive')
+    async def process_drive(
+        file_id: str = Query(..., description='Google Drive file ID of source PDF'),
+        ocr: OCRService = Depends(get_ocr),
+        sm: Summariser = Depends(get_sm),
+        pdf: PDFWriter = Depends(get_pdf),
+    ):
+        # commit: robust error handling for drive pipeline
+        if not download_pdf or not upload_pdf:
+            raise ValidationError('Drive client not available yet')
         try:
-            cfg.validate_required()
-        except RuntimeError as exc:
-            # Log and re-raise to crash startup in real deployment
-            logging.getLogger("startup").error("config_validation_failed", exc_info=True)
+            source_bytes = download_pdf(file_id)
+            ocr_doc = ocr.process(source_bytes)
+            summary_struct = sm.summarise(ocr_doc.get('text',''))
+            pdf_bytes = pdf.build(summary_struct)
+            report_name = f"summary_{file_id}.pdf"
+            uploaded_id = upload_pdf(pdf_bytes, report_name)
+            return {"report_file_id": uploaded_id}
+        except ValidationError:
             raise
+        except (OCRServiceError, SummarizationError, PDFGenerationError) as exc:
+            _API_LOG.exception("/process_drive stage error: %s", exc)
+            # Re-raise to leverage existing handlers
+            raise
+        except Exception as exc:  # pragma: no cover - generic fallback
+            _API_LOG.exception("/process_drive unexpected error: %s", exc)
+            return JSONResponse(status_code=500, content={"detail": "Drive processing failure", "error": str(exc)})
+
+    # Metrics endpoint (minimal) using prometheus_client if available
+    try:  # pragma: no cover - optional dependency
+        from prometheus_client import generate_latest, CONTENT_TYPE_LATEST  # type: ignore
+
+        @app.get('/metrics')
+        async def metrics():  # pragma: no cover - simple passthrough
+            data = generate_latest()  # type: ignore
+            return PlainTextResponse(data.decode('utf-8'), media_type=CONTENT_TYPE_LATEST)
+    except Exception:  # pragma: no cover
+        _API_LOG.warning("prometheus_client not installed; /metrics disabled")
+
+    @app.on_event('startup')
+    async def _startup_diag():  # pragma: no cover
+        cfg.validate_required()
+        # Log route table for diagnostics
+        routes = [getattr(r, 'path', str(r)) for r in app.router.routes]
+        _API_LOG.info("boot_canary: service=mcc-ocr-summary routes=%s", routes)
+        # Fallback health route injection if missing (parity with MCC_Phase1 style)
+        if not any(getattr(r, 'path', '') in {'/healthz', '/healthz/'} for r in app.router.routes):
+            @_API_LOG.info("Injecting fallback /healthz route")
+            @app.get('/healthz')  # type: ignore
+            async def _health_fallback():  # pragma: no cover
+                return {"status": "ok"}
+
     return app
 
 
-__all__ = ["create_app"]
+try:  # pragma: no cover
+    # Module-level application instance required for Cloud Run / uvicorn entrypoint (src.main:app)
+    app = create_app()
+except Exception:  # pragma: no cover
+    from fastapi import FastAPI as _F
+    app = _F(title='MCC-OCR-Summary (init failure)')
+
+# NOTE: /healthz is already defined inside create_app(); avoid redefining here to prevent duplicate route entries.
+
+__all__ = ['create_app', 'app']
