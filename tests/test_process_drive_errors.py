@@ -18,16 +18,28 @@ def _set_env():
 
 class StubOCR:
     def process(self, data):
-        return { 'text': 'Sample OCR content' }
+        return { 'text': 'Dr. Rivera preventive care visit maintaining medication routine with multivitamin.' }
 
 
 class StubSummariser:
     def summarise(self, text):
+        body = (
+            "Provider Seen:\nDr. Rivera\n\n"
+            "Reason for Visit:\nFollow-up review.\n\n"
+            "Clinical Findings:\nStable vitals noted.\n\n"
+            "Treatment / Follow-Up Plan:\nContinue current medication and monitor diet.\n\n"
+            "Diagnoses:\n- Preventive care\n"
+            "Providers:\n- Dr. Rivera\n"
+            "Medications / Prescriptions:\n- Multivitamin"
+        )
         return {
             'Patient Information': 'P',
-            'Medical Summary': 'M',
+            'Medical Summary': body,
             'Billing Highlights': 'B',
-            'Legal / Notes': 'L'
+            'Legal / Notes': 'L',
+            '_diagnoses_list': 'Preventive care',
+            '_providers_list': 'Dr. Rivera',
+            '_medications_list': 'Multivitamin',
         }
 
 
@@ -38,6 +50,7 @@ class StubPDFWriter:
 
 def test_process_drive_upload_failure(monkeypatch):
     _set_env()
+    monkeypatch.setattr('src.main.OCRService', lambda *args, **kwargs: StubOCR())
     app = create_app()
     app.state.ocr_service = StubOCR()
     app.state.summariser = StubSummariser()

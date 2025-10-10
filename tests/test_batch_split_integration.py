@@ -29,7 +29,11 @@ def test_batch_split_triggers_multiple_batches(tmp_path, monkeypatch):
             "pages": [{"page_number": i + 1, "text": f"p{i+1}"} for i in range(5)],
         }
 
-    svc = OCRService(processor_id="processor123")
+    class _DummyClient:
+        def process_document(self, request):  # pragma: no cover - never called in batch path
+            return {"document": {"text": "", "pages": []}}
+
+    svc = OCRService(processor_id="processor123", client_factory=lambda endpoint: _DummyClient())
     with patch(
         "src.services.docai_helper.batch_process_documents_gcs",
         side_effect=fake_batch_process,

@@ -13,7 +13,6 @@ import sys
 import socket
 import time
 import os
-from contextlib import suppress
 from fastapi import FastAPI, File, UploadFile, Depends, Request, Query
 from fastapi.responses import StreamingResponse, JSONResponse, PlainTextResponse
 
@@ -21,6 +20,7 @@ from src.config import get_config
 from src.services.docai_helper import OCRService
 from src.services.summariser import Summariser, StructuredSummariser, OpenAIBackend
 from src.services.pdf_writer import PDFWriter, MinimalPDFBackend
+from src.services.supervisor import CommonSenseSupervisor
 from src.errors import ValidationError, OCRServiceError, SummarizationError, PDFGenerationError
 from src.logging_setup import configure_logging
 
@@ -70,6 +70,7 @@ def create_app() -> FastAPI:
     summariser_cls = StructuredSummariser if structured_enabled else Summariser
     app.state.summariser = summariser_cls(OpenAIBackend(api_key=sanitized_key, model=selected_model))
     app.state.pdf_writer = PDFWriter(MinimalPDFBackend())
+    app.state.supervisor = CommonSenseSupervisor()
     # Convenience alias so other code can access report folder quickly
     app.state.drive_report_folder_id = cfg.drive_report_folder_id
 
@@ -77,6 +78,7 @@ def create_app() -> FastAPI:
     def get_ocr() -> OCRService: return app.state.ocr_service  # pragma: no cover
     def get_sm() -> Summariser: return app.state.summariser  # pragma: no cover
     def get_pdf() -> PDFWriter: return app.state.pdf_writer  # pragma: no cover
+    def get_supervisor() -> CommonSenseSupervisor: return app.state.supervisor  # pragma: no cover
 
     # Exception handlers -> JSON
     @app.exception_handler(ValidationError)
@@ -127,6 +129,7 @@ def create_app() -> FastAPI:
         ocr: OCRService = Depends(get_ocr),
         sm: Summariser = Depends(get_sm),
         pdf: PDFWriter = Depends(get_pdf),
+        supervisor: CommonSenseSupervisor = Depends(get_supervisor),
     ):
         """(Legacy) Direct upload endpoint maintained for simple local testing."""
         filename = file.filename or 'upload.pdf'
@@ -138,9 +141,35 @@ def create_app() -> FastAPI:
         if len(data) > cfg.max_pdf_bytes:
             raise ValidationError('File too large')
         ocr_doc = ocr.process(data)
-        summary_struct = sm.summarise(ocr_doc.get('text', ''))
+        ocr_text = ocr_doc.get('text', '')
+        doc_stats = supervisor.collect_doc_stats(
+            text=ocr_text,
+            pages=ocr_doc.get('pages'),
+            file_bytes=data,
+        )
+        summary_struct = sm.summarise(ocr_text)
+        validation = supervisor.validate(
+            ocr_text=ocr_text,
+            summary=summary_struct,
+            doc_stats=doc_stats,
+        )
+        if not validation.get('supervisor_passed'):
+            result = supervisor.retry_and_merge(
+                summariser=sm,
+                ocr_text=ocr_text,
+                doc_stats=doc_stats,
+                initial_summary=summary_struct,
+                initial_validation=validation,
+            )
+            summary_struct = result.summary
+            validation = result.validation
+        if not validation.get('supervisor_passed'):
+            raise SummarizationError(validation.get('reason') or 'Supervisor rejected summary')
         pdf_bytes = pdf.build(summary_struct)
-        return StreamingResponse(io.BytesIO(pdf_bytes), media_type='application/pdf')
+        response = StreamingResponse(io.BytesIO(pdf_bytes), media_type='application/pdf')
+        response.headers['x-supervisor-status'] = 'passed'
+        response.headers['x-supervisor-retries'] = str(validation.get('retries', 0))
+        return response
 
     @app.get('/process_drive')
     async def process_drive(
@@ -148,6 +177,7 @@ def create_app() -> FastAPI:
         ocr: OCRService = Depends(get_ocr),
         sm: Summariser = Depends(get_sm),
         pdf: PDFWriter = Depends(get_pdf),
+        supervisor: CommonSenseSupervisor = Depends(get_supervisor),
     ):
         # commit: robust error handling for drive pipeline
         if not download_pdf or not upload_pdf:
@@ -155,11 +185,34 @@ def create_app() -> FastAPI:
         try:
             source_bytes = download_pdf(file_id)
             ocr_doc = ocr.process(source_bytes)
-            summary_struct = sm.summarise(ocr_doc.get('text',''))
+            ocr_text = ocr_doc.get('text','')
+            doc_stats = supervisor.collect_doc_stats(
+                text=ocr_text,
+                pages=ocr_doc.get('pages'),
+                file_bytes=source_bytes,
+            )
+            summary_struct = sm.summarise(ocr_text)
+            validation = supervisor.validate(
+                ocr_text=ocr_text,
+                summary=summary_struct,
+                doc_stats=doc_stats,
+            )
+            if not validation.get('supervisor_passed'):
+                result = supervisor.retry_and_merge(
+                    summariser=sm,
+                    ocr_text=ocr_text,
+                    doc_stats=doc_stats,
+                    initial_summary=summary_struct,
+                    initial_validation=validation,
+                )
+                summary_struct = result.summary
+                validation = result.validation
+            if not validation.get('supervisor_passed'):
+                raise SummarizationError(validation.get('reason') or 'Supervisor rejected summary')
             pdf_bytes = pdf.build(summary_struct)
             report_name = f"summary_{file_id}.pdf"
             uploaded_id = upload_pdf(pdf_bytes, report_name)
-            return {"report_file_id": uploaded_id}
+            return {"report_file_id": uploaded_id, "validation": validation}
         except ValidationError:
             raise
         except (OCRServiceError, SummarizationError, PDFGenerationError) as exc:
