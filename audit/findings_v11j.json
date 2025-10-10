@@ -1,0 +1,211 @@
+diff --git a//dev/null b/audit/findings.json
+index 0000000000000000000000000000000000000000..03d4b19318b091557414e4ac8a46b2a2b2738071 100644
+--- a//dev/null
++++ b/audit/findings.json
+@@ -0,0 +1,206 @@
++[
++  {
++    "id": "FND-001",
++    "title": "Document AI client creation blocks local and CI tests",
++    "severity": "blocker",
++    "files": [
++      "src/main.py",
++      "src/services/docai_helper.py"
++    ],
++    "rationale": "create_app() constructs OCRService, which immediately instantiates a Document AI client and requires Application Default Credentials before tests can inject stubs, causing failures in every offline environment.",
++    "evidence": [
++      "F:src/main.py\u2020L45-L72",
++      "F:src/services/docai_helper.py\u2020L92-L123",
++      "feffb6\u2020L1-L25"
++    ],
++    "proposed_fix": "Reintroduce a stub mode flag and lazily create the Document AI client so local tests can run with no ADC while production still initialises the real client.",
++    "proposed_diff": "diff --git a/src/services/docai_helper.py b/src/services/docai_helper.py\n@@\n-        self._client_factory = self.client_factory or _default_client\n-        self._endpoint = f\"{self._cfg.region}-documentai.googleapis.com\"\n-        self._client = self._client_factory(self._endpoint)\n+        self._client_factory = self.client_factory or _default_client\n+        self._endpoint = f\"{self._cfg.region}-documentai.googleapis.com\"\n+        self._client = None\n+        if not self._cfg.stub_mode:\n+            self._client = self._client_factory(self._endpoint)\n@@\n-        try:\n-            result = self._client.process_document(request=request)\n+        client = self._client or self._client_factory(self._endpoint)\n+        if self._cfg.stub_mode:\n+            raise OCRServiceError(\"DocAI disabled in stub mode\")\n+        try:\n+            result = client.process_document(request=request)",
++    "tests": [
++      "tests/test_main_integration.py::test_health_and_process_stub",
++      "tests/test_pipeline_endpoints.py::test_process_upload_flow"
++    ],
++    "commands": [
++      "pytest -q --maxfail=1"
++    ]
++  },
++  {
++    "id": "FND-002",
++    "title": "Cloud Run deploy uses wrong env names and misses required secrets",
++    "severity": "blocker",
++    "files": [
++      "cloudbuild.yaml",
++      "src/config.py"
++    ],
++    "rationale": "cloudbuild.yaml still sets DOC_AI_OCR_PROCESSOR_ID and omits the Drive/OpenAI environment variables enforced by AppConfig.validate_required(), so Cloud Run revisions fail to start.",
++    "evidence": [
++      "F:cloudbuild.yaml\u2020L21-L32",
++      "F:src/config.py\u2020L57-L86"
++    ],
++    "proposed_fix": "Update Cloud Build to supply REGION, DOC_AI_PROCESSOR_ID, Drive folder IDs, and map OPENAI_API_KEY from Secret Manager while restoring alias handling in AppConfig.",
++    "proposed_diff": "diff --git a/cloudbuild.yaml b/cloudbuild.yaml\n@@\n-      - --set-env-vars=PROJECT_ID=$PROJECT_ID,DOC_AI_LOCATION=us,DOC_AI_OCR_PROCESSOR_ID=processor-placeholder,USE_STRUCTURED_SUMMARISER=true\n+      - --set-env-vars=PROJECT_ID=$PROJECT_ID,REGION=us,DOC_AI_PROCESSOR_ID=processor-placeholder,DRIVE_INPUT_FOLDER_ID=drive-intake,DRIVE_REPORT_FOLDER_ID=drive-report,USE_STRUCTURED_SUMMARISER=true\n+      - --set-secrets=OPENAI_API_KEY=projects/$PROJECT_ID/secrets/OPENAI_API_KEY:latest",
++    "tests": [
++      "scripts/smoke_test.py"
++    ],
++    "commands": [
++      "gcloud run deploy ..."
++    ]
++  },
++  {
++    "id": "FND-003",
++    "title": "CI workflow misses pytest-cov and wrong env alias",
++    "severity": "blocker",
++    "files": [
++      ".github/workflows/ci.yml",
++      "pytest.ini"
++    ],
++    "rationale": "GitHub Actions installs only requirements.txt, so pytest aborts because pytest-cov is missing while pytest.ini enforces --cov options; it also sets DOC_AI_OCR_PROCESSOR_ID which AppConfig ignores.",
++    "evidence": [
++      "F:.github/workflows/ci.yml\u2020L21-L41",
++      "cbd5a4\u2020L1-L7"
++    ],
++    "proposed_fix": "Install requirements-dev.txt in CI and update the env vars to the modern names while running pytest -q to honour addopts.",
++    "proposed_diff": "diff --git a/.github/workflows/ci.yml b/.github/workflows/ci.yml\n@@\n-            pip install -r requirements.txt\n+            pip install -r requirements-dev.txt\n@@\n-            DOC_AI_OCR_PROCESSOR_ID: dummy\n+            DOC_AI_PROCESSOR_ID: dummy",
++    "tests": [
++      "github actions build-test job"
++    ],
++    "commands": [
++      "pytest -q --maxfail=1"
++    ]
++  },
++  {
++    "id": "FND-004",
++    "title": "Structured logging drops extra context fields",
++    "severity": "high",
++    "files": [
++      "src/logging_setup.py",
++      "src/main.py"
++    ],
++    "rationale": "JsonFormatter only serialises ts/level/logger/msg and ignores record extras, so fields like phase, summary_stage, and trace IDs never reach Cloud Logging despite being emitted by the app.",
++    "evidence": [
++      "F:src/logging_setup.py\u2020L19-L32",
++      "F:src/main.py\u2020L189-L207"
++    ],
++    "proposed_fix": "Augment JsonFormatter to merge safe record.__dict__ entries into the JSON payload, restoring structured telemetry.",
++    "proposed_diff": "diff --git a/src/logging_setup.py b/src/logging_setup.py\n@@\n-        data: Dict[str, Any] = {\n-            \"ts\": datetime.now(timezone.utc).isoformat(),\n-            \"level\": record.levelname,\n-            \"logger\": record.name,\n-            \"msg\": record.getMessage(),\n-        }\n+        data: Dict[str, Any] = {\n+            \"ts\": datetime.now(timezone.utc).isoformat(),\n+            \"level\": record.levelname,\n+            \"logger\": record.name,\n+            \"msg\": record.getMessage(),\n+        }\n+        for key, value in record.__dict__.items():\n+            if key not in {...}:\n+                data[key] = value",
++    "tests": [
++      "tests/test_logging_extras.py (new)"
++    ],
++    "commands": []
++  },
++  {
++    "id": "FND-005",
++    "title": "Hard-coded GCS buckets in batch OCR and splitter",
++    "severity": "high",
++    "files": [
++      "src/services/docai_batch_helper.py",
++      "src/utils/pdf_splitter.py"
++    ],
++    "rationale": "Both helpers always write to quantify-agent-* buckets, preventing deployment to other projects and risking accidental data disclosure.",
++    "evidence": [
++      "F:src/services/docai_batch_helper.py\u2020L20-L123",
++      "F:src/utils/pdf_splitter.py\u2020L30-L118"
++    ],
++    "proposed_fix": "Parameterise intake/output buckets via AppConfig or function arguments with sensible defaults overridden by environment variables.",
++    "proposed_diff": "diff --git a/src/services/docai_batch_helper.py b/src/services/docai_batch_helper.py\n@@\n-INTAKE_BUCKET = \"quantify-agent-intake\"\n-OUTPUT_BUCKET = \"quantify-agent-output\"\n+INTAKE_BUCKET = os.getenv(\"DOC_AI_BATCH_INTAKE_BUCKET\", \"quantify-agent-intake\")\n+OUTPUT_BUCKET = os.getenv(\"DOC_AI_BATCH_OUTPUT_BUCKET\", \"quantify-agent-output\")",
++    "tests": [
++      "tests/test_docai_batch_helper.py",
++      "tests/test_pdf_splitter.py"
++    ],
++    "commands": []
++  },
++  {
++    "id": "FND-006",
++    "title": "`/ping_openai` leaks raw response text and key hints",
++    "severity": "medium",
++    "files": [
++      "src/main.py"
++    ],
++    "rationale": "The diagnostic endpoint logs the first 120 characters of the OpenAI response and flags when the API key was sanitised, which can expose sensitive metadata in Cloud Run logs.",
++    "evidence": [
++      "F:src/main.py\u2020L210-L244"
++    ],
++    "proposed_fix": "Redact or summarise the OpenAI response body and hide API key sanitisation details unless debug logging is explicitly enabled.",
++    "proposed_diff": "diff --git a/src/main.py b/src/main.py\n@@\n-            payload.update({\n-                \"status\": resp.status_code,\n-                \"elapsed_s\": elapsed,\n-                \"text_head\": resp.text[:120],\n-            })\n+            payload.update({\n+                \"status\": resp.status_code,\n+                \"elapsed_s\": elapsed,\n+            })",
++    "tests": [
++      "tests/test_ping_openai.py (new)"
++    ],
++    "commands": []
++  },
++  {
++    "id": "FND-007",
++    "title": "Summariser lacks schema validation for chunk outputs",
++    "severity": "high",
++    "files": [
++      "src/services/summariser.py"
++    ],
++    "rationale": "Chunk payloads are coerced with json.dumps/str without validating required keys or types, so malformed OpenAI responses silently degrade to 'N/A' and risk reintroducing strip errors.",
++    "evidence": [
++      "F:src/services/summariser.py\u2020L331-L520"
++    ],
++    "proposed_fix": "Introduce a typed schema (e.g., Pydantic model) for chunk responses and raise SummarizationError when mandatory fields are missing or wrong type before merging.",
++    "proposed_diff": "diff --git a/src/services/summariser.py b/src/services/summariser.py\n@@\n+class ChunkResult(BaseModel):\n+    provider_seen: str | list[str] | dict | None = None\n+    reason_for_visit: str | list[str] | dict | None = None\n+    clinical_findings: str | list[str] | dict | None = None\n+    treatment_plan: str | list[str] | dict | None = None\n+    diagnoses: list[str] | str | dict | None = None\n+    providers: list[str] | str | dict | None = None\n+    medications: list[str] | str | dict | None = None",
++    "tests": [
++      "tests/test_medical_summary_generation.py",
++      "tests/test_summariser_new_schema.py"
++    ],
++    "commands": []
++  },
++  {
++    "id": "FND-008",
++    "title": "OpenAI retry loop blocks event loop with time.sleep",
++    "severity": "medium",
++    "files": [
++      "src/services/summariser.py"
++    ],
++    "rationale": "`OpenAIBackend._invoke_with_retry` performs blocking time.sleep between attempts, so FastAPI workers stall for minutes under failure conditions, reducing throughput.",
++    "evidence": [
++      "F:src/services/summariser.py\u2020L114-L188"
++    ],
++    "proposed_fix": "Move OpenAI calls to a thread pool or replace time.sleep with asyncio-friendly awaits via run_in_executor or async client.",
++    "proposed_diff": "diff --git a/src/services/summariser.py b/src/services/summariser.py\n@@\n-                time.sleep(wait)\n+                await asyncio.sleep(wait)\n@@\n-                time.sleep(wait)\n+                await asyncio.sleep(wait)",
++    "tests": [
++      "tests/test_summariser_errors.py"
++    ],
++    "commands": []
++  },
++  {
++    "id": "FND-009",
++    "title": "Docker entrypoint ignores Cloud Run PORT variable",
++    "severity": "medium",
++    "files": [
++      "Dockerfile"
++    ],
++    "rationale": "Uvicorn is launched with a fixed --port 8080, so changing PORT via Cloud Run env or local overrides requires editing the container rather than configuration.",
++    "evidence": [
++      "F:Dockerfile\u2020L5-L49"
++    ],
++    "proposed_fix": "Use the PORT environment variable in the CMD (e.g., uvicorn ... --port ${PORT:-8080}) to honour platform settings.",
++    "proposed_diff": "diff --git a/Dockerfile b/Dockerfile\n@@\n-CMD [\"uvicorn\", \"src.main:app\", \"--host\", \"0.0.0.0\", \"--port\", \"8080\", \"--workers\", \"2\"]\n+CMD [\"uvicorn\", \"src.main:app\", \"--host\", \"0.0.0.0\", \"--port\", \"${PORT:-8080}\", \"--workers\", \"2\"]",
++    "tests": [],
++    "commands": [
++      "gcloud run deploy ..."
++    ]
++  },
++  {
++    "id": "FND-010",
++    "title": "Test fixtures assume stub mode and legacy env alias",
++    "severity": "medium",
++    "files": [
++      "tests/conftest.py",
++      "src/config.py"
++    ],
++    "rationale": "The autouse fixture still sets STUB_MODE and DOC_AI_OCR_PROCESSOR_ID, but AppConfig removed stub handling and alias support, so tests cannot satisfy validation without production credentials.",
++    "evidence": [
++      "F:tests/conftest.py\u2020L7-L12",
++      "F:src/config.py\u2020L31-L87"
++    ],
++    "proposed_fix": "Restore stub_mode handling in AppConfig and alias DOC_AI_OCR_PROCESSOR_ID to DOC_AI_PROCESSOR_ID so fixtures can operate offline.",
++    "proposed_diff": "diff --git a/src/config.py b/src/config.py\n@@\n-    doc_ai_processor_id: str = Field('', validation_alias='DOC_AI_PROCESSOR_ID')\n+    doc_ai_processor_id: str = Field('', validation_alias=AliasChoices('DOC_AI_PROCESSOR_ID', 'DOC_AI_OCR_PROCESSOR_ID'))\n+    stub_mode_raw: str | bool | None = Field(False, validation_alias='STUB_MODE')",
++    "tests": [
++      "tests/test_config.py"
++    ],
++    "commands": [
++      "pytest -q tests/test_config.py"
++    ]
++  }
++]
