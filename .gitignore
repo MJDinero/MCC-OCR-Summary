@@ -94,3 +94,4 @@ pnpm-debug.log*
 __pycache__/
 *.py[cod]
 .venv/
+response.json
