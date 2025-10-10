@@ -21,17 +21,34 @@ class StubOCR:
         self.calls = 0
     def process(self, data):
         self.calls += 1
-        return {"text": "Patient John Doe age 40 Billing code ABC Legal none."}
+        text = (
+            "Dr. Adams reviewed essential hypertension history and prescribed Lisinopril 20mg "
+            "during follow-up evaluation." )
+        return {"text": text}
     def close(self):
         pass
 
 class StubSummariser:
     def summarise(self, text):
+        sentence = "Dr. Adams reviewed essential hypertension history and prescribed Lisinopril 20mg during follow-up evaluation."
+        repeated = f"{sentence} {sentence}"
+        summary_body = (
+            "Provider Seen:\nDr. Adams\n\n"
+            f"Reason for Visit:\n{repeated}\n\n"
+            f"Clinical Findings:\n{repeated}\n\n"
+            f"Treatment / Follow-Up Plan:\n{repeated}\n\n"
+            f"Diagnoses:\n- {sentence}\n"
+            "Providers:\n- Dr. Adams\n"
+            "Medications / Prescriptions:\n- Lisinopril 20mg daily"
+        )
         return {
-            'Patient Information':'John Doe, 40',
-            'Medical Summary':'General checkup',
-            'Billing Highlights':'Code ABC',
-            'Legal / Notes':'None'
+            'Patient Information': 'John Doe, 40',
+            'Medical Summary': summary_body,
+            'Billing Highlights': 'Code ABC',
+            'Legal / Notes': 'None',
+            '_diagnoses_list': 'Essential hypertension',
+            '_providers_list': 'Dr. Adams',
+            '_medications_list': 'Lisinopril 20mg daily',
         }
 
 class StubPDFWriter:
@@ -41,9 +58,15 @@ class StubPDFWriter:
         return PDF_BYTES
 
 
-def test_process_upload_flow():
+def _build_app(monkeypatch):
     _set_env()
+    monkeypatch.setattr('src.main.OCRService', lambda *args, **kwargs: StubOCR())
     app = create_app()
+    return app
+
+
+def test_process_upload_flow(monkeypatch):
+    app = _build_app(monkeypatch)
     app.state.ocr_service = StubOCR()
     app.state.summariser = StubSummariser()
     app.state.pdf_writer = StubPDFWriter()
@@ -55,8 +78,7 @@ def test_process_upload_flow():
 
 
 def test_process_drive_flow(monkeypatch):
-    _set_env()
-    app = create_app()
+    app = _build_app(monkeypatch)
     app.state.ocr_service = StubOCR()
     app.state.summariser = StubSummariser()
     app.state.pdf_writer = StubPDFWriter()
@@ -83,3 +105,6 @@ def test_process_drive_flow(monkeypatch):
     r = client.get('/process_drive', params={'file_id':'file123'})
     assert r.status_code == 200
     assert r.json()['report_file_id'] == 'uploaded123'
+    validation = r.json()['validation']
+    assert validation['supervisor_passed'] is True
+    assert validation['retries'] == 0

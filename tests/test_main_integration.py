@@ -13,27 +13,53 @@ class StubOCR(OCRService):  # type: ignore[misc]
         pass
 
     def process(self, file_source):  # noqa: D401
-        return {"text": "stub ocr text", "pages": [{"page_number": 1, "text": "stub ocr text"}]}
+        phrase = "Hypertension management plan follow up for diabetes with insulin glargine during routine visit. "
+        text = phrase * 3 + "Dr. Smith coordinates hypertension management plan follow up for diabetes."
+        return {"text": text, "pages": [{"page_number": 1, "text": text}]}
 
 
 class StubSummariser(Summariser):  # type: ignore[misc]
     def __init__(self):
         pass
 
-    def summarise(self, text: str) -> str:  # noqa: D401
-        return f"summary({text})"
+    def summarise(self, text: str) -> dict[str, str]:  # noqa: D401
+        sentence = "Hypertension management plan follow up for diabetes with insulin glargine during routine visit."
+        repeated = f"{sentence} {sentence} {sentence}"
+        body = (
+            "Provider Seen:\nDr. Smith\n\n"
+            f"Reason for Visit:\n{repeated}\n\n"
+            f"Clinical Findings:\n{repeated}\n\n"
+            f"Treatment / Follow-Up Plan:\n{repeated}\n\n"
+            f"Diagnoses:\n- {sentence}\n"
+            "Providers:\n- Dr. Smith\n"
+            "Medications / Prescriptions:\n- Insulin glargine"
+        )
+        return {
+            'Patient Information': 'Stub patient',
+            'Medical Summary': body,
+            'Billing Highlights': 'N/A',
+            'Legal / Notes': 'N/A',
+            '_diagnoses_list': 'Type 2 diabetes',
+            '_providers_list': 'Dr. Smith',
+            '_medications_list': 'Insulin glargine',
+        }
 
 
 class StubPDF(PDFWriter):  # type: ignore[misc]
     def __init__(self):
         pass
 
-    def build(self, summary: str) -> bytes:  # noqa: D401
+    def build(self, summary: dict[str, str]) -> bytes:  # noqa: D401
         return PDF_BYTES
 
 
-def test_health_and_process_stub():
-    app = create_app()
+def _patched_app(monkeypatch):
+    monkeypatch.setattr('src.main.OCRService', lambda *args, **kwargs: StubOCR())
+    return create_app()
+
+
+def test_health_and_process_stub(monkeypatch):
+    app = _patched_app(monkeypatch)
     # Inject stubs
     app.state.ocr_service = StubOCR()
     app.state.summariser = StubSummariser()

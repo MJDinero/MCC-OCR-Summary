@@ -16,22 +16,41 @@ class StubOCR(OCRService):  # type: ignore[misc]
         pass
 
     def process(self, file_source):  # noqa: D401
-        return {"text": "stub text", "pages": [{"page_number": 1, "text": "stub text"}]}
+        text = (
+            "PA Jordan documented chronic back pain therapy progress and prescribed Naproxen 250mg." )
+        return {"text": text, "pages": [{"page_number": 1, "text": text}]}
 
 
 class StubSummariser(Summariser):  # type: ignore[misc]
     def __init__(self):
         pass
 
-    def summarise(self, text: str) -> str:  # noqa: D401
-        return "summary"  # small deterministic output
+    def summarise(self, text: str) -> dict[str, str]:  # noqa: D401
+        body = (
+            "Provider Seen:\nPA Jordan\n\n"
+            "Reason for Visit:\nReview chronic back pain therapy.\n\n"
+            "Clinical Findings:\nImproved mobility with mild tenderness.\n\n"
+            "Treatment / Follow-Up Plan:\nContinue physiotherapy and introduce stretching routine.\n\n"
+            "Diagnoses:\n- Chronic back pain\n"
+            "Providers:\n- PA Jordan\n"
+            "Medications / Prescriptions:\n- Naproxen 250mg"
+        )
+        return {
+            'Patient Information': 'Stub',
+            'Medical Summary': body,
+            'Billing Highlights': 'N/A',
+            'Legal / Notes': 'N/A',
+            '_diagnoses_list': 'Chronic back pain',
+            '_providers_list': 'PA Jordan',
+            '_medications_list': 'Naproxen 250mg',
+        }
 
 
 class StubPDF(PDFWriter):  # type: ignore[misc]
     def __init__(self):
         pass
 
-    def build(self, summary: str) -> bytes:  # noqa: D401
+    def build(self, summary: dict[str, str]) -> bytes:  # noqa: D401
         return PDF_BYTES
 
 
