@@ -1,0 +1,173 @@
+*** Begin Patch
+*** Update File: src/services/docai_helper.py
+@@
+-    operation = client.batch_process_documents(request=request)
++    started_at = time.perf_counter()
++    operation = client.batch_process_documents(request=request)
+     result = _poll_operation(
+         operation,
+         stage="docai_splitter",
+         job_id=job_id,
+         trace_id=trace_id,
+         sleep_fn=sleep_fn,
+     )
+-    output_uri = _extract_gcs_output(result) or destination_uri
++    duration_ms = int((time.perf_counter() - started_at) * 1000)
++    output_uri = _extract_gcs_output(result) or destination_uri
+@@
+-    if resolved_store and job_id:
++    if resolved_store and job_id:
+         try:
+             job_snapshot = resolved_store.get_job(job_id)
+             metadata_base: Dict[str, Any] = {}
+             if job_snapshot:
+                 metadata_base = dict(job_snapshot.metadata)
+@@
+-    return {
++    _LOG.info(
++        "split_done",
++        extra={
++            "job_id": job_id,
++            "trace_id": trace_id,
++            "document_id": gcs_uri,
++            "manifest_uri": manifest_uri,
++            "shard_count": len(shards),
++            "duration_ms": duration_ms,
++        },
++    )
++    return {
+         "operation": getattr(operation, "name", None),
+         "output_uri": output_uri,
+         "manifest_uri": manifest_uri,
+         "shards": shards,
+     }
+*** End Patch
+*** Begin Patch
+*** Update File: src/services/docai_helper.py
+@@
+-    outputs: list[Dict[str, Any]] = []
+-    inflight: list[tuple[str, str, Any]] = []
++    outputs: list[Dict[str, Any]] = []
++    inflight: list[tuple[int, str, str, Any, float]] = []
+     shard_iter = iter(enumerate(shards))
+ 
+     def _enqueue_next() -> bool:
+         try:
+             shard_index, shard_uri = next(shard_iter)
+@@
+-        operation = client.batch_process_documents(request=request)
+-        inflight.append((shard_uri, dest_uri, operation))
++        operation = client.batch_process_documents(request=request)
++        started_at = time.perf_counter()
++        inflight.append((shard_index, shard_uri, dest_uri, operation, started_at))
++        _LOG.info(
++            "ocr_lro_started",
++            extra={
++                "job_id": job_id,
++                "trace_id": trace_id,
++                "shard_id": f"{shard_index:04d}",
++                "document_id": shard_uri,
++            },
++        )
+         return True
+@@
+-    while inflight:
+-        shard_uri, dest_uri, operation = inflight.pop(0)
++    while inflight:
++        shard_index, shard_uri, dest_uri, operation, started_at = inflight.pop(0)
+         try:
+             result = _poll_operation(
+                 operation,
+                 stage="docai_ocr",
+                 job_id=job_id,
+                 trace_id=trace_id,
+                 sleep_fn=sleep_fn,
+             )
+         except Exception as exc:
+@@
+             raise
+ 
+         output_uri = _extract_gcs_output(result) or dest_uri
++        duration_ms = int((time.perf_counter() - started_at) * 1000)
++        _LOG.info(
++            "ocr_lro_finished",
++            extra={
++                "job_id": job_id,
++                "trace_id": trace_id,
++                "shard_id": f"{shard_index:04d}",
++                "document_id": shard_uri,
++                "ocr_output_uri": output_uri,
++                "duration_ms": duration_ms,
++            },
++        )
+         outputs.append(
+             {
+                 "shard_uri": shard_uri,
+                 "ocr_output_uri": output_uri,
+                 "operation": getattr(operation, "name", None),
+@@
+-        if max_concurrency > 1:
++        if max_concurrency > 1:
+             while len(inflight) < max_concurrency:
+                 if not _enqueue_next():
+                     break
+*** End Patch
+*** Begin Patch
+*** Update File: src/services/summariser_refactored.py
+@@
+-    state_store: PipelineStateStore | None = None
+-    base_metadata: Dict[str, Any] = {}
++    state_store: PipelineStateStore | None = None
++    base_metadata: Dict[str, Any] = {}
++    job_snapshot = None
+@@
+-            job_snapshot = state_store.get_job(args.job_id)
+-            if job_snapshot:
+-                base_metadata = dict(job_snapshot.metadata)
++            job_snapshot = state_store.get_job(args.job_id)
++            if job_snapshot:
++                base_metadata = dict(job_snapshot.metadata)
+@@
+-    try:
++    summarise_started = time.perf_counter()
++    try:
+         summary = summariser.summarise(text, doc_metadata=metadata)
+         failure_phase = "supervisor"
+         validation = supervisor.validate(
+             ocr_text=text,
+             summary=summary,
+@@
+-    summary_gcs_uri: Optional[str] = None
++    summary_gcs_uri: Optional[str] = None
++    schema_version = os.getenv("SUMMARY_SCHEMA_VERSION", "2025-10-01")
+@@
+-            summary_metadata = {
++            summary_metadata = {
+                 "summary_sections": [key for key in summary.keys() if not key.startswith("_")],
+                 "summary_char_length": sum(len(str(value or "")) for value in summary.values()),
+                 "summary_generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                 "supervisor_validation": validation,
+                 "summary_schema_version": os.getenv("SUMMARY_SCHEMA_VERSION", "2025-10-01"),
+             }
++            schema_version = summary_metadata["summary_schema_version"]
+             if summary_gcs_uri:
+                 summary_metadata["summary_gcs_uri"] = summary_gcs_uri
+             merged_metadata = _merge_dicts(base_metadata, summary_metadata)
+@@
+-    print(json.dumps(summary, indent=2, ensure_ascii=False))
++    duration_ms = int((time.perf_counter() - summarise_started) * 1000)
++    trace_id = getattr(job_snapshot, "trace_id", None)
++    document_id = getattr(job_snapshot, "object_name", None)
++    _LOG.info(
++        "summary_done",
++        extra={
++            "job_id": args.job_id,
++            "trace_id": trace_id,
++            "document_id": document_id,
++            "shard_id": "aggregate",
++            "duration_ms": duration_ms,
++            "schema_version": schema_version,
++        },
++    )
++    print(json.dumps(summary, indent=2, ensure_ascii=False))
+*** End Patch

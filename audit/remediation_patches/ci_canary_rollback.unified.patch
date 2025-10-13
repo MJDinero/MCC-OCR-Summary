@@ -1,0 +1,37 @@
+diff --git a/cloudbuild.yaml b/cloudbuild.yaml
+--- a/cloudbuild.yaml
++++ b/cloudbuild.yaml
+@@
+ steps:
++  - name: 'python:3.11'
++    id: lint-and-type
++    entrypoint: bash
++    args:
++      - -c
++      - |
++        set -euo pipefail
++        pip install -r requirements-dev.txt
++        ruff check .
++        mypy .
++
+   - name: 'python:3.11'
+     id: unit-tests
+     entrypoint: bash
+     args:
+       - -c
+       - |
+-        pip install -r requirements-dev.txt
+-        pytest -q -m "not integration" --maxfail=1 --disable-warnings
++        set -euo pipefail
++        pip install -r requirements-dev.txt
++        pytest -q -m "not integration" --maxfail=1 --disable-warnings --cov=src --cov-report=term-missing --cov-fail-under=85
++
++  - name: 'python:3.11'
++    id: integration-tests
++    entrypoint: bash
++    args:
++      - -c
++      - |
++        set -euo pipefail
++        pip install -r requirements-dev.txt
++        RUN_INTEGRATION=1 pytest -q -m "integration" --maxfail=1 --disable-warnings

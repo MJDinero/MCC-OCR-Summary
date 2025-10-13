@@ -1,0 +1,34 @@
+*** Begin Patch
+*** Update File: infra/iam.sh
+@@
+ gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
+   --member="serviceAccount:${WORKFLOW_SA}" \
+   --role="roles/documentai.apiUser"
+ 
+ gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
+   --member="serviceAccount:${WORKFLOW_SA}" \
+-  --role="roles/storage.objectAdmin"
++  --role="roles/storage.objectViewer"
++
++gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
++  --member="serviceAccount:${WORKFLOW_SA}" \
++  --role="roles/storage.objectCreator"
+@@
+ gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
+   --member="serviceAccount:${SUMMARISER_SA}" \
+-  --role="roles/storage.objectAdmin"
++  --role="roles/storage.objectViewer"
++
++gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
++  --member="serviceAccount:${SUMMARISER_SA}" \
++  --role="roles/storage.objectCreator"
+@@
+ gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
+   --member="serviceAccount:${PDF_SA}" \
+-  --role="roles/storage.objectAdmin"
++  --role="roles/storage.objectViewer"
++
++gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
++  --member="serviceAccount:${PDF_SA}" \
++  --role="roles/storage.objectCreator"
+*** End Patch

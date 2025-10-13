@@ -1,0 +1,104 @@
+*** Begin Patch
+*** Update File: src/services/summariser_refactored.py
+@@
+-        - overview: single paragraph describing the clinical encounter context and most critical issue.
+-        - key_points: array of 2-5 bullet-ready strings capturing visit purpose, significant findings, and decisions.
+-        - clinical_details: array of factual sentences covering examinations, diagnostics, vitals, and notable negatives.
+-        - care_plan: array of sentences describing treatments, medications, follow-up, referrals, and patient guidance.
+-        - diagnoses: array of diagnostic statements (include ICD-10 codes if explicitly stated).
+-        - providers: array of provider names or roles explicitly referenced.
+-        - medications: array of medications, therapies, or prescriptions ordered or continued.
++        - overview: single paragraph describing the clinical encounter context and most critical issue.
++        - key_points: array of 2-5 bullet-ready strings capturing visit purpose, significant findings, and decisions.
++        - clinical_details: array of factual sentences covering examinations, diagnostics, vitals, and notable negatives.
++        - care_plan: array of sentences describing treatments, medications, follow-up, referrals, and patient guidance.
++        - diagnoses: array of diagnostic statements (include ICD-10 codes if explicitly stated).
++        - providers: array of provider names or roles explicitly referenced.
++        - medications: array of medications, therapies, or prescriptions ordered or continued.
++        - schema_version: string literal matching "2025-10-01".
+         Requirements:
+         * Stay faithful to the source text. Do not invent information.
+         * Preserve units, dosages, and time references.
+         * Expand abbreviations the first time they appear if context allows.
+         * Output MUST be valid JSON. Use "overview" as a descriptive string (not list).
+         * Do not include markdown, numbering, or commentary outside the JSON payload.
+         """
+     ).strip()
+ 
++    CHUNK_SCHEMA_VERSION = "2025-10-01"
++    CHUNK_JSON_SCHEMA: Dict[str, Any] = {
++        "name": "chunk_summary_v2025_10_01",
++        "strict": True,
++        "schema": {
++            "type": "object",
++            "additionalProperties": False,
++            "properties": {
++                "overview": {"type": "string"},
++                "key_points": {
++                    "type": "array",
++                    "items": {"type": "string"},
++                },
++                "clinical_details": {
++                    "type": "array",
++                    "items": {"type": "string"},
++                },
++                "care_plan": {
++                    "type": "array",
++                    "items": {"type": "string"},
++                },
++                "diagnoses": {
++                    "type": "array",
++                    "items": {"type": "string"},
++                },
++                "providers": {
++                    "type": "array",
++                    "items": {"type": "string"},
++                },
++                "medications": {
++                    "type": "array",
++                    "items": {"type": "string"},
++                },
++                "schema_version": {
++                    "type": "string",
++                    "enum": ["2025-10-01"],
++                },
++            },
++            "required": [
++                "overview",
++                "key_points",
++                "clinical_details",
++                "care_plan",
++                "diagnoses",
++                "providers",
++                "medications",
++                "schema_version",
++            ],
++        },
++    }
++
+@@
+-        response = client.responses.create(
++        response = client.responses.create(
+             model=self.model,
+             input=messages,
+             temperature=0,
+             max_output_tokens=900,
+-            text={"format": {"type": "json_object"}},
++            response_format={
++                "type": "json_schema",
++                "json_schema": self.CHUNK_JSON_SCHEMA,
++            },
+         )
+@@
+-        try:
+-            return json.loads(content)
++        try:
++            parsed = json.loads(content)
+         except json.JSONDecodeError as exc:  # pragma: no cover - salvage path
+             raise SummarizationError(f"Failed to parse chunk JSON (chunk {chunk_index}): {exc}") from exc
++        if parsed.get("schema_version") != self.CHUNK_SCHEMA_VERSION:
++            raise SummarizationError(
++                f"Chunk schema_version mismatch: expected {self.CHUNK_SCHEMA_VERSION}, got {parsed.get('schema_version')}"
++            )
++        return parsed
+*** End Patch

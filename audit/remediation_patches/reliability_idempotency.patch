@@ -1,0 +1,35 @@
+*** Begin Patch
+*** Update File: workflows/pipeline.yaml
+@@
+                 summariserArgs:
+                   - "--input"
+                   - ${"gs://" + outputBucket + "/ocr/" + jobId + "/aggregate.json"}
+                   - "--output-gcs"
+                   - ${"gs://" + summaryBucket + "/summaries/" + jobId + ".json"}
+                   - "--job-id"
+                   - ${jobId}
++                  - "--gcs-if-generation"
++                  - "0"
+@@
+                 pdfArgs:
+                   - "--input"
+                   - ${"/tmp/summary.json"}
+                   - "--upload-gcs"
+                   - ${"gs://" + summaryBucket + "/pdf/" + jobId + ".pdf"}
+                   - "--job-id"
+                   - ${jobId}
++                  - "--if-generation-match"
++                  - "0"
+*** End Patch
+*** Begin Patch
+*** Update File: src/services/pdf_writer_refactored.py
+@@
+-    parser.add_argument("--if-generation-match", type=int, dest="if_generation_match", help="Optional ifGenerationMatch precondition for GCS upload.")
++    parser.add_argument(
++        "--if-generation-match",
++        type=int,
++        dest="if_generation_match",
++        default=0,
++        help="ifGenerationMatch precondition for GCS upload (default 0 to prevent duplicate overwrites).",
++    )
+*** End Patch
