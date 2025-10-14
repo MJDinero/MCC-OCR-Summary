@@ -31,7 +31,7 @@ policies:
         conditionThreshold:
           filter: >
             metric.type="pubsub.googleapis.com/subscription/num_undelivered_messages"
-            AND resource.label."subscription_id"="mcc-ocr-pipeline-dlq-sub"
+            AND resource.label."subscription_id"=monitoring.regex("mcc-ocr-(ocr|summary|storage)-dlq-sub")
           aggregations:
             - perSeriesAligner: ALIGN_MEAN
               alignmentPeriod: 60s
@@ -40,9 +40,9 @@ policies:
           thresholdValue: 0
     documentation:
       content: |
-        Dead-letter queue backlog detected for the MCC OCR workflow. Review
-        failed execution logs and pipeline state history. Clearing requires
-        manual remediation.
+        Dead-letter queue backlog detected for the MCC OCR event-driven pipeline.
+        Inspect message payloads, replay healthy jobs, and remediate poisoned
+        events before acknowledging.
       mimeType: text/markdown
     notificationChannels: []
     severity: WARNING

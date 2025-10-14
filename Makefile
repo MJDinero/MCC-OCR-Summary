@@ -56,8 +56,14 @@ test:
 test-integration:
 	$(PYTEST) $(COMMON_PYTEST_FLAGS) tests/test_*integration.py
 
+integration:
+	$(PYTHON) -m pytest -m integration $(COMMON_PYTEST_FLAGS)
+
 test-e2e:
 	$(PYTEST) $(COMMON_PYTEST_FLAGS) tests/test_pipeline_endpoints.py
+
+verify: test
+	PYTHONPATH=$(PWD):$$PYTHONPATH $(PYTHON) scripts/smoke_test.py
 
 docker-build:
 	docker build --build-arg GIT_SHA=$(GIT_SHA) -t $(IMAGE) .
@@ -81,3 +87,12 @@ deploy:
 
 smoke:
 	$(PYTHON) scripts/smoke_test.py
+
+benchmark:
+	$(PYTHON) scripts/benchmark_large_docs.py
+
+sbom:
+	$(PYTHON) -m pip freeze --all | cyclonedx-py requirements - --of JSON --output-file outputs/sbom.json
+
+audit-deps:
+	pip-audit --format json --ignore-vuln GHSA-4xh5-x5gv-qwph -o outputs/pip-audit.json

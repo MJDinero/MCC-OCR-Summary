@@ -365,8 +365,10 @@ def create_app() -> FastAPI:
             _API_LOG.exception("ingest_create_failed", extra={"error": str(exc)})
             raise HTTPException(status_code=500, detail="Failed to create pipeline job") from exc
 
+        execution_name: str | None = None
+
         try:
-            execution_name: str | None
+            launch_result: str | None = None
             pipeline_service_base_url = os.getenv("PIPELINE_SERVICE_BASE_URL")
             summariser_job_name = os.getenv("SUMMARISER_JOB_NAME")
             pdf_job_name = os.getenv("PDF_JOB_NAME")
@@ -403,19 +405,22 @@ def create_app() -> FastAPI:
             }
 
             if hasattr(workflow_launcher, "launch"):
-                execution_name = workflow_launcher.launch(  # type: ignore[attr-defined]
+                launch_result = workflow_launcher.launch(  # type: ignore[attr-defined]  # pylint: disable=assignment-from-none
                     job=job,
                     parameters=workflow_parameters,
                     trace_context=trace_header,
                 )
             elif callable(workflow_launcher):
-                execution_name = workflow_launcher(  # type: ignore[call-arg]
+                launch_result = workflow_launcher(  # type: ignore[call-arg]  # pylint: disable=assignment-from-none
                     job=job,
                     parameters=workflow_parameters,
                     trace_context=trace_header,
                 )
             else:
                 raise TypeError("workflow_launcher is not callable")
+
+            if launch_result:
+                execution_name = launch_result
         except Exception as exc:
             state_store.mark_status(
                 job.job_id,

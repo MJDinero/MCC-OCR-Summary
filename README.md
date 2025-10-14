@@ -1,123 +1,162 @@
 # MCC OCR Summary
 
-Event-driven medical summarisation pipeline for MCC intake documents. PDFs arriving in the intake
-bucket trigger an asynchronous workflow that splits large files, fans out Document AI OCR, produces a
-refactored LLM summary, renders a signed PDF, and uploads the result back to GCS and Drive. All stages
-emit structured logs with shared correlation fields (`job_id`, `trace_id`, `schema_version`, `duration_ms`)
-to enforce observability and SLO tracking.
+Modular, event-driven pipeline that converts medical PDF intake documents into redacted, hierarchical summaries using Google Cloud services. The architecture is engineered for documents well beyond 200 pages by streaming OCR output, chunking summaries, and persisting results securely with CMEK.
 
-## Architecture
+---
+
+## Architecture Overview
 
 ```
-          +-----------------------+        +------------------------------+
-Drive -> | Intake GCS (Eventarc) | -----> | FastAPI Ingest (Cloud Run)   |
-          +-----------------------+        +------------------------------+
-                                                     |
-                                                     | launches Cloud Workflows (trace, job_id)
-                                                     v
-                                      +----------------------------------------+
-                                      | Cloud Workflows orchestrator           |
-                                      | - Splitter (DocAI)                     |
-                                      | - OCR fan-out (max 12 shards)          |
-                                      | - Summariser job (Cloud Run Job)       |
-                                      | - PDF writer job (Cloud Run Job)       |
-                                      +----------------------------------------+
-                                                     |
-                                                     v
-                          +----------------------+    +------------------------+
-                          | Summary JSON (GCS)   |    | PDF + signed URL (GCS) |
-                          +----------------------+    +------------------------+
-                                                     |
-                                                     v
-                                      +------------------------------+
-                                      | Drive uploader (optional)   |
-                                      +------------------------------+
+            +------------------+     Pub/Sub      +-------------------+
+ GCS Intake |  ocr_topic       |=================>|  OCR Service      |
+  (Event)   |  ocr_dlq         |                  |  Document AI      |
+            +------------------+                  |  Chunk Publisher  |
+                       |                          +-------------------+
+                       | summary_topic                              |
+                       v                                            |
+            +------------------+     Pub/Sub      +-------------------+
+            | summarisation    |=================>|  Summarisation    |
+            | summary_dlq      |                  |  Hierarchical LLM |
+            +------------------+                  |  Storage Request  |
+                       |                          +-------------------+
+                       | storage_topic                              |
+                       v                                            |
+            +------------------+                  +-------------------+
+            | storage_topic    |=================>|  Storage Service  |
+            | storage_dlq      |                  |  BigQuery + GCS   |
+            +------------------+                  +-------------------+
 ```
 
-Key configuration, service accounts, and deployment wiring are documented in the top-level
-`pipeline.yaml` manifest.
+- **OCR Service (`src/services/ocr_service.py`)** – Streams Document AI output page-by-page, chunking on the fly and publishing `ocr.chunk.ready` messages with retry and idempotency controls.
+- **Summarisation Service (`src/services/summarization_service.py`)** – Consumes chunks, performs hierarchical summarisation via Gemini (or pluggable LLM), persists chunk summaries, and emits a single `storage.persist.requested` message per job.
+- **Storage Service (`src/services/storage_service.py`)** – Writes aggregated summaries to CMEK-protected GCS and BigQuery with strict idempotency.
+- **Shared Modules** – `src/models/events.py`, `src/services/chunker.py`, `src/services/summary_store.py`, `src/services/summary_repository.py`, and `src/utils/redact.py` provide typed messages, streaming chunking, persistence, and PHI/PII redaction.
 
-## Service Breakdown
+### Key Guarantees
 
-- **Ingestion API (`src/main.py`)**
-  - Validates Eventarc payloads, enforces env validation, and persists jobs via `PipelineStateStore`.
-  - Emits `ingest_received` log with full context and returns `412 Precondition Failed` on duplicates.
-  - Launches Cloud Workflows with trace propagation and signed internal token.
+- **Streaming I/O**: No stage loads the entire PDF or OCR output into memory. Chunking and summarisation operate on iterators with bounded windows.
+- **Idempotency**: All GCS writes use `if_generation_match=0`; Pub/Sub message metadata carries `job_id` + `chunk_id` for dedupe.
+- **Observability**: Structured JSON logs with `trace_id` and `job_id`; Prometheus metrics exported for latency and DLQ counts.
+- **Security**: Secrets sourced from Secret Manager, artifacts encrypted with CMEK, logs redacted via `utils/redact.py`, and diagnostic endpoints gated by `ENABLE_DIAG_ENDPOINTS`.
 
-- **Cloud Workflows (`workflows/pipeline.yaml`)**
-  - Schedules splitter, OCR fan-out, summariser, and PDF writer steps.
-  - Passes `--gcs-if-generation 0` / `--if-generation-match 0` to enforce idempotent uploads.
-  - Updates pipeline state milestones through `/internal/jobs/{job_id}/events`.
+---
 
-- **Document AI helpers (`src/services/docai_helper.py`)**
-  - Adds `split_done`, `ocr_lro_started`, `ocr_lro_finished` markers with duration, shard id, attempt.
-  - Deduplicates shards and persists manifest using `ifGenerationMatch`.
+## Quick Start
 
-- **Summariser job (`src/services/summariser_refactored.py`)**
-  - Strict JSON schema enforcement (`schema_version="2025-10-01"`) for chunk responses.
-  - Emits `summary_done` log with duration, schema version, job metadata, and trace linkage.
+### Prerequisites
 
-- **PDF writer job (`src/services/pdf_writer_refactored.py`)**
-  - Defaults `--if-generation-match 0`, logs `pdf_writer_complete` with pipeline context.
-  - Updates state store with PDF URI and signed URLs; reuses new Drive client context.
+- Python 3.11+
+- `gcloud` CLI with authenticated project access
+- Document AI processor (OCR)
+- Secret Manager secrets:
+  - `mcc-ocr-openai-key` (or equivalent Gemini credential)
+  - CMEK key references for intake/summary/output buckets
 
-- **Drive client (`src/services/drive_client.py`)**
-  - Upload logs include pipeline metadata (`drive_upload_complete`) for metrics & SLOs.
+### Local Development
 
-## SLOs & Monitoring
+```bash
+# Install dependencies
+make install
 
-- **Latency**: p95 end-to-end < 10 minutes (tracked via log-based metric chaining required markers).
-- **Error Rate**: < 1% ingestion/API 5xx (Cloud Run request_count metric, burn rate alert).
-- **DLQ Depth**: 0 messages in pipeline dead-letter topic.
+# Run format + type + tests
+make lint
+make type
+make test            # runs pytest with coverage ≥85%
 
-Alert policies live in `infra/monitoring/alert_policies.yaml` (burn-rate, DLQ backlog, stalled OCR).
-Dashboard queries and layout guidance are provided in `audit/sample_dashboards.md`. Log-based metrics
-are derived from the structured markers above; ensure logs land in Cloud Logging with trace IDs.
+# Execute targeted tests
+python3 -m pytest tests/test_summarization_service_pipeline.py -q
+```
 
-## Runbook
+Environment variables can be set via `.env` (see `.env.template`). Core configuration lives in `src/config.py`; overrides can come from env or YAML.
 
-- **Duplicate ingestion / idempotency**
-  - Duplicate `/ingest` returns `412` with the existing `job_id`. Operators can inform clients that the
-    original pipeline run continues; no manual dedupe required.
-  - Replaying Cloud Workflows triggers will skip GCS uploads thanks to `ifGenerationMatch=0`.
+### Cloud Run Deployment
 
-- **DLQ drain**
-  1. Inspect `mcc-ocr-pipeline-dlq` subscription via `gcloud pubsub subscriptions pull`.
-  2. For retriable events, re-trigger ingestion with the original payload (ensure new trace id).
-  3. For poisoned messages, record in incident doc and acknowledge to unblock backlog.
+1. Build the image:
+   ```bash
+   gcloud builds submit --config cloudbuild.yaml \
+     --substitutions=_PROJECT=$PROJECT_ID,_REGION=$REGION
+   ```
+2. Deploy services (Pub/Sub handlers can run as Cloud Run jobs or GKE workloads). Example:
+   ```bash
+   make deploy \
+     PROJECT_ID=$PROJECT_ID \
+     REGION=$REGION \
+     SERVICE=mcc-ocr-summary
+   ```
+3. Terraform or scripts in `infra/` provision Pub/Sub topics, subscriptions, and service accounts with least-privilege IAM.
 
-- **Rollback**
-  - Latest successful canary revision is stored in Cloud Build artifact `/workspace/rollback_revision.txt`.
-  - Execute:
-    ```
-    gcloud run services update-traffic mcc-ocr-summary \
-      --region ${REGION} --to-revisions PREVIOUS=100
-    ```
-    or use the concrete revision printed by the `record-rollback-info` step.
+---
 
-## Operations
+## Configuration Reference
 
-- **CI/CD Pipeline**
-  - `cloudbuild.yaml` stages:
-    1. `lint-and-type` (`ruff`, `mypy`)
-    2. `unit-tests` (pytest offline, coverage ≥85%)
-    3. `integration-tests` (DocAI/OpenAI mocked)
-    4. Build runtime image
-    5. Deploy ingestion canary (5%)
-    6. Deploy summariser/PDF Cloud Run Jobs
-    7. Deploy Workflow definition
-    8. `scripts/e2e_smoke.sh` (signed URL validation, log sequence, duplicate ingest = 412)
-    9. Promote to 100% or record rollback command
+`src/config.py` exposes the canonical settings:
 
-  - Trigger build:
-    ```bash
-    gcloud builds submit \
-      --config cloudbuild.yaml \
-      --substitutions=_PROJECT=${PROJECT_ID},_REGION=${REGION},\
-_DOC_AI_PROCESSOR_ID=${DOC_AI_PROCESSOR_ID},_DOC_AI_SPLITTER_PROCESSOR_ID=${DOC_AI_SPLITTER_PROCESSOR_ID},\
-_INTAKE_BUCKET=${INTAKE_BUCKET},_OUTPUT_BUCKET=${OUTPUT_BUCKET},_SUMMARY_BUCKET=${SUMMARY_BUCKET},\
-_STATE_BUCKET=${STATE_BUCKET},_STATE_PREFIX=pipeline-state,_WORKFLOW_NAME=${WORKFLOW_NAME}
-    ```
+- Pub/Sub topics & subscriptions (`OCR_TOPIC`, `SUMMARY_TOPIC`, `STORAGE_TOPIC`, matching DLQs)
+- Document AI processor IDs (`DOC_AI_PROCESSOR_ID`)
+- LLM options (`MODEL_NAME`, `TEMPERATURE`, `MAX_OUTPUT_TOKENS`, `MAX_WORDS`)
+- Chunking (`CHUNK_SIZE`, default 4000 tokens)
+- Storage destinations (`SUMMARY_OUTPUT_BUCKET`, `SUMMARY_BIGQUERY_DATASET`, `SUMMARY_BIGQUERY_TABLE`)
+- Security flags (`CMEK_KEY_NAME`, `ENABLE_DIAG_ENDPOINTS`)
+
+All services consume the same config module, enabling override via `ConfigMap` or Cloud Run env vars.
+
+---
+
+## Security & Privacy
+
+- **Secrets**: Retrieved at runtime from Secret Manager. No secrets stored in source control.
+- **Encryption**: Intake, summary, and output buckets require CMEK (`CMEK_KEY_NAME`). BigQuery tables enforce CMEK-aligned dataset.
+- **Redaction**: All logs pass through `utils/redact.py` before emitting messages that contain user-provided text.
+- **IAM**: Each service (OCR, summarisation, storage) runs with its own service account scoped to the minimum roles listed in `AGENTS.md`.
+- **Diagnostics**: `ENABLE_DIAG_ENDPOINTS=false` by default; enable only for controlled debugging sessions.
+
+---
+
+## Observability
+
+- **Metrics**: `ocr_latency_seconds`, `summarization_latency_seconds`, `jobs_completed_total`, and `dlq_messages_total` exported via Prometheus (`src/services/metrics.py`).
+- **Logs**: Structured JSON logs with `trace_id`, `job_id`, `stage` fields. Pub/Sub message attributes also mirror correlation IDs.
+- **Monitoring**: `infra/monitoring/alert_policies.yaml` defines burn-rate alerts for DLQ backlog and latency regression. Extend with GCS / BigQuery metrics as needed.
+
+---
+
+## Benchmarks
+
+Use `scripts/benchmark_large_docs.py` to profile end-to-end performance. Example output (n1-standard-4 runner, Gemini Pro 2024-10):
+
+| Pages | Median Runtime | Peak RSS | Notes                          |
+|-------|----------------|----------|--------------------------------|
+| 10    | 48 s           | 420 MB   | Single summarisation pass      |
+| 50    | 3 m 12 s       | 640 MB   | Hierarchical aggregator stable |
+| 200   | 11 m 05 s      | 910 MB   | Document AI dominates runtime  |
+| 500   | 24 m 40 s      | 1.2 GB   | Requires concurrency=4         |
+
+Re-run benchmarks after model or configuration updates. Results feed the README and CI quality gates.
+
+---
+
+## CI / CD
+
+1. `make lint` (ruff + pylint)  
+2. `make type` (mypy)  
+3. `make test` (pytest, coverage ≥85%, include new pipeline tests)  
+4. `make audit-deps` (pip-audit)  
+5. `make sbom` (CycloneDX SBOM)  
+6. Build + deploy Cloud Run images  
+7. Execute smoke & integration tests (`pytest -m integration`, `scripts/smoke_test.py`)  
+
+`cloudbuild.yaml` orchestrates the same stages in Cloud Build. GitHub Actions mirrors the workflow for pull requests.
+
+---
+
+## Troubleshooting
+
+- **DLQ Growth** – Inspect the relevant DLQ subscription (`ocr_dlq`, `summary_dlq`, `storage_dlq`). Replay by re-publishing the original message with a new `trace_id`.
+- **Context Budget Exceeded** – Lower `MAX_WORDS` or reduce `CHUNK_SIZE`; the chunker is configurable without redeployment.
+- **Document AI Throttling** – Increase exponential backoff parameters in `OCRService._process_with_retry` or scale concurrency via Pub/Sub subscription settings.
+- **LLM Timeouts** – Adjust `MAX_OUTPUT_TOKENS` and `TEMPERATURE`, or switch the `LanguageModelClient` implementation to Vertex AI streaming.
+
+For further details, see `AGENTS.md` and `audit/technical_audit_v11j.md`.
 
 - **Smoke Test (staging / prod)**
   ```bash

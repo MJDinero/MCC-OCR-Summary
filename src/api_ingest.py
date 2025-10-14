@@ -4,10 +4,10 @@ Thin FastAPI surface for Eventarc-triggered ingestion of MCC OCR workflow jobs.
 from __future__ import annotations
 
 import base64
-import json
 import logging
 import os
-from typing import Any, Dict, Mapping, Optional, Tuple
+import json
+from typing import Any, Callable, Dict, Mapping, Optional, Tuple
 from uuid import uuid4
 
 from fastapi import FastAPI, HTTPException, Request
@@ -25,8 +25,11 @@ logger = logging.getLogger("mcc-ocr-summary.ingest")
 
 app = FastAPI(title="MCC OCR Summary", version="1.0.0")
 
+ce_from_http: Callable[..., Any] | None
 try:  # Optional CloudEvents dependency; Eventarc path uses it.
-    from cloudevents.http import from_http as ce_from_http
+    from cloudevents.http import from_http as _ce_from_http
+
+    ce_from_http = _ce_from_http
 except Exception:  # pragma: no cover - CloudEvents optional.
     ce_from_http = None
 

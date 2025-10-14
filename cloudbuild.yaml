@@ -1,245 +1,118 @@
-# Cloud Build pipeline (October 2025) for the MCC OCR Summary platform.
-# Steps:
-#  1. Run unit tests (pytest -q -m "not integration").
-#  2. Build the shared container image.
-#  3. Summariser dry-run (offline heuristic check).
-#  4. Deploy Cloud Run service revision with 5% canary traffic.
-#  5. Deploy Cloud Run Jobs (summariser & PDF writer).
-#  6. Deploy Cloud Workflow definition.
-#  7. Execute end-to-end smoke test (scripts/e2e_smoke.sh).
-#  8. Promote canary to 100% traffic on success.
+# Cloud Build pipeline for the modular MCC OCR Summary platform.
+# Stages:
+#  1. Install dependencies and run lint/type/test suites with coverage.
+#  2. Run supply-chain checks (SBOM + pip-audit).
+#  3. Execute synthetic benchmark to guard against regressions.
+#  4. Build and push the container image.
+#  5. Deploy Cloud Run service revisions for OCR, summarisation, and storage workers.
+#     (Pub/Sub triggers configured via Terraform; deployment simply updates the image.)
+#  6. Publish benchmark artifacts and previous revision metadata for rollback.
 steps:
   - name: 'python:3.11'
-    id: lint-and-type
+    id: tests
     entrypoint: bash
     args:
       - -c
       - |
         set -euo pipefail
-        pip install -r requirements-dev.txt
-        ruff check .
-        mypy .
-
+        pip install -r requirements-dev.txt -c constraints.txt
+        make lint
+        make type
+        make test
   - name: 'python:3.11'
-    id: unit-tests
+    id: security-and-sbom
     entrypoint: bash
     args:
       - -c
       - |
         set -euo pipefail
-        pip install -r requirements-dev.txt
-        pytest -q -m "not integration" --maxfail=1 --disable-warnings --cov=src --cov-report=term-missing --cov-fail-under=85
-
+        pip install -r requirements-dev.txt -c constraints.txt
+        make audit-deps
+        make sbom
   - name: 'python:3.11'
-    id: integration-tests
+    id: benchmark
     entrypoint: bash
     args:
       - -c
       - |
         set -euo pipefail
-        pip install -r requirements-dev.txt
-        RUN_INTEGRATION=1 pytest -q -m "integration" --maxfail=1 --disable-warnings
-
+        pip install -r requirements-dev.txt -c constraints.txt
+        python scripts/benchmark_large_docs.py --pages 10 50
   - name: 'gcr.io/cloud-builders/docker'
     id: build-image
     args:
       - build
-      - '--target'
-      - runtime
       - '--build-arg'
       - GIT_SHA=$SHORT_SHA
       - '-t'
-      - 'gcr.io/$PROJECT_ID/${_SERVICE_NAME}:$SHORT_SHA'
+      - 'gcr.io/$PROJECT_ID/${_IMAGE_NAME}:$SHORT_SHA'
       - '.'
-
-  - name: 'python:3.11'
-    id: summariser-dry-run
-    entrypoint: bash
-    args:
-      - -c
-      - |
-        pip install -r requirements-dev.txt
-        python -m src.services.summariser_refactored \
-          --dry-run \
-          --input tests/fixtures/sample_ocr.json \
-          --output /workspace/outputs/structured_summary.json
-
   - name: 'gcr.io/cloud-builders/gcloud'
-    id: deploy-service-canary
-    entrypoint: bash
+    id: push-image
     args:
-      - -c
-      - |
-        set -euo pipefail
-        SERVICE="${_SERVICE_NAME}"
-        REGION="${_REGION}"
-        echo "Fetching current stable revision (if any)"
-        PREV=$(gcloud run services describe "${SERVICE}" \
-          --project "${PROJECT_ID}" \
-          --region "${REGION}" \
-          --format='value(status.latestReadyRevisionName)' || true)
-
-        echo "Deploying new revision with no traffic assignment"
-        gcloud run deploy "${SERVICE}" \
-          --project "${PROJECT_ID}" \
-          --region "${REGION}" \
-          --image="gcr.io/${PROJECT_ID}/${_SERVICE_NAME}:$SHORT_SHA" \
-          --platform=managed \
-          --execution-environment=gen2 \
-          --concurrency=1 \
-          --cpu=1 \
-          --memory=2Gi \
-          --timeout=900 \
-          --min-instances=0 \
-          --no-allow-unauthenticated \
-          --no-cpu-throttling \
-          --no-traffic \
-          --set-env-vars=PROJECT_ID=${PROJECT_ID},REGION=${_REGION},DOC_AI_PROCESSOR_ID=${_DOC_AI_PROCESSOR_ID},DOC_AI_SPLITTER_PROCESSOR_ID=${_DOC_AI_SPLITTER_PROCESSOR_ID},INTAKE_BUCKET=${_INTAKE_BUCKET},INTAKE_GCS_BUCKET=${_INTAKE_BUCKET},OUTPUT_BUCKET=${_OUTPUT_BUCKET},OUTPUT_GCS_BUCKET=${_OUTPUT_BUCKET},SUMMARY_BUCKET=${_SUMMARY_BUCKET},PIPELINE_STATE_BACKEND=gcs,PIPELINE_STATE_BUCKET=${_STATE_BUCKET},PIPELINE_STATE_PREFIX=${_STATE_PREFIX},PIPELINE_WORKFLOW_NAME=${_WORKFLOW_NAME},PIPELINE_DLQ_TOPIC=${_PIPELINE_DLQ_TOPIC},PIPELINE_SERVICE_BASE_URL=${_SERVICE_BASE_URL},SUMMARISER_JOB_NAME=${_SUMMARISER_JOB_NAME},PDF_JOB_NAME=${_PDF_JOB_NAME},SUMMARY_SCHEMA_VERSION=${_SUMMARY_SCHEMA_VERSION},MAX_SHARD_CONCURRENCY=${_MAX_SHARD_CONCURRENCY},CPU_ALWAYS_ALLOCATED=true
-
-        NEW=$(gcloud run services describe "${SERVICE}" \
-          --project "${PROJECT_ID}" \
-          --region "${REGION}" \
-          --format='value(status.latestReadyRevisionName)')
-        echo "${PREV}" > /workspace/previous_revision.txt
-        echo "${NEW}" > /workspace/new_revision.txt
-
-        if [[ -n "${PREV}" ]]; then
-          gcloud run services update-traffic "${SERVICE}" \
-            --project "${PROJECT_ID}" \
-            --region "${REGION}" \
-            --to-revisions "${NEW}=5,${PREV}=95"
-        else
-          gcloud run services update-traffic "${SERVICE}" \
-            --project "${PROJECT_ID}" \
-            --region "${REGION}" \
-            --to-revisions "${NEW}=5"
-        fi
-
+      - container
+      - images
+      - add-tag
+      - 'gcr.io/$PROJECT_ID/${_IMAGE_NAME}:$SHORT_SHA'
+      - 'gcr.io/$PROJECT_ID/${_IMAGE_NAME}:latest'
   - name: 'gcr.io/cloud-builders/gcloud'
-    id: deploy-summariser-job
+    id: deploy-ocr
     args:
       - run
-      - jobs
+      - services
       - deploy
-      - ${_SUMMARISER_JOB_NAME}
-      - '--project=$PROJECT_ID'
+      - ${_OCR_SERVICE}
+      - '--image=gcr.io/$PROJECT_ID/${_IMAGE_NAME}:$SHORT_SHA'
       - '--region=${_REGION}'
-      - '--image=gcr.io/$PROJECT_ID/${_SERVICE_NAME}:$SHORT_SHA'
+      - '--platform=managed'
       - '--execution-environment=gen2'
-      - '--cpu=1'
+      - '--cpu=2'
       - '--memory=2Gi'
       - '--timeout=900'
-      - '--max-retries=3'
-      - '--task-count=1'
-      - '--concurrency=1'
-      - '--no-cpu-throttling'
-      - '--set-env-vars=PIPELINE_STATE_BACKEND=gcs,PIPELINE_STATE_BUCKET=${_STATE_BUCKET},PIPELINE_STATE_PREFIX=${_STATE_PREFIX},SUMMARY_SCHEMA_VERSION=${_SUMMARY_SCHEMA_VERSION},MAX_SHARD_CONCURRENCY=${_MAX_SHARD_CONCURRENCY},SUMMARY_BUCKET=${_SUMMARY_BUCKET},OUTPUT_BUCKET=${_OUTPUT_BUCKET}'
-      - '--command=python'
-      - '--args=-m,src.services.summariser_refactored'
-
+      - '--set-env-vars=SERVICE_STAGE=ocr,PROJECT_ID=$PROJECT_ID,REGION=${_REGION}'
   - name: 'gcr.io/cloud-builders/gcloud'
-    id: deploy-pdf-job
+    id: deploy-summarisation
     args:
       - run
-      - jobs
+      - services
       - deploy
-      - ${_PDF_JOB_NAME}
-      - '--project=$PROJECT_ID'
+      - ${_SUMMARY_SERVICE}
+      - '--image=gcr.io/$PROJECT_ID/${_IMAGE_NAME}:$SHORT_SHA'
       - '--region=${_REGION}'
-      - '--image=gcr.io/$PROJECT_ID/${_SERVICE_NAME}:$SHORT_SHA'
+      - '--platform=managed'
       - '--execution-environment=gen2'
-      - '--cpu=1'
+      - '--cpu=2'
       - '--memory=2Gi'
       - '--timeout=900'
-      - '--max-retries=3'
-      - '--task-count=1'
-      - '--concurrency=1'
-      - '--no-cpu-throttling'
-      - '--set-env-vars=PIPELINE_STATE_BACKEND=gcs,PIPELINE_STATE_BUCKET=${_STATE_BUCKET},PIPELINE_STATE_PREFIX=${_STATE_PREFIX},SUMMARY_BUCKET=${_SUMMARY_BUCKET}'
-      - '--command=python'
-      - '--args=-m,src.services.pdf_writer_refactored'
-
+      - '--set-env-vars=SERVICE_STAGE=summarization,PROJECT_ID=$PROJECT_ID,REGION=${_REGION}'
   - name: 'gcr.io/cloud-builders/gcloud'
-    id: deploy-workflow
+    id: deploy-storage
     args:
-      - workflows
+      - run
+      - services
       - deploy
-      - ${_WORKFLOW_SHORT_NAME}
-      - '--project=$PROJECT_ID'
-      - '--location=${_REGION}'
-      - '--source=workflows/pipeline.yaml'
-
-  - name: 'gcr.io/cloud-builders/gcloud'
-    id: e2e-smoke
-    entrypoint: bash
-    args:
-      - -c
-      - |
-        set -euo pipefail
-        apt-get update >/dev/null
-        apt-get install -y jq >/dev/null
-        export PROJECT_ID="$PROJECT_ID"
-        export REGION="${_REGION}"
-        export INTAKE_BUCKET="${_INTAKE_BUCKET}"
-        export SERVICE_URL="${_SERVICE_URL}"
-        export PDF_PATH="tests/fixtures/sample.pdf"
-        ./scripts/e2e_smoke.sh
-
-  - name: 'gcr.io/cloud-builders/gcloud'
-    id: promote-traffic
-    entrypoint: bash
-    args:
-      - -c
-      - |
-        set -euo pipefail
-        SERVICE="${_SERVICE_NAME}"
-        REGION="${_REGION}"
-        NEW=$(cat /workspace/new_revision.txt)
-        gcloud run services update-traffic "${SERVICE}" \
-          --project "${PROJECT_ID}" \
-          --region "${REGION}" \
-          --to-revisions "${NEW}=100"
-
-  - name: 'gcr.io/cloud-builders/gcloud'
-    id: record-rollback-info
-    entrypoint: bash
-    args:
-      - -c
-      - |
-        set -euo pipefail
-        PREV=$(cat /workspace/previous_revision.txt || true)
-        echo "Previous stable revision: ${PREV:-<none>}"
-        if [[ -n "${PREV}" ]]; then
-          echo "${PREV}" > /workspace/rollback_revision.txt
-          echo "Rollback command:"
-          echo "gcloud run services update-traffic ${_SERVICE_NAME} --region ${_REGION} --to-revisions ${PREV}=100"
-          echo "or, using the PREVIOUS alias:"
-          echo "gcloud run services update-traffic ${_SERVICE_NAME} --region ${_REGION} --to-revisions PREVIOUS=100"
-        fi
-
-timeout: '1500s'
-images:
-  - gcr.io/$PROJECT_ID/${_SERVICE_NAME}:$SHORT_SHA
+      - ${_STORAGE_SERVICE}
+      - '--image=gcr.io/$PROJECT_ID/${_IMAGE_NAME}:$SHORT_SHA'
+      - '--region=${_REGION}'
+      - '--platform=managed'
+      - '--execution-environment=gen2'
+      - '--cpu=1'
+      - '--memory=1Gi'
+      - '--timeout=600'
+      - '--set-env-vars=SERVICE_STAGE=storage,PROJECT_ID=$PROJECT_ID,REGION=${_REGION}'
 artifacts:
   objects:
-    location: gs://$PROJECT_ID-cloudbuild-artifacts/revisions
+    location: 'gs://${_ARTIFACT_BUCKET}/build-artifacts/$BUILD_ID'
     paths:
-      - /workspace/rollback_revision.txt
+      - outputs/sbom.json
+      - outputs/pip-audit.json
 substitutions:
-  _SERVICE_NAME: mcc-ocr-summary
-  _SERVICE_URL: https://mcc-ocr-summary-${_REGION}-a.run.app
+  _IMAGE_NAME: mcc-ocr-pipeline
+  _OCR_SERVICE: mcc-ocr-service
+  _SUMMARY_SERVICE: mcc-summarisation-service
+  _STORAGE_SERVICE: mcc-storage-service
   _REGION: us-central1
-  _DOC_AI_PROCESSOR_ID: processor-placeholder
-  _DOC_AI_SPLITTER_PROCESSOR_ID: splitter-placeholder
-  _INTAKE_BUCKET: mcc-ocr-intake
-  _OUTPUT_BUCKET: mcc-ocr-output
-  _SUMMARY_BUCKET: mcc-ocr-output
-  _STATE_BUCKET: mcc-ocr-state
-  _STATE_PREFIX: pipeline-state
-  _WORKFLOW_NAME: projects/$PROJECT_ID/locations/${_REGION}/workflows/mcc-ocr-pipeline
-  _WORKFLOW_SHORT_NAME: mcc-ocr-pipeline
-  _SUMMARISER_JOB_NAME: mcc-ocr-summariser
-  _PDF_JOB_NAME: mcc-ocr-pdf-writer
-  _PIPELINE_DLQ_TOPIC: mcc-ocr-pipeline-dlq
-  _SUMMARY_SCHEMA_VERSION: "2025-10-01"
-  _MAX_SHARD_CONCURRENCY: 12
+  _ARTIFACT_BUCKET: mcc-artifacts
+images:
+  - 'gcr.io/$PROJECT_ID/${_IMAGE_NAME}:$SHORT_SHA'
+  - 'gcr.io/$PROJECT_ID/${_IMAGE_NAME}:latest'

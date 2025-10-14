@@ -20,9 +20,10 @@ to avoid downstream breakage.
 """
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 import json
-from typing import List, Protocol, Dict, Any, Optional
+from typing import AsyncIterator, List, Protocol, Dict, Any, Optional, Tuple
 import logging
 import math
 import time
@@ -33,6 +34,7 @@ from tenacity import retry, wait_exponential, stop_after_attempt, retry_if_excep
 
 from src.errors import SummarizationError
 import re
+from src.utils.redact import redact_text
 
 _LOG = logging.getLogger("summariser")
 
@@ -255,6 +257,13 @@ def _sanitize_text(raw: str, max_chars: int) -> str:
     return cleaned
 
 
+def _redact_phi(text: str) -> str:
+    """Apply lightweight PHI scrubbing before calling external LLMs."""
+    if not text:
+        return text
+    return redact_text(text)
+
+
 def _default_chunker(text: str, max_chars: int) -> List[str]:
     """Greedy word-boundary chunker.
 
@@ -319,6 +328,11 @@ class Summariser:
     chunk_target_chars: int = 2500
     chunk_hard_max: int = 3000
     multi_chunk_threshold: int = 3000  # any text longer than this will trigger chunking
+    max_concurrency: int = 5
+
+    def __post_init__(self) -> None:
+        if self.max_concurrency <= 0:
+            raise ValueError("max_concurrency must be positive")
 
     @retry(
         wait=wait_exponential(multiplier=0.5, max=6),
@@ -329,240 +343,329 @@ class Summariser:
     def _summarise_chunk(self, chunk: str) -> Dict[str, Any]:
         return self.backend.summarise(chunk)
 
-    def summarise(self, text: str) -> Dict[str, str]:
-        # Defensive guard: handle non-string inputs gracefully (should be str under normal API contract)
+    def _coerce_text(self, text: Any) -> str:
         if text is None:
             raise SummarizationError("Input text empty")
         if not isinstance(text, str):
             text = str(text)
         if not text.strip():
             raise SummarizationError("Input text empty")
+        return text
+
+    def summarise(self, text: str) -> Dict[str, str]:
+        payload = self._coerce_text(text)
         try:
-            sanitized = _sanitize_text(text, self.chunk_hard_max)
-            chunker = SummarizerChunker(self.chunk_target_chars, self.chunk_hard_max)
-            chunks = chunker.split(sanitized)
-            multi = len(chunks) > 1
-            _LOG.info("summariser_chunking", extra={"chunks": len(chunks), "multi": multi})
+            asyncio.get_running_loop()
+        except RuntimeError:
+            # Outside an event loop -> safe to run async pipeline synchronously.
+            try:
+                return asyncio.run(self.summarise_async(payload))
+            except TransientSummarizationError as exc:
+                raise SummarizationError(f"Transient summarisation failed after retries: {exc}") from exc
+        raise SummarizationError(
+            "Summariser.summarise cannot run inside an active asyncio event loop; use await summarise_async()",
+        )
 
-            collected: List[Dict[str, Any]] = []
-            for idx, ch in enumerate(chunks, start=1):
-                _LOG.info("summariser_chunk_start", extra={"index": idx, "size": len(ch)})
-                part = self._summarise_chunk(ch)
-                # Normalise unexpected value types (e.g. dict) to safe string forms before merge logic.
-                # Keep list fields intact for list-merge handling.
-                list_fields = {"diagnoses", "providers", "medications"}
-                for k, v in list(part.items()):
-                    if k in list_fields:
-                        # ensure list fields are either list[str] or left as-is if string; convert singletons
-                        if isinstance(v, (set, tuple)):
-                            part[k] = list(v)
-                        elif v is None:
-                            part[k] = []
-                        # if dict slipped in, flatten dict values
-                        elif isinstance(v, dict):
-                            flat = []
-                            for subk, subv in v.items():
-                                subv_s = str(subv).strip() if subv is not None else ''
-                                if subv_s:
-                                    flat.append(subv_s)
-                            part[k] = flat
-                        elif not isinstance(v, list) and not isinstance(v, str):
-                            part[k] = [str(v)]
-                    else:
-                        if isinstance(v, dict):
-                            # Flatten dict into "key: value; ..." deterministic ordering by insertion
-                            comp = "; ".join(
-                                f"{dk}: {str(dv).strip()}" for dk, dv in v.items() if str(dv).strip()
-                            )
-                            part[k] = comp
-                            _LOG.info(
-                                "summariser_value_coerced",
-                                extra={"key": k, "original_type": "dict", "length": len(comp)},
-                            )
-                        elif isinstance(v, (list, tuple, set)):
-                            joined = ", ".join(str(x).strip() for x in v if str(x).strip())
-                            part[k] = joined
-                            _LOG.info(
-                                "summariser_value_coerced",
-                                extra={"key": k, "original_type": type(v).__name__, "length": len(joined)},
-                            )
-                        elif v is None:
-                            part[k] = ""
-                if idx == 1:
-                    type_map = {k: type(v).__name__ for k, v in part.items()}
-                    _LOG.info("summariser_chunk_types", extra={"index": idx, "types": type_map})
-                collected.append(part)
-                _LOG.info("summariser_chunk_complete", extra={"index": idx})
+    async def summarise_async(self, text: str) -> Dict[str, str]:
+        payload = self._coerce_text(text)
+        chunks = self._prepare_chunks(payload)
+        multi = len(chunks) > 1
+        _LOG.info("summariser_chunking", extra={"chunks": len(chunks), "multi": multi})
+        if not chunks:
+            raise SummarizationError("Input text empty")
 
-            # Legacy single-structure backend (tests) compatibility: if first chunk already
-            # returns the legacy snake_case keys, bypass new merging logic.
-            legacy_keys = {"patient_info", "medical_summary", "billing_highlights", "legal_notes"}
-            new_schema_keys = {"provider_seen", "reason_for_visit", "clinical_findings", "treatment_plan"}
-            first_keys = set(collected[0].keys()) if collected else set()
-            if collected and (first_keys & legacy_keys) and not (first_keys & new_schema_keys):
-                # Treat as legacy backend output (possibly partial)
-                src = collected[0]
-                mapping = {
-                    'patient_info': 'Patient Information',
-                    'medical_summary': 'Medical Summary',
-                    'billing_highlights': 'Billing Highlights',
-                    'legal_notes': 'Legal / Notes',
-                }
-                display_legacy: Dict[str, str] = {}
-                def _safe_strip(val: Any) -> str:
-                    if isinstance(val, str):
-                        return val.strip()
-                    try:
-                        return str(val).strip()
-                    except Exception:
-                        return ''
-                for sk, heading in mapping.items():
-                    raw_val = src.get(sk)
-                    # treat None explicitly as missing
-                    if raw_val is None:
-                        display_legacy[heading] = 'N/A'
-                        continue
-                    coerced = _safe_strip(raw_val)
-                    display_legacy[heading] = coerced if coerced else 'N/A'
-                return display_legacy
-
-            # Merge strategy
-            def _merge_field(key: str) -> str:
-                vals = [c.get(key, '') for c in collected if c.get(key) is not None]
-                if not vals:
-                    return ''
-                seen: set[str] = set()
-                ordered: List[str] = []
-                for v in vals:
-                    try:
-                        logging.debug(f"Normalizing field={key!r} value_type={type(v).__name__}")
-                        if isinstance(v, (dict, list)):
-                            v = json.dumps(v, ensure_ascii=False)
-                        elif isinstance(v, (int, float)):
-                            v = str(v)
-                        if not isinstance(v, str):
-                            v = str(v)
-                        v_norm = v.strip()
-                    except Exception:
-                        continue
-                    if v_norm and v_norm not in seen:
-                        seen.add(v_norm)
-                        ordered.append(v_norm)
-                return '\n'.join(ordered) if ordered else 'N/A'
-
-            def _merge_list_field(key: str) -> List[str]:
-                items: List[str] = []
-                for c in collected:
-                    raw = c.get(key)
-                    if not raw:
-                        continue
-                    if isinstance(raw, list):
-                        for x in raw:
-                            xs = str(x).strip()
-                            if xs:
-                                items.append(xs)
-                    elif isinstance(raw, (set, tuple)):
-                        for x in raw:
-                            xs = str(x).strip()
-                            if xs:
-                                items.append(xs)
-                    elif isinstance(raw, dict):
-                        # Append dict values (flatten) – keys not semantically needed here
-                        for dv in raw.values():
-                            dvs = str(dv).strip()
-                            if dvs:
-                                items.append(dvs)
-                    elif isinstance(raw, str) and raw.strip():
-                        parts = [p.strip() for p in raw.split(',') if p.strip()]
-                        items.extend(parts if len(parts) > 1 else [raw.strip()])
-                    else:
-                        # Fallback: coerce to string
-                        coerced = str(raw).strip()
-                        if coerced:
-                            items.append(coerced)
-                seen: set[str] = set()
-                deduped: List[str] = []
-                for it in items:
-                    if it not in seen:
-                        seen.add(it)
-                        deduped.append(it)
-                return deduped
-
-            provider_seen = _merge_field('provider_seen')
-            reason_for_visit = _merge_field('reason_for_visit')
-            clinical_findings = _merge_field('clinical_findings')
-            treatment_plan = _merge_field('treatment_plan')
-            diagnoses_list = _merge_list_field('diagnoses')
-            providers_list = _merge_list_field('providers')
-            meds_list = _merge_list_field('medications')
-
-            # Compose final medical summary narrative (plain text, headers bold style not applied here; PDF layer can style)
-            def _fmt_section(title: str, body: str) -> str:
-                body_eff = body.strip() if body.strip() else 'N/A'
-                return f"{title}:\n{body_eff}\n"
-
-            narrative_parts = [
-                _fmt_section('Provider Seen', provider_seen),
-                _fmt_section('Reason for Visit', reason_for_visit),
-                _fmt_section('Clinical Findings', clinical_findings),
-                _fmt_section('Treatment / Follow-Up Plan', treatment_plan),
-            ]
-
-            def _fmt_list(title: str, items: List[str]) -> str:
-                if not items:
-                    return f"{title}:\nN/A\n"
-                return f"{title}:\n" + '\n'.join(f"- {i}" for i in items) + '\n'
-
-            index_sections = [
-                _fmt_list('Diagnoses', diagnoses_list),
-                _fmt_list('Providers', providers_list),
-                _fmt_list('Medications / Prescriptions', meds_list),
-            ]
-
-            full_medical_summary = '\n'.join(narrative_parts + index_sections).strip()
-            avg_chunk = round(sum(len(c) for c in chunks) / len(chunks), 2)
-            _LOG.info(
-                "summariser_generation_complete",
-                extra={
-                    "chunks": len(chunks),
-                    "avg_chunk_chars": avg_chunk,
-                    "diagnoses": len(diagnoses_list),
-                    "providers": len(providers_list),
-                    "medications": len(meds_list),
-                },
-            )
-            _LOG.info(
-                "summariser_merge_complete",
-                extra={
-                    "event": "chunk_merge_complete",
-                    "emoji": "📄",
-                    "chunk_count": len(chunks),
-                    "avg_chunk_chars": avg_chunk,
-                    "list_sections": {
-                        "diagnoses": len(diagnoses_list),
-                        "providers": len(providers_list),
-                        "medications": len(meds_list),
-                    },
-                },
-            )
-            # Adapt to legacy output contract expected by PDF writer
-            display: Dict[str, str] = {
-                'Patient Information': 'N/A',
-                'Medical Summary': full_medical_summary,
-                'Billing Highlights': 'N/A',
-                'Legal / Notes': 'N/A',
-            }
-            # Provide structured lists on the returned dict under side-channel keys for enhanced PDF writer
-            display["_diagnoses_list"] = "\n".join(diagnoses_list)
-            display["_providers_list"] = "\n".join(providers_list)
-            display["_medications_list"] = "\n".join(meds_list)
-            return display
+        collected: List[Optional[Dict[str, Any]]] = [None] * len(chunks)
+        try:
+            async for idx, normalized in self._run_chunk_tasks(chunks):
+                collected[idx] = normalized
         except TransientSummarizationError as exc:
             raise SummarizationError(f"Transient summarisation failed after retries: {exc}") from exc
         except SummarizationError:
             raise
         except Exception as exc:
             raise SummarizationError(f"Unexpected summarisation error: {exc}") from exc
+
+        normalized_chunks = [part for part in collected if part is not None]
+        if len(normalized_chunks) != len(chunks):
+            raise SummarizationError("Incomplete summariser output (missing chunk)")
+        return self._merge_results(chunks, normalized_chunks)
+
+    async def stream_summary(self, text: str) -> AsyncIterator[Tuple[int, int, Dict[str, Any]]]:
+        payload = self._coerce_text(text)
+        chunks = self._prepare_chunks(payload)
+        total = len(chunks)
+        if total == 0:
+            raise SummarizationError("Input text empty")
+        async for idx, normalized in self._run_chunk_tasks(chunks):
+            yield idx, total, normalized
+
+    def _prepare_chunks(self, text: str) -> List[str]:
+        sanitized = _sanitize_text(text, self.chunk_hard_max)
+        chunker = SummarizerChunker(self.chunk_target_chars, self.chunk_hard_max)
+        return chunker.split(sanitized)
+
+    async def _run_chunk_tasks(self, chunks: List[str]) -> AsyncIterator[Tuple[int, Dict[str, Any]]]:
+        sem = asyncio.Semaphore(self.max_concurrency)
+        total = len(chunks)
+
+        async def worker(idx: int, chunk: str) -> Tuple[int, Dict[str, Any]]:
+            redacted = _redact_phi(chunk)
+            approx_tokens = math.ceil(len(redacted) / 4) if redacted else 0
+            meta = {
+                "chunk_index": idx + 1,
+                "total_chunks": total,
+                "approx_tokens": approx_tokens,
+                "chunk_chars": len(redacted),
+            }
+            _LOG.info("summariser_chunk_start", extra=meta)
+            start = time.perf_counter()
+            try:
+                async with sem:
+                    result = await asyncio.to_thread(self._summarise_chunk, redacted)
+                latency = time.perf_counter() - start
+                if _SUM_LATENCY:
+                    _SUM_LATENCY.observe(latency)
+                if _SUM_CALLS:
+                    _SUM_CALLS.labels(status="success").inc()
+                normalized = self._normalize_chunk_payload(idx, result)
+                _LOG.info(
+                    "summariser_chunk_complete",
+                    extra={**meta, "latency_ms": round(latency * 1000, 2)},
+                )
+                return idx, normalized
+            except Exception as exc:
+                if _SUM_CALLS:
+                    _SUM_CALLS.labels(status="error").inc()
+                _LOG.exception(
+                    "summariser_chunk_failed",
+                    extra={**meta, "error": str(exc), "error_type": type(exc).__name__},
+                )
+                raise
+
+        tasks = [asyncio.create_task(worker(idx, chunk)) for idx, chunk in enumerate(chunks)]
+        try:
+            for finished in asyncio.as_completed(tasks):
+                idx, result = await finished
+                yield idx, result
+        except Exception:
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            raise
+        finally:
+            for task in tasks:
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+
+    def _normalize_chunk_payload(self, idx: int, payload: Dict[str, Any]) -> Dict[str, Any]:
+        part = dict(payload) if isinstance(payload, dict) else {"medical_summary": str(payload)}
+        list_fields = {"diagnoses", "providers", "medications"}
+        for k, v in list(part.items()):
+            if k in list_fields:
+                if isinstance(v, (set, tuple)):
+                    part[k] = list(v)
+                elif v is None:
+                    part[k] = []
+                elif isinstance(v, dict):
+                    flat = []
+                    for subk, subv in v.items():
+                        subv_s = str(subv).strip() if subv is not None else ''
+                        if subv_s:
+                            flat.append(subv_s)
+                    part[k] = flat
+                elif not isinstance(v, list) and not isinstance(v, str):
+                    part[k] = [str(v)]
+            else:
+                if isinstance(v, dict):
+                    comp = "; ".join(
+                        f"{dk}: {str(dv).strip()}" for dk, dv in v.items() if str(dv).strip()
+                    )
+                    part[k] = comp
+                    _LOG.info(
+                        "summariser_value_coerced",
+                        extra={"key": k, "original_type": "dict", "length": len(comp)},
+                    )
+                elif isinstance(v, (list, tuple, set)):
+                    joined = ", ".join(str(x).strip() for x in v if str(x).strip())
+                    part[k] = joined
+                    _LOG.info(
+                        "summariser_value_coerced",
+                        extra={"key": k, "original_type": type(v).__name__, "length": len(joined)},
+                    )
+                elif v is None:
+                    part[k] = ""
+        if idx == 0:
+            type_map = {k: type(v).__name__ for k, v in part.items()}
+            _LOG.info("summariser_chunk_types", extra={"index": idx + 1, "types": type_map})
+        return part
+
+    def _merge_results(self, chunks: List[str], collected: List[Dict[str, Any]]) -> Dict[str, str]:
+        # Legacy single-structure backend (tests) compatibility: if first chunk already
+        # returns the legacy snake_case keys, bypass new merging logic.
+        legacy_keys = {"patient_info", "medical_summary", "billing_highlights", "legal_notes"}
+        new_schema_keys = {"provider_seen", "reason_for_visit", "clinical_findings", "treatment_plan"}
+        first_keys = set(collected[0].keys()) if collected else set()
+        if collected and (first_keys & legacy_keys) and not (first_keys & new_schema_keys):
+            # Treat as legacy backend output (possibly partial)
+            src = collected[0]
+            mapping = {
+                'patient_info': 'Patient Information',
+                'medical_summary': 'Medical Summary',
+                'billing_highlights': 'Billing Highlights',
+                'legal_notes': 'Legal / Notes',
+            }
+            display_legacy: Dict[str, str] = {}
+
+            def _safe_strip(val: Any) -> str:
+                if isinstance(val, str):
+                    return val.strip()
+                try:
+                    return str(val).strip()
+                except Exception:
+                    return ''
+
+            for sk, heading in mapping.items():
+                raw_val = src.get(sk)
+                # treat None explicitly as missing
+                if raw_val is None:
+                    display_legacy[heading] = 'N/A'
+                    continue
+                coerced = _safe_strip(raw_val)
+                display_legacy[heading] = coerced if coerced else 'N/A'
+            return display_legacy
+
+        # Merge strategy
+        def _merge_field(key: str) -> str:
+            vals = [c.get(key, '') for c in collected if c.get(key) is not None]
+            if not vals:
+                return ''
+            seen: set[str] = set()
+            ordered: List[str] = []
+            for v in vals:
+                try:
+                    logging.debug(f"Normalizing field={key!r} value_type={type(v).__name__}")
+                    if isinstance(v, (dict, list)):
+                        v = json.dumps(v, ensure_ascii=False)
+                    elif isinstance(v, (int, float)):
+                        v = str(v)
+                    if not isinstance(v, str):
+                        v = str(v)
+                    v_norm = v.strip()
+                except Exception:
+                    continue
+                if v_norm and v_norm not in seen:
+                    seen.add(v_norm)
+                    ordered.append(v_norm)
+            return '\n'.join(ordered) if ordered else 'N/A'
+
+        def _merge_list_field(key: str) -> List[str]:
+            items: List[str] = []
+            for c in collected:
+                raw = c.get(key)
+                if not raw:
+                    continue
+                if isinstance(raw, list):
+                    for x in raw:
+                        xs = str(x).strip()
+                        if xs:
+                            items.append(xs)
+                elif isinstance(raw, (set, tuple)):
+                    for x in raw:
+                        xs = str(x).strip()
+                        if xs:
+                            items.append(xs)
+                elif isinstance(raw, dict):
+                    # Append dict values (flatten) – keys not semantically needed here
+                    for dv in raw.values():
+                        dvs = str(dv).strip()
+                        if dvs:
+                            items.append(dvs)
+                elif isinstance(raw, str) and raw.strip():
+                    parts = [p.strip() for p in raw.split(',') if p.strip()]
+                    items.extend(parts if len(parts) > 1 else [raw.strip()])
+                else:
+                    # Fallback: coerce to string
+                    coerced = str(raw).strip()
+                    if coerced:
+                        items.append(coerced)
+            seen: set[str] = set()
+            deduped: List[str] = []
+            for it in items:
+                if it not in seen:
+                    seen.add(it)
+                    deduped.append(it)
+            return deduped
+
+        provider_seen = _merge_field('provider_seen')
+        reason_for_visit = _merge_field('reason_for_visit')
+        clinical_findings = _merge_field('clinical_findings')
+        treatment_plan = _merge_field('treatment_plan')
+        diagnoses_list = _merge_list_field('diagnoses')
+        providers_list = _merge_list_field('providers')
+        meds_list = _merge_list_field('medications')
+
+        # Compose final medical summary narrative (plain text, headers bold style not applied here; PDF layer can style)
+        def _fmt_section(title: str, body: str) -> str:
+            body_eff = body.strip() if body.strip() else 'N/A'
+            return f"{title}:\n{body_eff}\n"
+
+        narrative_parts = [
+            _fmt_section('Provider Seen', provider_seen),
+            _fmt_section('Reason for Visit', reason_for_visit),
+            _fmt_section('Clinical Findings', clinical_findings),
+            _fmt_section('Treatment / Follow-Up Plan', treatment_plan),
+        ]
+
+        def _fmt_list(title: str, items: List[str]) -> str:
+            if not items:
+                return f"{title}:\nN/A\n"
+            return f"{title}:\n" + '\n'.join(f"- {i}" for i in items) + '\n'
+
+        index_sections = [
+            _fmt_list('Diagnoses', diagnoses_list),
+            _fmt_list('Providers', providers_list),
+            _fmt_list('Medications / Prescriptions', meds_list),
+        ]
+
+        full_medical_summary = '\n'.join(narrative_parts + index_sections).strip()
+        avg_chunk = round(sum(len(c) for c in chunks) / len(chunks), 2) if chunks else 0.0
+        _LOG.info(
+            "summariser_generation_complete",
+            extra={
+                "chunks": len(chunks),
+                "avg_chunk_chars": avg_chunk,
+                "diagnoses": len(diagnoses_list),
+                "providers": len(providers_list),
+                "medications": len(meds_list),
+            },
+        )
+        _LOG.info(
+            "summariser_merge_complete",
+            extra={
+                "event": "chunk_merge_complete",
+                "emoji": "📄",
+                "chunk_count": len(chunks),
+                "avg_chunk_chars": avg_chunk,
+                "list_sections": {
+                    "diagnoses": len(diagnoses_list),
+                    "providers": len(providers_list),
+                    "medications": len(meds_list),
+                },
+            },
+        )
+        # Adapt to legacy output contract expected by PDF writer
+        display: Dict[str, str] = {
+            'Patient Information': 'N/A',
+            'Medical Summary': full_medical_summary,
+            'Billing Highlights': 'N/A',
+            'Legal / Notes': 'N/A',
+        }
+        # Provide structured lists on the returned dict under side-channel keys for enhanced PDF writer
+        display["_diagnoses_list"] = "\n".join(diagnoses_list)
+        display["_providers_list"] = "\n".join(providers_list)
+        display["_medications_list"] = "\n".join(meds_list)
+        return display
 
 
 class StructuredSummariser(Summariser):

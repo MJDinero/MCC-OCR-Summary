@@ -50,6 +50,26 @@ class AppConfig(BaseSettings):
     max_shard_concurrency: int = Field(12, validation_alias='MAX_SHARD_CONCURRENCY')
     # Google credentials path is read by google-auth automatically; keep for documentation completeness
     google_application_credentials: str | None = Field(None, validation_alias='GOOGLE_APPLICATION_CREDENTIALS')
+    # Event-driven pipeline configuration
+    ocr_topic: str = Field('projects/demo/topics/ocr-topic', validation_alias='OCR_TOPIC')
+    summary_topic: str = Field('projects/demo/topics/summary-topic', validation_alias='SUMMARY_TOPIC')
+    storage_topic: str = Field('projects/demo/topics/storage-topic', validation_alias='STORAGE_TOPIC')
+    ocr_subscription: str = Field('projects/demo/subscriptions/ocr-sub', validation_alias='OCR_SUBSCRIPTION')
+    summary_subscription: str = Field('projects/demo/subscriptions/summary-sub', validation_alias='SUMMARY_SUBSCRIPTION')
+    storage_subscription: str = Field('projects/demo/subscriptions/storage-sub', validation_alias='STORAGE_SUBSCRIPTION')
+    ocr_dlq_topic: str = Field('projects/demo/topics/ocr-dlq', validation_alias='OCR_DLQ_TOPIC')
+    summary_dlq_topic: str = Field('projects/demo/topics/summary-dlq', validation_alias='SUMMARY_DLQ_TOPIC')
+    storage_dlq_topic: str = Field('projects/demo/topics/storage-dlq', validation_alias='STORAGE_DLQ_TOPIC')
+    cmek_key_name: str | None = Field(None, validation_alias='CMEK_KEY_NAME')
+    enable_diag_endpoints_raw: str | bool | None = Field(False, validation_alias='ENABLE_DIAG_ENDPOINTS')
+    max_words: int = Field(200, validation_alias='MAX_WORDS')
+    chunk_size: int = Field(4000, validation_alias='CHUNK_SIZE')
+    llm_model_name: str = Field('gemini-pro', validation_alias='MODEL_NAME')
+    llm_temperature: float = Field(0.2, validation_alias='TEMPERATURE')
+    llm_max_output_tokens: int = Field(1024, validation_alias='MAX_OUTPUT_TOKENS')
+    summary_bigquery_dataset: str = Field('mcc_summary', validation_alias='SUMMARY_BIGQUERY_DATASET')
+    summary_bigquery_table: str = Field('summaries', validation_alias='SUMMARY_BIGQUERY_TABLE')
+    summary_output_bucket: str = Field('quantify-agent-summary', validation_alias='SUMMARY_OUTPUT_BUCKET')
 
     # Hard (safe) defaults
     max_pdf_bytes: int = 20 * 1024 * 1024  # 20MB limit for uploaded PDFs
@@ -65,6 +85,13 @@ class AppConfig(BaseSettings):
     @property
     def run_pipeline_inline(self) -> bool:
         raw = self.run_pipeline_inline_raw
+        if isinstance(raw, bool):
+            return raw
+        return parse_bool(str(raw))
+
+    @property
+    def enable_diag_endpoints(self) -> bool:
+        raw = self.enable_diag_endpoints_raw
         if isinstance(raw, bool):
             return raw
         return parse_bool(str(raw))
