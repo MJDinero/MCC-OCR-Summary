@@ -7,6 +7,7 @@ from typing import Dict, Any, Sequence, Iterable, Tuple
 import logging
 import re
 from collections import Counter
+import os
 
 
 _LOG = logging.getLogger("supervisor")
@@ -152,12 +153,18 @@ class CommonSenseSupervisor:
         has_list = self._has_structured_list(summary_text, summary)
         alignment = self._content_alignment(ocr_text, alignment_focus_text)
 
-        length_ok = length_score >= 0.75
-        structure_ok = header_count >= 3 and has_list
+        # Runtime tunable thresholds (env overrides) for adaptive strictness
+        alignment_threshold = float(os.getenv('SUPERVISOR_ALIGNMENT_THRESHOLD', '0.80'))
+        length_threshold = float(os.getenv('SUPERVISOR_LENGTH_SCORE_THRESHOLD', '0.75'))
+        min_headers_required = int(os.getenv('SUPERVISOR_MIN_HEADERS', '3'))
+        require_list = os.getenv('SUPERVISOR_REQUIRE_LIST', 'true').lower() == 'true'
+
+        length_ok = length_score >= length_threshold
+        structure_ok = header_count >= min_headers_required and (has_list or not require_list)
         if (doc_stats.get("pages") or 0) >= 100:
             structure_ok = structure_ok and (paragraph_count >= 3 or summary_chars >= 1000)
 
-        alignment_ok = alignment >= 0.80
+        alignment_ok = alignment >= alignment_threshold
 
         passed = length_ok and structure_ok and alignment_ok
         reasons: list[str] = []

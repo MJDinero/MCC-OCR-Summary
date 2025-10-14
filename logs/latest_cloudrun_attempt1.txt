@@ -1,0 +1,83 @@
+INFO:     169.254.169.126:20532 - "GET /process_drive?file_id=1ZFra9EN0jS8wTS4dcW7deypxnVggb8vS HTTP/1.1" 500 Internal Server Error
+Traceback (most recent call last):
+  File "/app/src/main.py", line 211, in process_drive
+    raise SummarizationError(validation.get('reason') or 'Supervisor rejected summary')
+src.errors.SummarizationError: length_below_threshold,content_alignment_low
+2025-10-10 20:35:34,443 ERROR api /process_drive stage error: length_below_threshold,content_alignment_low
+2025-10-10 20:35:34,443 WARNING supervisor supervisor_flagged
+2025-10-10 20:35:34,346 INFO supervisor supervisor_validation_started
+2025-10-10 20:35:34,346 INFO summariser summariser_merge_complete
+2025-10-10 20:35:34,346 INFO summariser summariser_generation_complete
+2025-10-10 20:35:34,346 INFO summariser summariser_chunk_complete
+2025-10-10 20:35:34,346 INFO summariser summariser_call_complete
+2025-10-10 20:35:34,344 INFO httpx HTTP Request: POST https://api.openai.com/v1/responses "HTTP/1.1 200 OK"
+2025-10-10 20:35:32,519 INFO summariser summariser_call_start
+2025-10-10 20:35:32,509 INFO summariser summariser_prompt_meta
+2025-10-10 20:35:32,509 INFO summariser summariser_chunk_start
+2025-10-10 20:35:32,509 INFO summariser summariser_chunk_complete
+2025-10-10 20:35:32,509 INFO summariser summariser_call_complete
+2025-10-10 20:35:32,508 INFO httpx HTTP Request: POST https://api.openai.com/v1/responses "HTTP/1.1 200 OK"
+2025-10-10 20:35:30,847 INFO summariser summariser_call_start
+2025-10-10 20:35:30,838 INFO summariser summariser_prompt_meta
+2025-10-10 20:35:30,838 INFO summariser summariser_chunk_start
+2025-10-10 20:35:30,838 INFO summariser summariser_chunk_complete
+2025-10-10 20:35:30,838 INFO summariser summariser_call_complete
+2025-10-10 20:35:30,836 INFO httpx HTTP Request: POST https://api.openai.com/v1/responses "HTTP/1.1 200 OK"
+2025-10-10 20:35:26,315 INFO summariser summariser_call_start
+2025-10-10 20:35:26,306 INFO summariser summariser_prompt_meta
+2025-10-10 20:35:26,306 INFO summariser summariser_chunk_start
+2025-10-10 20:35:26,306 INFO summariser summariser_chunk_complete
+2025-10-10 20:35:26,305 INFO summariser summariser_call_complete
+2025-10-10 20:35:26,304 INFO httpx HTTP Request: POST https://api.openai.com/v1/responses "HTTP/1.1 200 OK"
+2025-10-10 20:35:23,199 INFO summariser summariser_call_start
+2025-10-10 20:35:23,189 INFO summariser summariser_prompt_meta
+2025-10-10 20:35:23,189 INFO summariser summariser_chunk_start
+2025-10-10 20:35:23,189 INFO summariser summariser_chunk_complete
+2025-10-10 20:35:23,189 INFO summariser summariser_call_complete
+2025-10-10 20:35:23,187 INFO httpx HTTP Request: POST https://api.openai.com/v1/responses "HTTP/1.1 200 OK"
+2025-10-10 20:35:20,262 INFO summariser summariser_call_start
+2025-10-10 20:35:20,251 INFO summariser summariser_prompt_meta
+2025-10-10 20:35:20,251 INFO summariser summariser_chunk_start
+2025-10-10 20:35:20,251 INFO summariser summariser_chunk_complete
+2025-10-10 20:35:20,251 INFO summariser summariser_call_complete
+2025-10-10 20:35:20,249 INFO httpx HTTP Request: POST https://api.openai.com/v1/responses "HTTP/1.1 200 OK"
+2025-10-10 20:35:14,702 INFO summariser summariser_call_start
+2025-10-10 20:35:14,693 INFO summariser summariser_prompt_meta
+2025-10-10 20:35:14,692 INFO summariser summariser_chunk_start
+2025-10-10 20:35:14,692 INFO summariser summariser_chunk_complete
+2025-10-10 20:35:14,692 INFO summariser summariser_call_complete
+2025-10-10 20:35:14,676 INFO httpx HTTP Request: POST https://api.openai.com/v1/responses "HTTP/1.1 200 OK"
+2025-10-10 20:35:11,507 INFO summariser summariser_call_start
+2025-10-10 20:35:11,496 INFO summariser summariser_prompt_meta
+2025-10-10 20:35:11,496 INFO summariser summariser_chunk_start
+2025-10-10 20:35:11,496 INFO summariser summariser_chunk_complete
+2025-10-10 20:35:11,495 INFO summariser summariser_call_complete
+2025-10-10 20:35:11,494 INFO httpx HTTP Request: POST https://api.openai.com/v1/responses "HTTP/1.1 200 OK"
+2025-10-10 20:35:08,233 INFO summariser summariser_call_start
+2025-10-10 20:35:08,221 INFO summariser summariser_prompt_meta
+2025-10-10 20:35:08,221 INFO summariser summariser_chunk_start
+2025-10-10 20:35:08,221 INFO summariser summariser_chunk_complete
+2025-10-10 20:35:08,220 INFO summariser summariser_call_complete
+2025-10-10 20:35:08,218 INFO httpx HTTP Request: POST https://api.openai.com/v1/responses "HTTP/1.1 200 OK"
+2025-10-10 20:34:45,057 INFO summariser summariser_call_start
+2025-10-10 20:34:45,046 INFO summariser summariser_prompt_meta
+2025-10-10 20:34:45,046 INFO summariser summariser_chunk_start
+2025-10-10 20:34:45,046 INFO summariser summariser_chunk_complete
+2025-10-10 20:34:45,046 INFO summariser summariser_chunk_types
+2025-10-10 20:34:45,046 INFO summariser summariser_call_complete
+2025-10-10 20:34:45,044 INFO httpx HTTP Request: POST https://api.openai.com/v1/responses "HTTP/1.1 200 OK"
+2025-10-10 20:34:40,262 INFO summariser summariser_call_start
+2025-10-10 20:34:40,252 INFO summariser summariser_prompt_meta
+2025-10-10 20:34:40,252 INFO summariser summariser_chunk_start
+2025-10-10 20:34:40,252 INFO summariser summariser_chunking
+2025-10-10 20:34:40,249 INFO supervisor supervisor_retry
+2025-10-10 20:34:40,249 WARNING supervisor supervisor_flagged
+2025-10-10 20:34:40,157 INFO supervisor supervisor_validation_started
+2025-10-10 20:34:40,157 INFO summariser summariser_merge_complete
+2025-10-10 20:34:40,157 INFO summariser summariser_generation_complete
+2025-10-10 20:34:40,156 INFO summariser summariser_chunk_complete
+2025-10-10 20:34:40,156 INFO summariser summariser_call_complete
+2025-10-10 20:34:40,155 INFO httpx HTTP Request: POST https://api.openai.com/v1/responses "HTTP/1.1 200 OK"
+2025-10-10 20:34:29,911 INFO summariser summariser_call_start
+2025-10-10 20:34:29,900 INFO summariser summariser_prompt_meta
+2025-10-10 20:34:29,900 INFO summariser summariser_chunk_start

@@ -7,13 +7,16 @@ normalisation) and converts errors into internal domain exceptions.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+import json
 import logging
 import time
 import re
 import tempfile
+import random
+import uuid
 from pathlib import Path
-from typing import Any, Callable, Dict, Optional, Protocol
+from dataclasses import dataclass
+from typing import Any, Callable, Dict, Iterable, Optional, Protocol, Sequence
 
 from tenacity import retry, wait_exponential, stop_after_attempt, retry_if_exception_type
 from google.api_core.client_options import ClientOptions
@@ -24,7 +27,11 @@ from src.config import get_config, AppConfig
 from src.utils.docai_request_builder import build_docai_request
 from src.errors import OCRServiceError, ValidationError
 from src.services.docai_batch_helper import batch_process_documents_gcs
-from src.utils.pdf_splitter import split_pdf_by_page_limit
+from src.services.pipeline import (
+    PipelineStatus,
+    PipelineStateStore,
+    create_state_store_from_env,
+)
 
 _LOG = logging.getLogger("ocr_service")
 
@@ -153,57 +160,18 @@ class OCRService:
 
         use_batch = page_count > PAGES_BATCH_THRESHOLD or size_bytes > SIZE_BATCH_THRESHOLD
         # Escalation: if heuristic says small but actual PDF may exceed limits, re-parse to get real page count.
-        if not use_batch:
-            try:
-                from PyPDF2 import PdfReader  # lazy import
-                try:  # import specific error classes if available
-                    from PyPDF2.errors import PdfReadError, EmptyFileError  # type: ignore
-                except Exception:  # pragma: no cover - fallback when errors module layout differs
-                    PdfReadError = EmptyFileError = RuntimeError  # type: ignore
-                tmp_bytes = pdf_bytes  # local alias
-                # Only materialize file to parse if we got bytes
-                if source_path is None:
-                    with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as _tmpf:
-                        _tmpf.write(tmp_bytes)
-                        real_reader = PdfReader(_tmpf.name)
-                else:
-                    real_reader = PdfReader(str(source_path))
-                real_pages = len(real_reader.pages)
-                if real_pages != page_count:
-                    _LOG.info(
-                        "page_count_adjusted",
-                        extra={
-                            "heuristic_pages": page_count,
-                            "actual_pages": real_pages,
-                            "size_bytes": size_bytes,
-                        },
-                    )
-                # Force escalation: any actual_pages > 30 must go async; >=199 triggers split.
-                if real_pages > 30:
-                    use_batch = True
-                    page_count = real_pages
-                    if real_pages >= 199:
-                        _LOG.info(
-                            "escalation_forced_split",
-                            extra={"actual_pages": real_pages, "split_threshold": 199},
-                        )
-                    else:
-                        _LOG.info(
-                            "escalation_forced_batch",
-                            extra={"actual_pages": real_pages, "batch_threshold": 30},
-                        )
-            except (OSError, ValueError, RuntimeError, PdfReadError, EmptyFileError) as exc:  # pragma: no cover - best effort
-                _LOG.debug("page_count_escalation_failed", extra={"error": str(exc)})
-        if use_batch:
+        splitter_enabled = bool(self._cfg.doc_ai_splitter_id)
+        if splitter_enabled and page_count >= 199:
             _LOG.info(
-                "detected_large_pdf",
+                "docai_splitter_escalation",
                 extra={
-                    "page_count": page_count,
-                    "threshold": 199,
+                    "estimated_pages": page_count,
                     "size_bytes": size_bytes,
-                    "batch_route": True,
+                    "splitter_processor": self._cfg.doc_ai_splitter_id,
                 },
             )
+            use_batch = True
+        if use_batch:
             _LOG.info(
                 "docai_route_batch",
                 extra={
@@ -211,74 +179,18 @@ class OCRService:
                     "size_bytes": size_bytes,
                     "threshold_pages": PAGES_BATCH_THRESHOLD,
                     "threshold_size": SIZE_BATCH_THRESHOLD,
+                    "batch_route": True,
                 },
             )
-            # Persist to temp file if bytes provided so batch helper can upload
-            if source_path is None:
-                with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
-                    tmp.write(pdf_bytes)
-                    tmp_path = Path(tmp.name)
-                src_for_batch = str(tmp_path)
-            else:
-                src_for_batch = str(source_path)
-            # Force splitting for page_count >= 199 to avoid PAGE_LIMIT_EXCEEDED in Document AI.
-            if page_count >= 199:
-                try:
-                    split = split_pdf_by_page_limit(src_for_batch, max_pages=199)
-                except Exception as exc:  # pragma: no cover - unexpected split errors
-                    raise OCRServiceError(f"PDF split failed: {exc}") from exc
-                aggregated_pages = []
-                aggregated_text_parts = []
-                part_index = 0
-                _LOG.info(
-                    "batch_sequence_start",
-                    extra={"parts": len(split.parts), "manifest": split.manifest_gcs_uri},
-                )
-                for part_uri in split.parts:
-                    part_index += 1
-                    try:
-                        result = batch_process_documents_gcs(
-                            part_uri,
-                            None,
-                            self.processor_id,
-                            location,
-                            project_id=project_id,
-                        )
-                    except ValidationError:
-                        raise
-                    except Exception as exc:
-                        raise OCRServiceError(f"Batch OCR failed for split part {part_index}: {exc}") from exc
-                    # Merge pages & text
-                    pages = result.get("pages") or []
-                    aggregated_pages.extend(pages)
-                    aggregated_text_parts.append(result.get("text", ""))
-                merged = {
-                    "text": "\n".join(t for t in aggregated_text_parts if t),
-                    "pages": aggregated_pages,
-                    "batch_metadata": {
-                        "status": "succeeded",
-                        "parts": len(split.parts),
-                        "split_manifest": split.manifest_gcs_uri,
-                        "batch_mode": "async_split",
-                    },
-                }
-                # Emit specific aggregated completion event (distinct from per-part batch_complete events)
-                _LOG.info(
-                    "batch_complete",  # retained for backward compatibility in log queries
-                    extra={"pages": len(aggregated_pages), "parts": len(split.parts), "aggregated": True},
-                )
-                _LOG.info(
-                    "aggregated_batch_complete",
-                    extra={
-                        "total_pages": len(aggregated_pages),
-                        "parts": len(split.parts),
-                        "split_manifest": split.manifest_gcs_uri,
-                        "batch_mode": "async_split",
-                    },
-                )
-                return merged
-            # Output URI base left None to auto-generate unique prefix for single large file
+            temp_path: Optional[Path] = None
             try:
+                if source_path is None:
+                    with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
+                        tmp.write(pdf_bytes)
+                        temp_path = Path(tmp.name)
+                    src_for_batch = str(temp_path)
+                else:
+                    src_for_batch = str(source_path)
                 batch_result = batch_process_documents_gcs(
                     src_for_batch,
                     None,
@@ -286,14 +198,20 @@ class OCRService:
                     location,
                     project_id=project_id,
                 )
-                # Tag single batch path as async_single for observability
                 meta = batch_result.setdefault("batch_metadata", {})
-                meta.setdefault("batch_mode", "async_single")
+                meta.setdefault("batch_mode", "async_auto")
+                meta.setdefault("pages_estimated", page_count)
                 return batch_result
             except ValidationError:
                 raise
             except Exception as exc:
                 raise OCRServiceError(f"Batch OCR failed: {exc}") from exc
+            finally:
+                if temp_path:
+                    try:
+                        temp_path.unlink(missing_ok=True)  # type: ignore[attr-defined]
+                    except Exception:  # pragma: no cover - cleanup best effort
+                        pass
 
         # Synchronous path (existing behaviour)
         try:
@@ -323,4 +241,480 @@ class OCRService:
         return _normalise(raw_doc)
 
 
-__all__ = ["OCRService"]
+def _resolve_state_store(job_id: str | None, state_store: PipelineStateStore | None) -> PipelineStateStore | None:
+    if not job_id:
+        return None
+    if state_store:
+        return state_store
+    try:
+        return create_state_store_from_env()
+    except Exception:  # pragma: no cover - fallback when state backend not configured
+        _LOG.debug("state_store_resolution_failed", exc_info=True)
+        return None
+
+
+def _merge_metadata(base: Dict[str, Any], patch: Dict[str, Any]) -> Dict[str, Any]:
+    merged = dict(base)
+    merged.update(patch)
+    return merged
+
+
+def _split_gcs_uri(gcs_uri: str) -> tuple[str, str]:
+    if not gcs_uri.startswith("gs://"):
+        raise OCRServiceError("GCS URI must start with gs://")
+    bucket, _, blob = gcs_uri[5:].partition("/")
+    if not bucket or not blob:
+        raise OCRServiceError("Invalid GCS URI; expected gs://bucket/object")
+    return bucket, blob
+
+
+def _gcs_upload_json(
+    gcs_uri: str,
+    payload: Dict[str, Any],
+    *,
+    if_generation_match: int | None = None,
+) -> Optional[int]:
+    try:
+        from google.cloud import storage  # type: ignore
+    except Exception as exc:  # pragma: no cover - optional dependency
+        raise OCRServiceError(f"google-cloud-storage unavailable: {exc}") from exc
+
+    bucket_name, object_name = _split_gcs_uri(gcs_uri)
+    client = storage.Client()
+    blob = client.bucket(bucket_name).blob(object_name)
+    upload_kwargs: Dict[str, Any] = {"content_type": "application/json"}
+    if if_generation_match is not None:
+        upload_kwargs["if_generation_match"] = if_generation_match
+    blob.upload_from_string(json.dumps(payload, separators=(",", ":"), ensure_ascii=False), **upload_kwargs)
+    return getattr(blob, "generation", None)
+
+
+def _extract_gcs_output(result: Any) -> Optional[str]:
+    if not result:
+        return None
+    if isinstance(result, dict):
+        doc_cfg = result.get("document_output_config") or result.get("documentOutputConfig") or {}
+        if isinstance(doc_cfg, dict):
+            gcs_cfg = doc_cfg.get("gcs_output_config") or doc_cfg.get("gcsOutputConfig") or {}
+            if isinstance(gcs_cfg, dict):
+                uri = gcs_cfg.get("gcs_uri") or gcs_cfg.get("gcsUri")
+                if uri:
+                    return uri
+        uri_direct = result.get("gcs_uri") or result.get("gcsUri")
+        if isinstance(uri_direct, str):
+            return uri_direct
+    for attr in ("document_output_config", "documentOutputConfig"):
+        doc_cfg = getattr(result, attr, None)
+        if doc_cfg:
+            gcs_cfg = getattr(doc_cfg, "gcs_output_config", None) or getattr(doc_cfg, "gcsOutputConfig", None)
+            if gcs_cfg:
+                uri = getattr(gcs_cfg, "gcs_uri", None) or getattr(gcs_cfg, "gcsUri", None)
+                if uri:
+                    return uri
+    metadata = getattr(result, "metadata", None)
+    if metadata:
+        return _extract_gcs_output(metadata)
+    return None
+
+
+def _normalise_shard_entry(entry: Any) -> Optional[str]:
+    if isinstance(entry, str):
+        return entry
+    if isinstance(entry, dict):
+        for key in ("gcs_uri", "gcsUri", "uri"):
+            value = entry.get(key)
+            if isinstance(value, str):
+                return value
+    for attr in ("gcs_uri", "gcsUri", "uri"):
+        value = getattr(entry, attr, None)
+        if isinstance(value, str):
+            return value
+    return None
+
+
+def _extract_shards(result: Any, output_uri: str) -> list[str]:
+    shards: list[str] = []
+    candidates: Iterable[Any] = ()
+    if isinstance(result, dict):
+        for key in ("shards", "documents", "documentMetadata", "document_metadata"):
+            value = result.get(key)
+            if isinstance(value, Sequence):
+                candidates = value
+                break
+    else:
+        for attr in ("shards", "documents", "documentMetadata", "document_metadata"):
+            value = getattr(result, attr, None)
+            if isinstance(value, Sequence):
+                candidates = value
+                break
+    for item in candidates:
+        normalised = _normalise_shard_entry(item)
+        if normalised:
+            shards.append(normalised)
+    if not shards:
+        shards.append(output_uri.rstrip("/") + "/shard-000.pdf")
+    # Deduplicate while preserving order
+    seen: set[str] = set()
+    deduped: list[str] = []
+    for shard in shards:
+        if shard in seen:
+            continue
+        seen.add(shard)
+        deduped.append(shard)
+    return deduped
+
+
+def _poll_operation(
+    operation: Any,
+    *,
+    stage: str,
+    job_id: str | None,
+    trace_id: str | None,
+    sleep_fn: Callable[[float], None] = time.sleep,
+    initial_delay: float = 5.0,
+    max_delay: float = 45.0,
+    max_attempts: int = 60,
+) -> Any:
+    delay = initial_delay
+    attempt = 0
+    while True:
+        attempt += 1
+        try:
+            if hasattr(operation, "result"):
+                return operation.result(timeout=delay)
+            if hasattr(operation, "done") and operation.done():  # pragma: no cover - compatibility fallback
+                return getattr(operation, "result", lambda: None)()
+            return operation  # pragma: no cover - minimal fallback
+        except gexc.DeadlineExceeded as exc:
+            if attempt >= max_attempts:
+                raise OCRServiceError(f"{stage} operation timed out") from exc
+            wait_base = min(delay, max_delay)
+            jitter = random.uniform(0.25 * wait_base, 0.75 * wait_base)
+            sleep_seconds = wait_base + jitter
+            _LOG.info(
+                "docai_operation_retry",
+                extra={
+                    "stage": stage,
+                    "attempt": attempt,
+                    "sleep_seconds": round(sleep_seconds, 2),
+                    "job_id": job_id,
+                    "trace_id": trace_id,
+                },
+            )
+            sleep_fn(sleep_seconds)
+            delay = min(delay * 1.6, max_delay)
+            continue
+        except gexc.GoogleAPICallError as exc:  # pragma: no cover - network specific handling
+            raise OCRServiceError(f"{stage} operation failed: {exc}") from exc
+        except Exception as exc:  # pragma: no cover - defensive wrap
+            raise OCRServiceError(f"{stage} operation error: {exc}") from exc
+
+
+def run_splitter(
+    gcs_uri: str,
+    *,
+    processor_id: str | None = None,
+    project_id: str | None = None,
+    location: str | None = None,
+    output_bucket: str | None = None,
+    output_prefix: str | None = None,
+    manifest_name: str = "split.json",
+    job_id: str | None = None,
+    trace_id: str | None = None,
+    state_store: PipelineStateStore | None = None,
+    client: Any | None = None,
+    sleep_fn: Callable[[float], None] = time.sleep,
+) -> Dict[str, Any]:
+    if not gcs_uri:
+        raise ValidationError("gcs_uri required")
+    cfg = get_config()
+    project_id = project_id or cfg.project_id
+    location = location or cfg.region
+    processor_id = processor_id or cfg.doc_ai_splitter_id
+    if not processor_id:
+        raise OCRServiceError("DOC_AI_SPLITTER_PROCESSOR_ID not configured")
+    output_bucket = output_bucket or cfg.intake_gcs_bucket
+    base_prefix = output_prefix or f"split/{job_id or uuid.uuid4().hex}/"
+    destination_uri = f"gs://{output_bucket.rstrip('/')}/{base_prefix.lstrip('/')}"
+    _LOG.info(
+        "docai_split_start",
+        extra={
+            "input": gcs_uri,
+            "output_prefix": destination_uri,
+            "processor": processor_id,
+            "job_id": job_id,
+            "trace_id": trace_id,
+        },
+    )
+    client = client or documentai.DocumentProcessorServiceClient(
+        client_options=ClientOptions(api_endpoint=f"{location}-documentai.googleapis.com")
+    )
+    request = {
+        "name": f"projects/{project_id}/locations/{location}/processors/{processor_id}",
+        "input_documents": {
+            "gcs_documents": {"documents": [{"gcs_uri": gcs_uri, "mime_type": "application/pdf"}]}
+        },
+        "document_output_config": {"gcs_output_config": {"gcs_uri": destination_uri}},
+    }
+    resolved_store = _resolve_state_store(job_id, state_store)
+    job_snapshot = None
+    if resolved_store and job_id:
+        try:
+            resolved_store.mark_status(
+                job_id,
+                PipelineStatus.SPLIT_SCHEDULED,
+                stage="DOC_AI_SPLITTER",
+                message="Splitter job started",
+                extra={"input_uri": gcs_uri, "output_uri": destination_uri},
+            )
+        except Exception:
+            _LOG.exception("split_state_mark_start_failed", extra={"job_id": job_id, "trace_id": trace_id})
+        try:
+            job_snapshot = resolved_store.get_job(job_id)
+        except Exception:  # pragma: no cover - defensive read
+            _LOG.exception("split_state_snapshot_failed", extra={"job_id": job_id, "trace_id": trace_id})
+            job_snapshot = None
+    started_at = time.perf_counter()
+    operation = client.batch_process_documents(request=request)
+    result = _poll_operation(
+        operation,
+        stage="docai_splitter",
+        job_id=job_id,
+        trace_id=trace_id,
+        sleep_fn=sleep_fn,
+    )
+    duration_ms = int((time.perf_counter() - started_at) * 1000)
+    output_uri = _extract_gcs_output(result) or destination_uri
+    shards = _extract_shards(result, output_uri)
+    manifest_uri = output_uri.rstrip("/") + f"/{manifest_name}"
+    try:
+        _gcs_upload_json(
+            manifest_uri,
+            {"shards": shards, "source": gcs_uri, "operation": getattr(operation, "name", None)},
+            if_generation_match=0,
+        )
+    except Exception as exc:  # pragma: no cover - best effort
+        _LOG.warning("split_manifest_write_failed", extra={"manifest_uri": manifest_uri, "error": str(exc)})
+
+    if resolved_store and job_id:
+        try:
+            job_snapshot = job_snapshot or resolved_store.get_job(job_id)
+            metadata_base: Dict[str, Any] = {}
+            if job_snapshot:
+                metadata_base = dict(job_snapshot.metadata)
+            metadata_patch = {
+                "split_manifest_uri": manifest_uri,
+                "split_output_uri": output_uri,
+                "split_shards": shards,
+            }
+            resolved_store.mark_status(
+                job_id,
+                PipelineStatus.SPLIT_DONE,
+                stage="DOC_AI_SPLITTER",
+                message="Splitter job complete",
+                extra={"shard_count": len(shards)},
+                updates={"metadata": _merge_metadata(metadata_base, metadata_patch)},
+            )
+        except Exception:
+            _LOG.exception("split_state_mark_complete_failed", extra={"job_id": job_id, "trace_id": trace_id})
+    attempt_value = 1
+    if job_snapshot and isinstance(job_snapshot.retries, dict):
+        attempt_value = job_snapshot.retries.get("DOC_AI_SPLITTER", 0) + 1
+    log_extra: Dict[str, Any] = {
+        "job_id": job_id,
+        "trace_id": trace_id,
+        "document_id": gcs_uri,
+        "shard_id": "aggregate",
+        "duration_ms": duration_ms,
+        "schema_version": cfg.summary_schema_version,
+        "attempt": attempt_value,
+        "component": "docai_splitter",
+        "severity": "INFO",
+        "manifest_uri": manifest_uri,
+        "shard_count": len(shards),
+    }
+    if trace_id:
+        log_extra["logging.googleapis.com/trace"] = f"projects/{project_id}/traces/{trace_id}"
+    _LOG.info("split_done", extra=log_extra)
+    return {
+        "operation": getattr(operation, "name", None),
+        "output_uri": output_uri,
+        "manifest_uri": manifest_uri,
+        "shards": shards,
+    }
+
+
+def run_batch_ocr(
+    shards: Sequence[str],
+    *,
+    processor_id: str | None = None,
+    project_id: str | None = None,
+    location: str | None = None,
+    output_bucket: str | None = None,
+    output_prefix: str | None = None,
+    job_id: str | None = None,
+    trace_id: str | None = None,
+    state_store: PipelineStateStore | None = None,
+    client: Any | None = None,
+    max_concurrency: int = 12,
+    sleep_fn: Callable[[float], None] = time.sleep,
+) -> Dict[str, Any]:
+    if not shards:
+        raise ValidationError("shards must be a non-empty sequence")
+    cfg = get_config()
+    project_id = project_id or cfg.project_id
+    location = location or cfg.region
+    processor_id = processor_id or cfg.doc_ai_processor_id
+    if not processor_id:
+        raise OCRServiceError("DOC_AI_PROCESSOR_ID not configured")
+    output_bucket = output_bucket or cfg.output_gcs_bucket
+    base_prefix = output_prefix or f"ocr/{job_id or uuid.uuid4().hex}/"
+
+    client = client or documentai.DocumentProcessorServiceClient(
+        client_options=ClientOptions(api_endpoint=f"{location}-documentai.googleapis.com")
+    )
+    resolved_store = _resolve_state_store(job_id, state_store)
+    if resolved_store and job_id:
+        try:
+            resolved_store.mark_status(
+                job_id,
+                PipelineStatus.OCR_SCHEDULED,
+                stage="DOC_AI_OCR",
+                message="OCR fan-out scheduled",
+                extra={"shard_count": len(shards)},
+            )
+        except Exception:
+            _LOG.exception("ocr_state_mark_start_failed", extra={"job_id": job_id, "trace_id": trace_id})
+
+    outputs: list[Dict[str, Any]] = []
+    inflight: list[tuple[int, str, str, Any, float]] = []
+    shard_iter = iter(enumerate(shards))
+    attempt_value = 1
+    job_snapshot = None
+    if resolved_store and job_id:
+        try:
+            job_snapshot = resolved_store.get_job(job_id)
+        except Exception:
+            _LOG.exception("ocr_state_snapshot_failed", extra={"job_id": job_id, "trace_id": trace_id})
+    if job_snapshot and isinstance(job_snapshot.retries, dict):
+        attempt_value = job_snapshot.retries.get("DOC_AI_OCR", 0) + 1
+
+    def _enqueue_next() -> bool:
+        try:
+            shard_index, shard_uri = next(shard_iter)
+        except StopIteration:
+            return False
+        dest_uri = f"gs://{output_bucket.rstrip('/')}/{base_prefix.lstrip('/')}{shard_index:04d}/"
+        request = {
+            "name": f"projects/{project_id}/locations/{location}/processors/{processor_id}",
+            "input_documents": {
+                "gcs_documents": {"documents": [{"gcs_uri": shard_uri, "mime_type": "application/pdf"}]}
+            },
+            "document_output_config": {"gcs_output_config": {"gcs_uri": dest_uri}},
+        }
+        operation = client.batch_process_documents(request=request)
+        started_at = time.perf_counter()
+        inflight.append((shard_index, shard_uri, dest_uri, operation, started_at))
+        log_extra = {
+            "job_id": job_id,
+            "trace_id": trace_id,
+            "document_id": shard_uri,
+            "shard_id": f"{shard_index:04d}",
+            "duration_ms": 0,
+            "schema_version": cfg.summary_schema_version,
+            "attempt": attempt_value,
+            "component": "docai_ocr",
+            "severity": "INFO",
+        }
+        if trace_id:
+            log_extra["logging.googleapis.com/trace"] = f"projects/{project_id}/traces/{trace_id}"
+        _LOG.info("ocr_lro_started", extra=log_extra)
+        return True
+
+    for _ in range(min(max_concurrency, len(shards))):
+        if not _enqueue_next():
+            break
+
+    while inflight:
+        shard_index, shard_uri, dest_uri, operation, started_at = inflight.pop(0)
+        try:
+            result = _poll_operation(
+                operation,
+                stage="docai_ocr",
+                job_id=job_id,
+                trace_id=trace_id,
+                sleep_fn=sleep_fn,
+            )
+        except Exception as exc:
+            if resolved_store and job_id:
+                try:
+                    resolved_store.mark_status(
+                        job_id,
+                        PipelineStatus.FAILED,
+                        stage="DOC_AI_OCR",
+                        message=str(exc),
+                        extra={"shard_uri": shard_uri},
+                        updates={
+                            "last_error": {
+                                "stage": "ocr",
+                                "shard_uri": shard_uri,
+                                "error": str(exc),
+                            }
+                        },
+                    )
+                except Exception:
+                    _LOG.exception("ocr_state_mark_failure_failed", extra={"job_id": job_id, "trace_id": trace_id})
+            raise
+
+        output_uri = _extract_gcs_output(result) or dest_uri
+        duration_ms = int((time.perf_counter() - started_at) * 1000)
+        log_extra = {
+            "job_id": job_id,
+            "trace_id": trace_id,
+            "document_id": shard_uri,
+            "shard_id": f"{shard_index:04d}",
+            "duration_ms": duration_ms,
+            "schema_version": cfg.summary_schema_version,
+            "attempt": attempt_value,
+            "component": "docai_ocr",
+            "severity": "INFO",
+            "ocr_output_uri": output_uri,
+        }
+        if trace_id:
+            log_extra["logging.googleapis.com/trace"] = f"projects/{project_id}/traces/{trace_id}"
+        _LOG.info("ocr_lro_finished", extra=log_extra)
+        outputs.append(
+            {
+                "shard_uri": shard_uri,
+                "ocr_output_uri": output_uri,
+                "operation": getattr(operation, "name", None),
+            }
+        )
+
+        if max_concurrency > 1:
+            while len(inflight) < max_concurrency:
+                if not _enqueue_next():
+                    break
+
+    if resolved_store and job_id:
+        try:
+            job_snapshot = resolved_store.get_job(job_id)
+            metadata_base: Dict[str, Any] = {}
+            if job_snapshot:
+                metadata_base = dict(job_snapshot.metadata)
+            metadata_patch = {"ocr_outputs": outputs}
+            resolved_store.mark_status(
+                job_id,
+                PipelineStatus.OCR_DONE,
+                stage="DOC_AI_OCR",
+                message="OCR fan-out complete",
+                extra={"shard_count": len(outputs)},
+                updates={"metadata": _merge_metadata(metadata_base, metadata_patch)},
+            )
+        except Exception:
+            _LOG.exception("ocr_state_mark_complete_failed", extra={"job_id": job_id, "trace_id": trace_id})
+
+    return {"outputs": outputs}
+
+
+__all__ = ["OCRService", "run_splitter", "run_batch_ocr"]

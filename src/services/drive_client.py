@@ -10,7 +10,8 @@ from __future__ import annotations
 
 import io
 import logging
-from typing import Any
+import time
+from typing import Any, Dict, Optional
 from googleapiclient.discovery import build  # type: ignore
 from googleapiclient.http import MediaIoBaseDownload, MediaIoBaseUpload  # type: ignore
 from google.oauth2 import service_account  # type: ignore
@@ -19,6 +20,7 @@ import os
 from src.config import get_config
 
 _SCOPES = ["https://www.googleapis.com/auth/drive"]
+_LOG = logging.getLogger("drive_client")
 
 
 def _drive_service():
@@ -33,6 +35,7 @@ def _drive_service():
 def download_pdf(file_id: str) -> bytes:
     if not file_id:
         raise ValueError('file_id required')
+    _LOG.info("drive_download_started", extra={"file_id": file_id})
     service = _drive_service()
     # Attempt Shared Drive parameter if supported (mock in tests doesn't accept it)
     try:  # pragma: no cover - thin wrapper
@@ -47,10 +50,11 @@ def download_pdf(file_id: str) -> bytes:
     data = buf.getvalue()
     if not data.startswith(b'%PDF-'):
         raise ValueError('Downloaded file is not a PDF')
+    _LOG.info("drive_download_complete", extra={"file_id": file_id, "bytes": len(data)})
     return data
 
 
-def upload_pdf(file_bytes: bytes, report_name: str) -> str:
+def upload_pdf(file_bytes: bytes, report_name: str, *, log_context: Optional[Dict[str, Any]] = None) -> str:
     if not file_bytes or not file_bytes.startswith(b'%PDF-'):
         raise ValueError('file_bytes must be a PDF (bytes starting with %PDF-)')
     cfg = get_config()
@@ -64,7 +68,11 @@ def upload_pdf(file_bytes: bytes, report_name: str) -> str:
         'mimeType': 'application/pdf',
         'parents': [folder_id],
     }
-    logging.info("Starting Drive upload (Shared Drive mode)...")
+    _LOG.info(
+        "drive_upload_started",
+        extra={"report_name": report_name, "bytes": len(file_bytes), "parents": [folder_id]},
+    )
+    started_at = time.perf_counter()
     try:  # pragma: no cover
         created = service.files().create(
             body=file_metadata,
@@ -78,7 +86,26 @@ def upload_pdf(file_bytes: bytes, report_name: str) -> str:
             media_body=media,
             fields='id',
         ).execute()
-    logging.info("Drive upload complete → ID: %s", created.get('id'))
+    duration_ms = int((time.perf_counter() - started_at) * 1000)
+    context = dict(log_context or {})
+    context.setdefault("job_id", None)
+    context.setdefault("trace_id", None)
+    context.setdefault("document_id", report_name)
+    context.setdefault("shard_id", "aggregate")
+    context.setdefault("schema_version", cfg.summary_schema_version or os.getenv("SUMMARY_SCHEMA_VERSION", "2025-10-01"))
+    context.setdefault("attempt", 1)
+    context.setdefault("component", "drive_client")
+    context.setdefault("severity", "INFO")
+    if context.get("trace_id") and "logging.googleapis.com/trace" not in context:
+        context["logging.googleapis.com/trace"] = f"projects/{cfg.project_id}/traces/{context['trace_id']}"
+    context.update(
+        {
+            "duration_ms": duration_ms,
+            "drive_file_id": created.get('id'),
+            "bytes": len(file_bytes),
+        }
+    )
+    _LOG.info("drive_upload_complete", extra=context)
     return created['id']
 
 __all__ = ['download_pdf', 'upload_pdf']

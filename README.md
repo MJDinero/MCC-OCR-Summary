@@ -1,302 +1,179 @@
-MCC-OCR-Summary
-================
+# MCC OCR Summary
 
-Microservice that ingests a PDF (up to 80MB), performs OCR via Google Document AI, summarises the extracted text with a pluggable LLM backend (OpenAI by default), and returns a generated summary PDF.
+Event-driven medical summarisation pipeline for MCC intake documents. PDFs arriving in the intake
+bucket trigger an asynchronous workflow that splits large files, fans out Document AI OCR, produces a
+refactored LLM summary, renders a signed PDF, and uploads the result back to GCS and Drive. All stages
+emit structured logs with shared correlation fields (`job_id`, `trace_id`, `schema_version`, `duration_ms`)
+to enforce observability and SLO tracking.
 
-Architecture Highlights
------------------------
-* FastAPI application (`src/main.py`)
-* Services: OCR (`OCRService`), Summariser (`Summariser`), PDF generation (`PDFWriter`)
-* Strict input validation (extension, MIME type, magic header, size limit) & custom exceptions mapped to HTTP status codes
-* Structured JSON logging with request correlation (`request_id` header)
-* Exponential backoff retries (tenacity) for transient OCR & summarisation failures
-* Dependency injection via lightweight service singletons (future-ready for a container)
+## Architecture
 
-Environment Variables
----------------------
-The service loads configuration from environment variables (see `src/config.py`). Startup validation (`cfg.validate_required()`) enforces required values unless `STUB_MODE=true`.
-
-Required in non-stub mode:
-* `PROJECT_ID` (or `GCP_PROJECT_ID`)
-* `DOC_AI_LOCATION` (e.g. `us`)
-* `DOC_AI_OCR_PROCESSOR_ID` (primary OCR processor; legacy alias `DOC_AI_OCR_PARSER_ID` accepted)
-* `OPENAI_API_KEY` (unless retrieved from Secret Manager fallback)
-* `ALLOWED_ORIGINS` (explicit, comma-separated list; wildcard `*` rejected)
-
-Important / Optional:
-* `STUB_MODE` (enable relaxed validation; allow wildcard or missing `ALLOWED_ORIGINS` + missing `OPENAI_API_KEY`)
-* `MAX_PDF_BYTES` (default 83886080 = 80MB) – upload streaming hard limit.
-* `ENABLE_METRICS` (default true) – expose `/metrics`.
-* `DOC_AI_FORM_PARSER_ID`, `DOC_AI_INVOICE_PROCESSOR`, `DOC_AI_SPLITTER_PROCESSOR`, `DOC_AI_CLASSIFIER_PROCESSOR`
-* `DRIVE_ROOT_FOLDER_ID`, `DRIVE_INTAKE_FOLDER_ID`, `DRIVE_ENABLED`, `WRITE_TO_DRIVE`
-* `SHEET_ID`, `SHEET_TAB_GID`, `SHEETS_ENABLED`
-* `PDF_ENABLED`, `PDF_TEMPLATE`
-* `FULL_PROCESSING` (reserved future flag)
-* `CLAIM_LOG_SALT`, `ARTIFACT_BUCKET`
-* `REGION` (deployment convenience)
-
-Alias Behavior:
-* Legacy env var `DOC_AI_OCR_PARSER_ID` maps to `DOC_AI_OCR_PROCESSOR_ID` (see `tests/test_config_alias.py`).
-
-Secret Fallback:
-* If `OPENAI_API_KEY` missing in non-stub mode the service will attempt to fetch Secret Manager secret `OPENAI_API_KEY` under the active project. Failures are ignored silently.
-
-Secrets should be provided via your deployment environment (Cloud Run secrets, Secret Manager, or CI environment), never hard-coded.
-
-Local Development
------------------
-Create & activate a Python 3.11 environment, install dependencies, then run:
-
-```bash
-uvicorn src.main:app --reload --port 8000
+```
+          +-----------------------+        +------------------------------+
+Drive -> | Intake GCS (Eventarc) | -----> | FastAPI Ingest (Cloud Run)   |
+          +-----------------------+        +------------------------------+
+                                                     |
+                                                     | launches Cloud Workflows (trace, job_id)
+                                                     v
+                                      +----------------------------------------+
+                                      | Cloud Workflows orchestrator           |
+                                      | - Splitter (DocAI)                     |
+                                      | - OCR fan-out (max 12 shards)          |
+                                      | - Summariser job (Cloud Run Job)       |
+                                      | - PDF writer job (Cloud Run Job)       |
+                                      +----------------------------------------+
+                                                     |
+                                                     v
+                          +----------------------+    +------------------------+
+                          | Summary JSON (GCS)   |    | PDF + signed URL (GCS) |
+                          +----------------------+    +------------------------+
+                                                     |
+                                                     v
+                                      +------------------------------+
+                                      | Drive uploader (optional)   |
+                                      +------------------------------+
 ```
 
-Health Check:
+Key configuration, service accounts, and deployment wiring are documented in the top-level
+`pipeline.yaml` manifest.
 
-```bash
-curl http://localhost:8000/healthz
-```
+## Service Breakdown
 
-Processing Endpoint (multipart upload):
+- **Ingestion API (`src/main.py`)**
+  - Validates Eventarc payloads, enforces env validation, and persists jobs via `PipelineStateStore`.
+  - Emits `ingest_received` log with full context and returns `412 Precondition Failed` on duplicates.
+  - Launches Cloud Workflows with trace propagation and signed internal token.
 
-```bash
-curl -X POST -F "file=@sample.pdf" http://localhost:8000/process -o summary.pdf
-```
+- **Cloud Workflows (`workflows/pipeline.yaml`)**
+  - Schedules splitter, OCR fan-out, summariser, and PDF writer steps.
+  - Passes `--gcs-if-generation 0` / `--if-generation-match 0` to enforce idempotent uploads.
+  - Updates pipeline state milestones through `/internal/jobs/{job_id}/events`.
 
-Testing & Coverage
-------------------
-Run unit tests with coverage (target >= 80%):
+- **Document AI helpers (`src/services/docai_helper.py`)**
+  - Adds `split_done`, `ocr_lro_started`, `ocr_lro_finished` markers with duration, shard id, attempt.
+  - Deduplicates shards and persists manifest using `ifGenerationMatch`.
 
-```bash
-pytest --cov=src --cov-report=term-missing
-```
+- **Summariser job (`src/services/summariser_refactored.py`)**
+  - Strict JSON schema enforcement (`schema_version="2025-10-01"`) for chunk responses.
+  - Emits `summary_done` log with duration, schema version, job metadata, and trace linkage.
 
-Logging
--------
-Logs are emitted as structured JSON to stdout. Provide an `x-request-id` header to propagate correlation; otherwise one is generated per request.
+- **PDF writer job (`src/services/pdf_writer_refactored.py`)**
+  - Defaults `--if-generation-match 0`, logs `pdf_writer_complete` with pipeline context.
+  - Updates state store with PDF URI and signed URLs; reuses new Drive client context.
 
-Metrics & Instrumentation
--------------------------
-If `ENABLE_METRICS=true` (default), a Prometheus scrape endpoint is exposed at `/metrics` providing counters / histograms for HTTP and internal operations. Additional request instrumentation (via `prometheus-fastapi-instrumentator`) is automatically added when available and metrics are enabled.
+- **Drive client (`src/services/drive_client.py`)**
+  - Upload logs include pipeline metadata (`drive_upload_complete`) for metrics & SLOs.
 
-Example:
-```bash
-curl http://localhost:8000/metrics | grep ocr_service_calls_total
-```
+## SLOs & Monitoring
 
-CI
---
-GitHub Actions workflow `.github/workflows/ci.yml` runs on pushes and PRs:
-1. Installs dependencies & pylint
-2. Lints all Python files
-3. Runs tests with coverage (threshold enforced via `pytest.ini`)
+- **Latency**: p95 end-to-end < 10 minutes (tracked via log-based metric chaining required markers).
+- **Error Rate**: < 1% ingestion/API 5xx (Cloud Run request_count metric, burn rate alert).
+- **DLQ Depth**: 0 messages in pipeline dead-letter topic.
 
-Failing lint or coverage will fail the workflow.
+Alert policies live in `infra/monitoring/alert_policies.yaml` (burn-rate, DLQ backlog, stalled OCR).
+Dashboard queries and layout guidance are provided in `audit/sample_dashboards.md`. Log-based metrics
+are derived from the structured markers above; ensure logs land in Cloud Logging with trace IDs.
 
-Docker
-------
-The Docker image is multi-stage, installs only runtime dependencies, and runs as a non-root `app` user. A health check probes `/healthz`.
+## Runbook
 
-Build the container:
+- **Duplicate ingestion / idempotency**
+  - Duplicate `/ingest` returns `412` with the existing `job_id`. Operators can inform clients that the
+    original pipeline run continues; no manual dedupe required.
+  - Replaying Cloud Workflows triggers will skip GCS uploads thanks to `ifGenerationMatch=0`.
 
-```bash
-docker build -t mcc-ocr-summary:latest .
-```
+- **DLQ drain**
+  1. Inspect `mcc-ocr-pipeline-dlq` subscription via `gcloud pubsub subscriptions pull`.
+  2. For retriable events, re-trigger ingestion with the original payload (ensure new trace id).
+  3. For poisoned messages, record in incident doc and acknowledge to unblock backlog.
 
-Run:
+- **Rollback**
+  - Latest successful canary revision is stored in Cloud Build artifact `/workspace/rollback_revision.txt`.
+  - Execute:
+    ```
+    gcloud run services update-traffic mcc-ocr-summary \
+      --region ${REGION} --to-revisions PREVIOUS=100
+    ```
+    or use the concrete revision printed by the `record-rollback-info` step.
 
-```bash
-docker run -p 8000:8000 \
-	-e PROJECT_ID=your-project \
-	-e DOC_AI_LOCATION=us \
-	-e DOC_AI_OCR_PROCESSOR_ID=processor123 \
-	-e OPENAI_API_KEY=sk-... \
-	mcc-ocr-summary:latest
-```
+## Operations
 
-Security & Validation
----------------------
-* File extension must be `.pdf` and content type `application/pdf` (or fallback `application/octet-stream`).
-* Streaming size enforcement: upload is read in ~1MB chunks; aborts once `MAX_PDF_BYTES` exceeded (prevents large memory allocation of huge files).
-* Magic header (`%PDF-`) validation ensures minimal structural integrity before sending to Document AI.
-* Sanitization: control characters stripped and overly long text bounded before summarisation to mitigate token waste.
-* Strict CORS in production: wildcard origins rejected unless `STUB_MODE=true`.
-* Container runs as non-root; slim base and no build toolchain in final stage.
+- **CI/CD Pipeline**
+  - `cloudbuild.yaml` stages:
+    1. `lint-and-type` (`ruff`, `mypy`)
+    2. `unit-tests` (pytest offline, coverage ≥85%)
+    3. `integration-tests` (DocAI/OpenAI mocked)
+    4. Build runtime image
+    5. Deploy ingestion canary (5%)
+    6. Deploy summariser/PDF Cloud Run Jobs
+    7. Deploy Workflow definition
+    8. `scripts/e2e_smoke.sh` (signed URL validation, log sequence, duplicate ingest = 412)
+    9. Promote to 100% or record rollback command
 
-Future Enhancements
--------------------
-* Richer PDF layout (tables, headers) via ReportLab backend.
-* OpenTelemetry traces end-to-end (foundation in place; metrics already integrated).
-* Additional summarisation providers (Anthropic, Vertex AI) via backend registry.
-* Circuit breaker & adaptive retry jitter.
-* Streaming direct-to-GCS to eliminate RAM use for very large PDFs.
-* PDF size histogram & summarisation chunk count metrics.
+  - Trigger build:
+    ```bash
+    gcloud builds submit \
+      --config cloudbuild.yaml \
+      --substitutions=_PROJECT=${PROJECT_ID},_REGION=${REGION},\
+_DOC_AI_PROCESSOR_ID=${DOC_AI_PROCESSOR_ID},_DOC_AI_SPLITTER_PROCESSOR_ID=${DOC_AI_SPLITTER_PROCESSOR_ID},\
+_INTAKE_BUCKET=${INTAKE_BUCKET},_OUTPUT_BUCKET=${OUTPUT_BUCKET},_SUMMARY_BUCKET=${SUMMARY_BUCKET},\
+_STATE_BUCKET=${STATE_BUCKET},_STATE_PREFIX=pipeline-state,_WORKFLOW_NAME=${WORKFLOW_NAME}
+    ```
 
-Deployment (Cloud Run)
-----------------------
-Hardened manual deployment example:
+- **Smoke Test (staging / prod)**
+  ```bash
+  PROJECT_ID=... REGION=... INTAKE_BUCKET=... SERVICE_URL=https://mcc-ocr-summary-... \
+  ./scripts/e2e_smoke.sh
+  ```
+  The script uploads a fixture PDF, waits for `/status` to reach `UPLOADED`, validates the signed URL,
+  asserts duplicate ingest returns `412`, and verifies log markers in chronological order.
 
-```bash
-export PROJECT_ID=your-project
-export REGION=us-central1
-export PROCESSOR_ID=processor123
-gcloud builds submit --tag gcr.io/$PROJECT_ID/mcc-ocr-summary:final
-gcloud run deploy mcc-ocr-summary \
-	--image gcr.io/$PROJECT_ID/mcc-ocr-summary:final \
-	--region $REGION \
-	--platform managed \
-	--allow-unauthenticated \
-	--set-env-vars PROJECT_ID=$PROJECT_ID,DOC_AI_LOCATION=us,DOC_AI_OCR_PROCESSOR_ID=$PROCESSOR_ID,MAX_PDF_BYTES=83886080,ENABLE_METRICS=true \
-	--set-env-vars ALLOWED_ORIGINS=https://your.frontend.app \
-	--set-secrets OPENAI_API_KEY=OPENAI_API_KEY:latest
-```
+- **Log inspection**
+  ```bash
+  gcloud logging read \
+    'jsonPayload.job_id="JOB123" AND resource.type="cloud_run_revision"' \
+    --project "${PROJECT_ID}" --limit 100 --order asc
+  ```
 
-Only after verifying the service starts (health endpoint 200) should you apply IAM policy bindings for invokers:
+## IAM & Secrets
 
-```bash
-gcloud run services add-iam-policy-binding mcc-ocr-summary \
-	--region $REGION \
-	--member="user:you@example.com" \
-	--role="roles/run.invoker"
-```
+- Provision SAs with `infra/iam.sh`:
+  - Ingestion: `roles/run.invoker`, `roles/workflows.invoker`, `roles/secretmanager.secretAccessor`,
+    `roles/logging.logWriter`, `roles/monitoring.metricWriter`.
+  - Workflow: + `roles/documentai.apiUser`, storage viewer/creator, `roles/pubsub.publisher`.
+  - Summariser/PDF jobs: storage viewer/creator, secret accessor, logging/monitoring, PDF job also
+    `roles/iam.serviceAccountTokenCreator` for optional signed URL KMS.
+- All secrets (OpenAI API key, internal tokens) read from Secret Manager URIs defined in
+  `infra/runtime.env.sample`.
 
-The existing `scripts/deploy.sh` can be updated to reflect these flags.
+## Local Development & Testing
 
-Local Secrets Management
-------------------------
-For local dev you can create a `.env` file (not committed) with required variables. `pydantic-settings` loads it automatically.
+- Python 3.11 virtualenv recommended:
+  ```bash
+  python3 -m venv .venv && source .venv/bin/activate
+  python -m pip install -r requirements-dev.txt
+  ```
+  (Note: CI installs dependencies offline inside Cloud Build. Local environment requires internet.)
 
-Example `.env` (do NOT commit real secrets):
-```
-PROJECT_ID=dev-project
-DOC_AI_LOCATION=us
-DOC_AI_OCR_PROCESSOR_ID=xxxx
-OPENAI_API_KEY=xxxx
-MAX_PDF_BYTES=83886080
-ENABLE_METRICS=true
-STUB_MODE=true
-# Example explicit CORS for local multi-origin dev
-ALLOWED_ORIGINS=http://localhost:3000,http://127.0.0.1:5173
-```
+- Run FastAPI locally:
+  ```bash
+  uvicorn src.main:app --reload --port 8080
+  ```
 
-Pre-commit Hooks
-----------------
-Install developer tooling locally:
+- Offline unit tests (mocks OpenAI/DocAI/GCS):
+  ```bash
+  pytest -q -m "not integration" --cov=src --cov-report=term-missing --cov-fail-under=85
+  ```
+  Integration tests (`-m "integration"`) rely on the same mocks but execute broader flows.
 
-```bash
-pip install -r requirements-dev.txt
-pre-commit install
-```
+- Lint/type:
+  ```bash
+  ruff check . && mypy .
+  ```
 
-Configured hooks (see `.pre-commit-config.yaml`):
-* `ruff` (lint & format check & autofix)
-* `black` (code formatting)
-* `isort` (import ordering)
-* `mypy` (static typing)
-* `forbid-print` custom guard
+## Release Checklist
 
-Resiliency & Connectivity Diagnostics (batch-v10)
-------------------------------------------------
-Recent production issues surfaced transient `APIConnectionError` failures when calling the OpenAI Responses API with no accompanying summariser lifecycle logs. To diagnose and remediate, batch-v10 introduced several temporary and permanent hardening changes:
-
-Permanent Changes:
-* DNS Pre-resolution: At startup (and per summariser call) the service resolves `api.openai.com` and logs the resolved IP (`openai_dns_resolution`). Failures log `openai_dns_resolution_failed`.
-* Extended Timeout: OpenAI client timeout increased to 180s (was 120s) to better accommodate large multi-chunk prompts and upstream latency spikes.
-* Retry Policy: Manual retry loop in `OpenAIBackend._invoke_with_retry` increased from 5 → 6 attempts with exponential backoff + jitter (capped at 30s). Connection and timeout errors categorized (`category`: connection | rate_limit | unexpected) for observability.
-* Structured Lifecycle Events: `summariser_call_start`, `summariser_retry_attempt`, `summariser_call_complete`, and `summariser_call_failed` provide attempt, latency, error type, and token/char metadata.
-* Multi-Chunk Summaries: Large OCR texts are chunked (threshold ~20k chars) with partial aggregation to reduce token waste while retaining context.
-
-Temporary Diagnostic Endpoint:
-* `/ping_openai`: Performs DNS resolution and a lightweight `GET /v1/models` request, returning status, elapsed seconds, first 120 chars of response body, and any error diagnostic. This endpoint is intended ONLY for short-lived production validation of outbound connectivity and will be removed after confirmation (create an issue referencing its removal once stable).
-
-Operational Verification Steps:
-1. Deploy image (e.g. `batch-v10`).
-2. Invoke `/ping_openai` (authenticated if service requires auth) and expect HTTP 200 plus a non-error body snippet. If DNS fails, investigate Cloud DNS / VPC egress.
-3. Process a known large PDF via `/process_drive` and verify logs contain the summariser lifecycle events and final `aggregated_batch_complete`.
-
-Log Field Reference (key extras):
-* `attempt` – 1-based retry counter.
-* `latency_ms` – end-to-end OpenAI API call duration.
-* `wait_seconds` – backoff delay on retry events.
-* `error_type` – exception class name.
-* `category` – high-level grouping (connection, rate_limit, unexpected).
-* `approx_tokens` – estimated prompt size (chars/4 heuristic) for capacity planning.
-
-Removal Plan:
-* After two successful large-document end-to-end runs (no connection retries exhausted), delete `/ping_openai` and associated references. Track via an issue titled "Remove temporary /ping_openai connectivity endpoint".
-
-Security Notes:
-* No secret values are logged. Only metadata and truncated response heads are exposed.
-* Ensure `/ping_openai` is not left unauthenticated in long-term deployments; prefer restricting or removing.
-
-This section will be pruned once the diagnostics endpoint is removed and stability is confirmed.
-
-Structured Summariser (structured-v1)
-------------------------------------
-The legacy single-paragraph summariser has been upgraded to a structured multi-section generator that produces a medically oriented narrative plus indexed lists. It is controlled by the feature flag `USE_STRUCTURED_SUMMARISER` (defaults to `true`).
-
-Activation:
-* Set `USE_STRUCTURED_SUMMARISER=true` (already the default in `.env.template` and CI). Setting `false` will fall back to legacy behaviour (single aggregated paragraph); this path is retained only temporarily for rollback and will be removed in a future major version.
-
-Pipeline Overview:
-1. OCR text is sanitised (control chars removed, capped) then chunked into ~2.5K character segments (hard max 3K) on word boundaries.
-2. Each chunk is sent to the OpenAI backend with a deterministic (`temperature=0`) JSON‑only instruction requesting these snake_case keys:
-	* `provider_seen`
-	* `reason_for_visit`
-	* `clinical_findings`
-	* `treatment_plan`
-	* `diagnoses` (array or comma string, includes ICD-10 codes if explicitly present)
-	* `providers`
-	* `medications`
-3. Per‑chunk JSON is merged:
-	* Narrative fields concatenated with de‑duplication preserving first occurrence order.
-	* List fields normalised: strings → split on commas/semicolons when multi-valued, flattened, de‑duplicated.
-4. A composite human‑readable "Medical Summary" is assembled containing four narrative sections and three indexed lists with simple text formatting (no markdown):
-	* Provider Seen
-	* Reason for Visit
-	* Clinical Findings
-	* Treatment / Follow-Up Plan
-	* Diagnoses (bulleted)
-	* Providers (bulleted)
-	* Medications / Prescriptions (bulleted)
-5. Legacy PDF contract: The final dict returned to the PDF writer preserves the original display headings:
-	* `Patient Information` (currently `N/A` placeholder – future enhancement may parse demographics)
-	* `Medical Summary` (full multi-section narrative + indices)
-	* `Billing Highlights` (`N/A` unless future extraction added)
-	* `Legal / Notes` (`N/A` placeholder for compliance notes)
-
-Observability Events (JSON logs):
-* `summariser_chunking` – number of chunks determined.
-* `summariser_chunk_start` / `summariser_chunk_complete` – per chunk lifecycle.
-* `summariser_call_start` / `summariser_call_complete` – raw OpenAI call timing & token heuristics.
-* `summariser_retry_attempt` – retry metadata (category: connection | rate_limit | unexpected).
-* `summariser_generation_complete` – counts of merged list items.
-* `summariser_variant_selected` (on startup) – confirms active variant (`structured-v1` or `legacy`).
-
-Error Handling:
-* Transient OpenAI connectivity/timeouts & 5xx responses retried up to 6 attempts with exponential backoff + jitter (capped 30s) at the backend layer, and an outer 4-attempt retry in the `Summariser` class for chunk-level transient failures.
-* Authentication (401/403) failures are surfaced immediately without retry.
-
-Determinism:
-* `temperature=0` and explicit instruction to return **only JSON** yields stable outputs. Minor wording differences can still occur if upstream OCR differs between runs.
-
-Extensibility / Future Enhancements:
-* Demographics extraction to populate `Patient Information`.
-* Billing code / CPT summarisation to repopulate `Billing Highlights`.
-* Structured medication normalisation (dose / frequency parsing) prior to PDF rendering.
-* Additional backend providers (Anthropic / Vertex) via a pluggable backend registry.
-
-Rollback Strategy:
-* Toggle `USE_STRUCTURED_SUMMARISER=false` and redeploy (legacy path preserved while code still contains mapping of legacy snake_case keys). Plan removal after two stable production cycles.
-
-Removal TODOs:
-* Remove legacy summariser path & flag (create issue: "Retire legacy summariser path and USE_STRUCTURED_SUMMARISER flag").
-* Remove `/ping_openai` endpoint after connectivity stability validated (see above diagnostics section).
-
-Testing:
-* New tests cover multi-chunk merging, list de-duplication, structured → legacy heading mapping, PDF section ordering, and error fallbacks for missing keys.
-* Legacy tests referencing old behaviour have been skipped (retained as inert files to minimise churn until permanent removal).
-
-
-
-
+- [ ] Confirm `scripts/e2e_smoke.sh` passes (signed URL 200, duplicate = 412, ordered markers).
+- [ ] Review Cloud Logging for `ingest_received → split_done → ocr_lro_finished → summary_done → pdf_writer_complete → drive_upload_complete`.
+- [ ] Ensure alert policies deployed (`gcloud monitoring policies create --policy-from-file=infra/monitoring/alert_policies.yaml`).
+- [ ] Validate IAM via `infra/iam.sh` and `gcloud projects get-iam-policy`.
+- [ ] Promote canary only after smoke test success; note rollback command from Cloud Build logs.

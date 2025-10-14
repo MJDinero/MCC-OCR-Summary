@@ -95,10 +95,10 @@ class OpenAIBackend:  # pragma: no cover - network heavy, exercised in integrati
                 _LOG.info("openai_sdk_version", extra={"version": getattr(_openai_mod, '__version__', 'unknown')})
                 self._logged_version = True  # type: ignore
             # Import exception classes for granular handling
-            API_CONN_ERR = getattr(_openai_mod, 'APIConnectionError', tuple())
-            API_TIMEOUT_ERR = getattr(_openai_mod, 'APITimeoutError', tuple())
-            API_ERROR = getattr(_openai_mod, 'APIError', tuple())
-            RATE_LIMIT_ERR = getattr(_openai_mod, 'RateLimitError', tuple())
+            API_CONN_ERR: Any = getattr(_openai_mod, 'APIConnectionError', tuple())
+            API_TIMEOUT_ERR: Any = getattr(_openai_mod, 'APITimeoutError', tuple())
+            API_ERROR: Any = getattr(_openai_mod, 'APIError', tuple())
+            RATE_LIMIT_ERR: Any = getattr(_openai_mod, 'RateLimitError', tuple())
         except Exception as exc:  # pragma: no cover - import/runtime
             raise TransientSummarizationError(f"OpenAI import/init failed: {exc}") from exc
 

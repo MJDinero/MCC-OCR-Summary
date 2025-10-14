@@ -1,4 +1,4 @@
-from src.services.summariser import Summariser, SummarizationBackend
+from src.services.summariser import Summariser
 
 
 class DummyBackend:

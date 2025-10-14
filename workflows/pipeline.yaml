@@ -14,27 +14,106 @@ main:
           - requestId: ${event.request_id}
           - dedupeKey: ${event.dedupe_key}
           - objectUri: ${event.object_uri}
-          - workflowBase: ${sys.get_env("PIPELINE_SERVICE_BASE_URL")}
-          - internalToken: ${sys.get_env("INTERNAL_EVENT_TOKEN")}
-          - httpHeaders:
-              X-Cloud-Trace-Context: ${event.trace_context}
-              Content-Type: application/json
-              X-Internal-Token: ${internalToken}
-          - project: ${sys.get_env("PROJECT_ID")}
-          - location: ${sys.get_env("REGION")}
-          - splitterProcessor: ${sys.get_env("DOC_AI_SPLITTER_PROCESSOR_ID")}
-          - ocrProcessor: ${sys.get_env("DOC_AI_PROCESSOR_ID")}
-          - summariserJob: ${sys.get_env("SUMMARISER_JOB_NAME")}
-          - pdfJob: ${sys.get_env("PDF_JOB_NAME")}
-          - intakeBucket: ${sys.get_env("INTAKE_BUCKET")}
-          - outputBucket: ${sys.get_env("OUTPUT_BUCKET")}
-          - summaryBucket: ${sys.get_env("SUMMARY_BUCKET")}
-          - fanoutConcurrency: ${sys.get_env("MAX_SHARD_CONCURRENCY")}
-          - dlqTopic: ${sys.get_env("PIPELINE_DLQ_TOPIC")}
+          - workflowBase: ${event.pipeline_service_base_url}
+          - internalToken: ${event.internal_event_token}
+          - callerServiceAccount: ${sys.get_env("WORKFLOW_CALLER_SA")}
+          - project: ${event.project_id}
+          - location: ${event.region}
+          - splitterProcessor: ${event.doc_ai_splitter_processor_id}
+          - ocrProcessor: ${event.doc_ai_processor_id}
+          - summariserJob: ${event.summariser_job_name}
+          - pdfJob: ${event.pdf_job_name}
+          - intakeBucket: ${event.intake_bucket}
+          - outputBucket: ${event.output_bucket}
+          - summaryBucket: ${event.summary_bucket}
+          - fanoutConcurrency: ${event.max_shard_concurrency}
+          - dlqTopic: ${event.pipeline_dlq_topic}
           - splitOutputUri: null
           - splitManifestUri: null
           - shards: []
           - ocrResults: []
+          - hasSplitter: ${false}
+          - docAiLocation: ${event.doc_ai_location}
+    - hydrateWorkflowBase:
+        switch:
+          - condition: ${workflowBase == null}
+            assign:
+              - workflowBase: ${sys.get_env("PIPELINE_SERVICE_BASE_URL")}
+    - hydrateProject:
+        switch:
+          - condition: ${project == null}
+            assign:
+              - project: ${sys.get_env("PROJECT_ID")}
+    - hydrateRegion:
+        switch:
+          - condition: ${location == null}
+            assign:
+              - location: ${sys.get_env("REGION")}
+    - hydrateDocAiLocation:
+        switch:
+          - condition: ${docAiLocation == null}
+            assign:
+              - docAiLocation: ${sys.get_env("DOC_AI_LOCATION")}
+    - defaultDocAiLocation:
+        switch:
+          - condition: ${docAiLocation == null}
+            assign:
+              - docAiLocation: ${location}
+    - hydrateProcessors:
+        steps:
+          - ensureSplitter:
+              switch:
+                - condition: ${splitterProcessor == null}
+                  assign:
+                    - splitterProcessor: ${sys.get_env("DOC_AI_SPLITTER_PROCESSOR_ID")}
+          - normalizeBlankSplitter:
+              switch:
+                - condition: ${splitterProcessor == ""}
+                  assign:
+                    - splitterProcessor: null
+          - ensureOcr:
+              switch:
+                - condition: ${ocrProcessor == null}
+                  assign:
+                    - ocrProcessor: ${sys.get_env("DOC_AI_PROCESSOR_ID")}
+    - hydrateJobs:
+        steps:
+          - ensureSummariser:
+              switch:
+                - condition: ${summariserJob == null}
+                  assign:
+                    - summariserJob: ${sys.get_env("SUMMARISER_JOB_NAME")}
+          - ensurePdf:
+              switch:
+                - condition: ${pdfJob == null}
+                  assign:
+                    - pdfJob: ${sys.get_env("PDF_JOB_NAME")}
+    - hydrateFanout:
+        switch:
+          - condition: ${fanoutConcurrency == null}
+            assign:
+              - fanoutConcurrency: ${sys.get_env("MAX_SHARD_CONCURRENCY")}
+    - hydrateDlq:
+        switch:
+          - condition: ${dlqTopic == null}
+            assign:
+              - dlqTopic: ${sys.get_env("PIPELINE_DLQ_TOPIC")}
+    - hydrateInternalToken:
+        switch:
+          - condition: ${internalToken == null}
+            assign:
+              - internalToken: ${sys.get_env("INTERNAL_EVENT_TOKEN")}
+    - defaultInternalToken:
+        switch:
+          - condition: ${internalToken == null}
+            assign:
+              - internalToken: ""
+    - buildHttpHeaders:
+        assign:
+          - httpHeaders:
+              X-Cloud-Trace-Context: ${event.trace_context}
+              Content-Type: application/json
+              X-Internal-Token: ${internalToken}
     - hydrateObjectUri:
         steps:
           - fallbackToGcsUri:
@@ -101,6 +180,9 @@ main:
             raise: "SUMMARISER_JOB_NAME must be configured"
           - condition: ${pdfJob == null}
             raise: "PDF_JOB_NAME must be configured"
+    - setSplitterFlag:
+        assign:
+          - hasSplitter: ${splitterProcessor != null and splitterProcessor != ""}
     - runPipeline:
         try:
           steps:
@@ -108,6 +190,9 @@ main:
                 call: http.post
                 args:
                   url: ${workflowBase + "/internal/jobs/" + jobId + "/events"}
+                  auth:
+                    type: OIDC
+                    audience: ${workflowBase}
                   headers: ${httpHeaders}
                   body:
                     status: SPLIT_SCHEDULED
@@ -117,18 +202,18 @@ main:
                       object_uri: ${objectUri}
             - maybeSplit:
                 switch:
-                  - condition: ${splitterProcessor == null}
+                  - condition: ${hasSplitter == false}
                     assign:
                       - splitOutputUri: ${objectUri}
                       - splitManifestUri: null
                       - shards:
                           - ${objectUri}
-                  - condition: ${splitterProcessor != null}
+                  - condition: ${hasSplitter}
                     steps:
                       - startSplit:
                           call: googleapis.documentai.v1.projects.locations.processors.batchProcess
                           args:
-                            name: ${"projects/" + project + "/locations/" + location + "/processors/" + splitterProcessor}
+                            name: ${"projects/" + project + "/locations/" + docAiLocation + "/processors/" + splitterProcessor}
                             body:
                               inputDocuments:
                                 gcsDocuments:
@@ -171,9 +256,15 @@ main:
                             - assignResult:
                                 steps:
                                   - setSplitOutputs:
-                                      assign:
-                                        - splitOutputUri: ${splitStatus.response.documentOutputConfig.gcsOutputConfig.gcsUri}
-                                        - splitManifestUri: ${splitOutputUri + "split.json"}
+                                      switch:
+                                        - condition: ${splitStatus.response != null and splitStatus.response.documentOutputConfig != null and splitStatus.response.documentOutputConfig.gcsOutputConfig != null}
+                                          assign:
+                                            - splitOutputUri: ${splitStatus.response.documentOutputConfig.gcsOutputConfig.gcsUri}
+                                            - splitManifestUri: ${splitOutputUri + "split.json"}
+                                        - condition: ${splitStatus.response == null or splitStatus.response.documentOutputConfig == null or splitStatus.response.documentOutputConfig.gcsOutputConfig == null}
+                                          assign:
+                                            - splitOutputUri: ${"gs://" + intakeBucket + "/split/" + jobId + "/"}
+                                            - splitManifestUri: ${splitOutputUri + "split.json"}
                                   - setShardsFromMetadata:
                                       switch:
                                         - condition: ${splitStatus.response.documentMetadata != null and splitStatus.response.documentMetadata.shardGcsUris != null}
@@ -193,6 +284,9 @@ main:
                 call: http.post
                 args:
                   url: ${workflowBase + "/internal/jobs/" + jobId + "/events"}
+                  auth:
+                    type: OIDC
+                    audience: ${workflowBase}
                   headers: ${httpHeaders}
                   body:
                     status: SPLIT_DONE
@@ -207,6 +301,9 @@ main:
                 call: http.post
                 args:
                   url: ${workflowBase + "/internal/jobs/" + jobId + "/events"}
+                  auth:
+                    type: OIDC
+                    audience: ${workflowBase}
                   headers: ${httpHeaders}
                   body:
                     status: OCR_SCHEDULED
@@ -221,7 +318,7 @@ main:
                     - startShard:
                         call: googleapis.documentai.v1.projects.locations.processors.batchProcess
                         args:
-                          name: ${"projects/" + project + "/locations/" + location + "/processors/" + ocrProcessor}
+                          name: ${"projects/" + project + "/locations/" + docAiLocation + "/processors/" + ocrProcessor}
                           body:
                             inputDocuments:
                               gcsDocuments:
@@ -263,11 +360,14 @@ main:
                                   next: sleepShard
                           - resultAssign:
                               assign:
-                                - shardOutput: ${shardStatus.response.documentOutputConfig.gcsOutputConfig.gcsUri}
+                                - shardOutput: ${"gs://" + outputBucket + "/ocr/" + jobId + "/" + string(shardIndex) + "/"}
                     - shardEvent:
                         call: http.post
                         args:
                           url: ${workflowBase + "/internal/jobs/" + jobId + "/events"}
+                          auth:
+                            type: OIDC
+                            audience: ${workflowBase}
                           headers: ${httpHeaders}
                           body:
                             status: OCR_SCHEDULED
@@ -276,29 +376,27 @@ main:
                             extra:
                               shard_uri: ${shardUri}
                               ocr_output_uri: ${shardOutput}
-                    - buildShardResult:
-                        assign:
-                          - shardRecord:
-                              shard_uri: ${shardUri}
-                              ocr_output_uri: ${shardOutput}
-                    - appendResult:
-                        assign:
-                          - ocrResults: ${ocrResults + [shardRecord]}
             - markOcrDone:
                 call: http.post
                 args:
                   url: ${workflowBase + "/internal/jobs/" + jobId + "/events"}
+                  auth:
+                    type: OIDC
+                    audience: ${workflowBase}
                   headers: ${httpHeaders}
                   body:
                     status: OCR_DONE
                     stage: DOC_AI_OCR
                     message: "OCR fan-out complete"
                     metadataPatch:
-                      ocr_outputs: ${ocrResults}
+                      ocr_outputs: ${shards}
             - markSummaryScheduled:
                 call: http.post
                 args:
                   url: ${workflowBase + "/internal/jobs/" + jobId + "/events"}
+                  auth:
+                    type: OIDC
+                    audience: ${workflowBase}
                   headers: ${httpHeaders}
                   body:
                     status: SUMMARY_SCHEDULED
@@ -324,7 +422,6 @@ main:
                       args:
                         name: ${"projects/" + project + "/locations/" + location + "/jobs/" + summariserJob}
                         body:
-                          taskCount: 1
                           overrides:
                             containerOverrides:
                               - args: ${summariserArgs}
@@ -348,6 +445,9 @@ main:
                 call: http.post
                 args:
                   url: ${workflowBase + "/internal/jobs/" + jobId + "/events"}
+                  auth:
+                    type: OIDC
+                    audience: ${workflowBase}
                   headers: ${httpHeaders}
                   body:
                     status: SUPERVISOR_DONE
@@ -357,6 +457,9 @@ main:
                 call: http.post
                 args:
                   url: ${workflowBase + "/internal/jobs/" + jobId + "/events"}
+                  auth:
+                    type: OIDC
+                    audience: ${workflowBase}
                   headers: ${httpHeaders}
                   body:
                     status: PDF_SCHEDULED
@@ -370,7 +473,7 @@ main:
                       assign:
                         - pdfArgs:
                             - "--input"
-                            - ${"/tmp/summary.json"}
+                            - ${"gs://" + summaryBucket + "/summaries/" + jobId + ".json"}
                             - "--upload-gcs"
                             - ${"gs://" + summaryBucket + "/pdf/" + jobId + ".pdf"}
                             - "--job-id"
@@ -382,7 +485,6 @@ main:
                       args:
                         name: ${"projects/" + project + "/locations/" + location + "/jobs/" + pdfJob}
                         body:
-                          taskCount: 1
                           overrides:
                             containerOverrides:
                               - args: ${pdfArgs}
@@ -411,6 +513,9 @@ main:
                       call: http.post
                       args:
                         url: ${workflowBase + "/internal/jobs/" + jobId + "/events"}
+                        auth:
+                          type: OIDC
+                          audience: ${workflowBase}
                         headers: ${httpHeaders}
                         body:
                           status: PDF_DONE
@@ -422,6 +527,9 @@ main:
                 call: http.post
                 args:
                   url: ${workflowBase + "/internal/jobs/" + jobId + "/events"}
+                  auth:
+                    type: OIDC
+                    audience: ${workflowBase}
                   headers: ${httpHeaders}
                   body:
                     status: UPLOADED
@@ -436,13 +544,16 @@ main:
                 call: http.post
                 args:
                   url: ${workflowBase + "/internal/jobs/" + jobId + "/events"}
+                  auth:
+                    type: OIDC
+                    audience: ${workflowBase}
                   headers: ${httpHeaders}
                   body:
                     status: FAILED
                     stage: FAILURE
-                    message: '${"Pipeline failure: " + string(e)}'
+                    message: '${"Pipeline failure: " + text.decode(json.encode(e))}'
                     extra:
-                      error: ${string(e)}
+                      error: '${text.decode(json.encode(e))}'
             - publishDlq:
                 switch:
                   - condition: ${dlqTopic != null}
@@ -453,7 +564,7 @@ main:
                             topic: ${"projects/" + project + "/topics/" + dlqTopic}
                             body:
                               messages:
-                                - data: ${base64.encode(string(e))}
+                                - data: ${base64.encode(json.encode(e))}
                                   attributes:
                                     job_id: ${jobId}
                                     trace_id: ${traceId}

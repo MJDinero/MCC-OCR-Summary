@@ -1,6 +1,6 @@
 import pytest
 
-from src.services.summariser import Summariser, SummarizationBackend
+from src.services.summariser import Summariser
 from src.errors import SummarizationError
 
 

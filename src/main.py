@@ -1,45 +1,240 @@
-"""FastAPI application entrypoint (slimmed MVP version).
-
-batch-v11 connectivity hardening:
- - Force stdout logging early with basicConfig (before configure_logging)
- - Sanitize OPENAI_API_KEY (strip whitespace/newlines) before use
- - Explicit startup markers
-"""
+"""FastAPI application for the asynchronous MCC OCR → Summary pipeline."""
 from __future__ import annotations
 
-import io
+import base64
+import json
 import logging
-import sys
-import socket
-import time
 import os
-from fastapi import FastAPI, File, UploadFile, Depends, Request, Query
-from fastapi.responses import StreamingResponse, JSONResponse, PlainTextResponse
+import secrets
+import socket
+import sys
+import time
+import uuid
+from typing import Any, Dict, Mapping, MutableMapping
+
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse, PlainTextResponse
+from pydantic import BaseModel, Field, ValidationError as PydanticValidationError, field_validator
 
 from src.config import get_config
-from src.services.docai_helper import OCRService
-from src.services.summariser import Summariser, StructuredSummariser, OpenAIBackend
-from src.services.pdf_writer import PDFWriter, MinimalPDFBackend
-from src.services.supervisor import CommonSenseSupervisor
-from src.errors import ValidationError, OCRServiceError, SummarizationError, PDFGenerationError
+from src.errors import ValidationError
 from src.logging_setup import configure_logging
+from src.services.pipeline import (
+    DuplicateJobError,
+    PipelineJobCreate,
+    PipelineStateStore,
+    PipelineStatus,
+    WorkflowLauncher,
+    create_state_store_from_env,
+    create_workflow_launcher_from_env,
+    extract_trace_id,
+    job_public_view,
+)
+from src.services.docai_helper import OCRService
 
-# drive_client will be added shortly
-try:  # pragma: no cover - optional during refactor
-    from src.services.drive_client import download_pdf, upload_pdf  # type: ignore
-except Exception:  # pragma: no cover
-    download_pdf = upload_pdf = None  # type: ignore
-
-# Force basic stdout logging early (will be complemented by structured config in configure_logging)
+# Force stdout logging early (before configure_logging)
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(levelname)s %(name)s %(message)s",
     stream=sys.stdout,
     force=True,
 )
-logging.info("\u2705 Logging initialized (stdout)")
+logging.info("✅ Logging initialised (stdout)")
 
 _API_LOG = logging.getLogger("api")
+
+
+class StorageObjectPayload(BaseModel):
+    """Subset of GCS Object finalize payload fields we require."""
+
+    bucket: str | None = None
+    name: str | None = None
+    generation: str | None = None
+    metageneration: str | None = None
+    size: int | None = Field(default=None, alias="size")
+    md5_hash: str | None = Field(default=None, alias="md5Hash")
+    content_type: str | None = Field(default=None, alias="contentType")
+    metadata: dict[str, Any] | None = None
+
+    @field_validator("size", mode="before")
+    @classmethod
+    def _coerce_size(cls, value: Any) -> int | None:
+        if value is None or value == "":
+            return None
+        if isinstance(value, int):
+            return value
+        try:
+            return int(value)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("size must be numeric") from exc
+
+    model_config = {"populate_by_name": True}
+
+
+class IngestRequest(BaseModel):
+    """Payload accepted by the /ingest endpoint (Eventarc → Cloud Run)."""
+
+    gcs_object: StorageObjectPayload = Field(alias="object")
+    source: str | None = None
+    drive_file_id: str | None = Field(default=None, alias="driveFileId")
+    attributes: dict[str, Any] | None = None
+    trace_id: str | None = None
+    request_id: str | None = None
+
+    model_config = {"populate_by_name": True}
+
+
+class JobEventPayload(BaseModel):
+    """Internal event updates issued by Cloud Workflow steps or Jobs."""
+
+    status: PipelineStatus
+    stage: str | None = None
+    message: str | None = None
+    extra: dict[str, Any] | None = None
+    retry_stage: str | None = Field(default=None, alias="retryStage")
+    pdf_uri: str | None = Field(default=None, alias="pdfUri")
+    signed_url: str | None = Field(default=None, alias="signedUrl")
+    lro_name: str | None = Field(default=None, alias="lroName")
+    last_error: dict[str, Any] | None = Field(default=None, alias="lastError")
+    metadata_patch: dict[str, Any] | None = Field(default=None, alias="metadataPatch")
+
+    model_config = {"populate_by_name": True}
+
+
+def _health_payload() -> dict[str, str]:
+    return {"status": "ok"}
+
+
+def _b64_json_decode(value: str) -> Dict[str, Any] | None:
+    padded = value + "=" * (-len(value) % 4)
+    try:
+        decoded = base64.b64decode(padded)
+        return json.loads(decoded.decode("utf-8"))
+    except (ValueError, UnicodeDecodeError, json.JSONDecodeError):
+        return None
+
+
+def _first_non_empty(*candidates: Any) -> Any:
+    for item in candidates:
+        if isinstance(item, str) and item.strip():
+            return item
+        if item not in (None, "", {}):
+            return item
+    return None
+
+
+def _extract_traceparent(trace_parent: str | None) -> tuple[str | None, str | None]:
+    if not trace_parent:
+        return None, None
+    parts = trace_parent.split("-")
+    if len(parts) < 4:
+        return None, None
+    trace_id_hex = parts[1].strip()
+    span_hex = parts[2].strip()
+    if not trace_id_hex:
+        return None, None
+    try:
+        span_dec = str(int(span_hex, 16))
+    except ValueError:
+        span_dec = span_hex
+    return f"{trace_id_hex}/{span_dec};o=1", trace_id_hex
+
+
+def _build_ingest_payload(raw: Dict[str, Any], headers: Mapping[str, str]) -> Dict[str, Any]:
+    if "object" in raw:
+        payload = dict(raw)
+    elif "data" in raw and isinstance(raw["data"], dict):
+        payload = {"object": raw["data"]}
+    elif "bucket" in raw and "name" in raw:
+        payload = {"object": raw}
+    elif "message" in raw and isinstance(raw["message"], MutableMapping):
+        message = raw["message"]
+        attributes = message.get("attributes")
+        if not isinstance(attributes, MutableMapping):
+            attributes = {}
+        decoded: Dict[str, Any] | None = None
+        data_field = message.get("data")
+        if isinstance(data_field, str):
+            decoded = _b64_json_decode(data_field)
+        elif isinstance(data_field, MutableMapping):
+            decoded = dict(data_field)
+        gcs_source: Dict[str, Any] = decoded if isinstance(decoded, dict) else {}
+        gcs_object = dict(gcs_source)
+        for key, candidates in (
+            ("bucket", ("bucket", "bucketId", "bucket_id")),
+            ("name", ("name", "object", "objectId", "object_id")),
+            ("generation", ("generation", "objectGeneration")),
+            ("metageneration", ("metageneration",)),
+            ("md5Hash", ("md5Hash", "md5hash")),
+            ("size", ("size",)),
+            ("contentType", ("contentType", "content_type")),
+        ):
+            if not gcs_object.get(key):
+                fallback = _first_non_empty(*(gcs_source.get(c) for c in candidates), *(attributes.get(c) for c in candidates))
+                if fallback is not None:
+                    gcs_object[key] = fallback
+        if "metadata" in gcs_source and isinstance(gcs_source["metadata"], dict):
+            gcs_object["metadata"] = dict(gcs_source["metadata"])
+        payload = {"object": gcs_object}
+        if attributes:
+            payload["attributes"] = dict(attributes)
+        if raw.get("source"):
+            payload["source"] = raw["source"]
+        request_id = raw.get("requestId") or attributes.get("eventId") or message.get("messageId")
+        if request_id:
+            payload["request_id"] = request_id
+        trace_id = raw.get("traceId") or attributes.get("traceId")
+        if trace_id:
+            payload["trace_id"] = trace_id
+    else:
+        payload = {}
+
+    if "object" not in payload or not isinstance(payload["object"], MutableMapping):
+        raise HTTPException(status_code=422, detail="Invalid CloudEvent or JSON payload")
+
+    ce_id = headers.get("ce-id")
+    if ce_id:
+        payload["request_id"] = ce_id
+
+    trace_parent_ctx, trace_parent_id = _extract_traceparent(headers.get("ce-traceparent"))
+    if trace_parent_id and not payload.get("trace_id"):
+        payload["trace_id"] = trace_parent_id
+    if trace_parent_ctx and "trace_context" not in payload:
+        payload["trace_context"] = trace_parent_ctx
+
+    return payload
+
+
+async def _parse_ingest_request(request: Request) -> IngestRequest:
+    body_bytes = await request.body()
+    if not body_bytes:
+        raise HTTPException(status_code=422, detail="Invalid CloudEvent or JSON payload")
+    try:
+        decoded = json.loads(body_bytes.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise HTTPException(status_code=422, detail="Invalid CloudEvent or JSON payload") from exc
+    if not isinstance(decoded, dict):
+        raise HTTPException(status_code=422, detail="Invalid CloudEvent or JSON payload")
+    payload_dict = _build_ingest_payload(decoded, request.headers)
+    try:
+        return IngestRequest.model_validate(payload_dict)
+    except PydanticValidationError as exc:
+        raise HTTPException(status_code=422, detail="Invalid CloudEvent or JSON payload") from exc
+
+
+def _require_internal_token(request: Request, *, expected: str | None) -> None:
+    if not expected:
+        return
+    provided = request.headers.get("x-internal-token", "")
+    if not provided or not secrets.compare_digest(provided, expected):
+        raise HTTPException(status_code=401, detail="Missing or invalid internal token")
+
+
+def _merge_metadata(base: dict[str, Any], patch: dict[str, Any]) -> dict[str, Any]:
+    merged = dict(base)
+    for key, value in patch.items():
+        merged[key] = value
+    return merged
 
 
 def create_app() -> FastAPI:
@@ -48,264 +243,321 @@ def create_app() -> FastAPI:
         get_config.cache_clear()  # type: ignore[attr-defined]
     except Exception:  # pragma: no cover
         pass
+
     cfg = get_config()
-    app = FastAPI(title="MCC-OCR-Summary", version="0.2.0")
+    app = FastAPI(title="MCC-OCR-Summary", version="1.0.0")
     app.state.config = cfg
-    app.state.ocr_service = OCRService(cfg.doc_ai_processor_id or 'missing-processor')
-    # Sanitize API key (strip whitespace/newlines) to avoid header formatting errors
-    sanitized_key = (cfg.openai_api_key or '').strip().replace('\n', '')
-    if cfg.openai_api_key and sanitized_key != cfg.openai_api_key:
-        _API_LOG.info("openai_api_key_sanitized", extra={"original_len": len(cfg.openai_api_key), "sanitized_len": len(sanitized_key)})
-    # Determine model with fallback precedence: env OPENAI_MODEL > default list
-    fallback_models = [m for m in [cfg.openai_model, "gpt-4o-mini", "gpt-4o", "gpt-4.1-mini"] if m]
-    selected_model = fallback_models[0]
-    _API_LOG.info("openai_model_selected", extra={"model": selected_model, "candidates": fallback_models})
-    structured_enabled = bool(cfg.use_structured_summariser)
-    variant = 'structured-v1' if structured_enabled else 'legacy'
-    if structured_enabled:
-        _API_LOG.info("structured_summariser_active", extra={"event": "structured_active", "variant": variant, "emoji": "✅"})
-    else:
-        _API_LOG.warning("legacy_summariser_active", extra={"event": "legacy_active", "variant": variant, "emoji": "⚠️"})
-    _API_LOG.info("summariser_variant_selected", extra={"variant": variant, "structured": structured_enabled, "USE_STRUCTURED_SUMMARISER": structured_enabled})
-    summariser_cls = StructuredSummariser if structured_enabled else Summariser
-    app.state.summariser = summariser_cls(OpenAIBackend(api_key=sanitized_key, model=selected_model))
-    app.state.pdf_writer = PDFWriter(MinimalPDFBackend())
-    app.state.supervisor = CommonSenseSupervisor()
-    # Convenience alias so other code can access report folder quickly
-    app.state.drive_report_folder_id = cfg.drive_report_folder_id
+    app.state.state_store = create_state_store_from_env()
+    app.state.workflow_launcher = create_workflow_launcher_from_env()
+    app.state.internal_event_token = os.getenv("INTERNAL_EVENT_TOKEN")
 
-    # Dependency accessors
-    def get_ocr() -> OCRService: return app.state.ocr_service  # pragma: no cover
-    def get_sm() -> Summariser: return app.state.summariser  # pragma: no cover
-    def get_pdf() -> PDFWriter: return app.state.pdf_writer  # pragma: no cover
-    def get_supervisor() -> CommonSenseSupervisor: return app.state.supervisor  # pragma: no cover
-
-    # Exception handlers -> JSON
     @app.exception_handler(ValidationError)
     async def _val_handler(_r: Request, exc: ValidationError):
         return JSONResponse(status_code=400, content={"detail": str(exc)})
-    @app.exception_handler(OCRServiceError)
-    async def _ocr_handler(_r: Request, exc: OCRServiceError):
-        return JSONResponse(status_code=502, content={"detail": str(exc)})
-    @app.exception_handler(SummarizationError)
-    async def _sum_handler(_r: Request, exc: SummarizationError):
-        return JSONResponse(status_code=500, content={"detail": str(exc)})
-    @app.exception_handler(PDFGenerationError)
-    async def _pdf_handler(_r: Request, exc: PDFGenerationError):
-        return JSONResponse(status_code=500, content={"detail": str(exc)})
 
-    # Health route (primary)
-    # Unified health payload
-    def _health_payload():  # small helper for consistent body
-        return {"status": "ok"}
-
-    @app.get('/healthz', summary="Healthz")
+    # Health endpoints ---------------------------------------------------------
+    @app.get("/healthz", summary="Healthz")
     async def healthz():
         return _health_payload()
 
-    # Redundant aliases - sometimes platform/frontends or external checks use different conventions.
-    @app.get('/health', include_in_schema=False)
+    @app.get("/health", include_in_schema=False)
     async def health_alias():
         return _health_payload()
 
-    @app.get('/readyz', include_in_schema=False)
+    @app.get("/readyz", include_in_schema=False)
     async def readyz():
         return _health_payload()
 
-    @app.get('/', include_in_schema=False)
+    @app.get("/", include_in_schema=False)
     async def root_health():
         return _health_payload()
 
-    # Lightweight middleware to debug path resolution issues (can be removed later)
-    @app.middleware('http')
-    async def _path_debug_mw(request: Request, call_next):  # pragma: no cover - diagnostic only
-        if request.url.path in {'/healthz', '/health', '/readyz', '/'}:
-            _API_LOG.debug("health_probe", extra={"path": request.url.path})
-        return await call_next(request)
+    # Event-driven ingestion ---------------------------------------------------
+    @app.post("/ingest")
+    async def ingest(request: Request):
+        payload = await _parse_ingest_request(request)
+        state_store: PipelineStateStore = app.state.state_store
+        workflow_launcher: WorkflowLauncher = app.state.workflow_launcher
 
-    @app.post('/process')
-    async def process_upload(
-        file: UploadFile = File(...),
-        ocr: OCRService = Depends(get_ocr),
-        sm: Summariser = Depends(get_sm),
-        pdf: PDFWriter = Depends(get_pdf),
-        supervisor: CommonSenseSupervisor = Depends(get_supervisor),
-    ):
-        """(Legacy) Direct upload endpoint maintained for simple local testing."""
-        filename = file.filename or 'upload.pdf'
-        if not filename.lower().endswith('.pdf'):
-            raise ValidationError('File must have .pdf extension')
-        data = await file.read()
-        if not data:
-            raise ValidationError('Empty file')
-        if len(data) > cfg.max_pdf_bytes:
-            raise ValidationError('File too large')
-        ocr_doc = ocr.process(data)
-        ocr_text = ocr_doc.get('text', '')
-        doc_stats = supervisor.collect_doc_stats(
-            text=ocr_text,
-            pages=ocr_doc.get('pages'),
-            file_bytes=data,
-        )
-        summary_struct = sm.summarise(ocr_text)
-        validation = supervisor.validate(
-            ocr_text=ocr_text,
-            summary=summary_struct,
-            doc_stats=doc_stats,
-        )
-        if not validation.get('supervisor_passed'):
-            result = supervisor.retry_and_merge(
-                summariser=sm,
-                ocr_text=ocr_text,
-                doc_stats=doc_stats,
-                initial_summary=summary_struct,
-                initial_validation=validation,
-            )
-            summary_struct = result.summary
-            validation = result.validation
-        if not validation.get('supervisor_passed'):
-            raise SummarizationError(validation.get('reason') or 'Supervisor rejected summary')
-        pdf_bytes = pdf.build(summary_struct)
-        response = StreamingResponse(io.BytesIO(pdf_bytes), media_type='application/pdf')
-        response.headers['x-supervisor-status'] = 'passed'
-        response.headers['x-supervisor-retries'] = str(validation.get('retries', 0))
-        return response
+        trace_header = request.headers.get("x-cloud-trace-context")
+        trace_parent_ctx, trace_parent_id = _extract_traceparent(request.headers.get("ce-traceparent"))
+        if not trace_header and trace_parent_ctx:
+            trace_header = trace_parent_ctx
+        trace_id = payload.trace_id or extract_trace_id(trace_header) or trace_parent_id or uuid.uuid4().hex
+        request_id = payload.request_id or request.headers.get("ce-id") or trace_id
+        payload = payload.model_copy(update={"trace_id": trace_id, "request_id": request_id})
+        gcs_obj = payload.gcs_object
 
-    @app.get('/process_drive')
-    async def process_drive(
-        file_id: str = Query(..., description='Google Drive file ID of source PDF'),
-        ocr: OCRService = Depends(get_ocr),
-        sm: Summariser = Depends(get_sm),
-        pdf: PDFWriter = Depends(get_pdf),
-        supervisor: CommonSenseSupervisor = Depends(get_supervisor),
-    ):
-        # commit: robust error handling for drive pipeline
-        if not download_pdf or not upload_pdf:
-            raise ValidationError('Drive client not available yet')
+        if not gcs_obj.bucket or not gcs_obj.name:
+            raise ValidationError("GCS object bucket and name are required")
+
+        combined_metadata: dict[str, Any] = {}
+        if gcs_obj.metadata:
+            combined_metadata.update(gcs_obj.metadata)
+        if payload.attributes:
+            combined_metadata.update(payload.attributes)
+        cfg = get_config()
+        ingest_started = time.perf_counter()
+
+        job_create = PipelineJobCreate(
+            bucket=gcs_obj.bucket,
+            object_name=gcs_obj.name,
+            generation=gcs_obj.generation,
+            metageneration=gcs_obj.metageneration,
+            size_bytes=gcs_obj.size,
+            md5_hash=gcs_obj.md5_hash,
+            metadata=combined_metadata,
+            trace_id=trace_id,
+            source=payload.source,
+            drive_file_id=payload.drive_file_id,
+            request_id=payload.request_id,
+        )
+
         try:
-            source_bytes = download_pdf(file_id)
-            ocr_doc = ocr.process(source_bytes)
-            ocr_text = ocr_doc.get('text','')
-            doc_stats = supervisor.collect_doc_stats(
-                text=ocr_text,
-                pages=ocr_doc.get('pages'),
-                file_bytes=source_bytes,
+            job = state_store.create_job(job_create)
+            duration_ms = int((time.perf_counter() - ingest_started) * 1000)
+            log_extra = {
+                "job_id": job.job_id,
+                "trace_id": job.trace_id,
+                "document_id": job.object_uri,
+                "shard_id": "origin",
+                "duration_ms": duration_ms,
+                "schema_version": cfg.summary_schema_version,
+                "attempt": job.retries.get("INGEST", 0) + 1,
+                "component": "ingest_service",
+                "severity": "INFO",
+                "bucket": gcs_obj.bucket,
+                "object_name": gcs_obj.name,
+                "generation": gcs_obj.generation,
+            }
+            if job.trace_id:
+                log_extra["logging.googleapis.com/trace"] = f"projects/{cfg.project_id}/traces/{job.trace_id}"
+            _API_LOG.info("ingest_received", extra=log_extra)
+        except DuplicateJobError as dup:
+            job = dup.job
+            duration_ms = int((time.perf_counter() - ingest_started) * 1000)
+            log_extra = {
+                "job_id": job.job_id,
+                "trace_id": job.trace_id,
+                "document_id": job.object_uri,
+                "shard_id": "origin",
+                "duration_ms": duration_ms,
+                "schema_version": cfg.summary_schema_version,
+                "attempt": job.retries.get("INGEST", 0) + 1,
+                "component": "ingest_service",
+                "severity": "INFO",
+                "bucket": gcs_obj.bucket,
+                "object_name": gcs_obj.name,
+                "generation": gcs_obj.generation,
+                "duplicate": True,
+            }
+            if job.trace_id:
+                log_extra["logging.googleapis.com/trace"] = f"projects/{cfg.project_id}/traces/{job.trace_id}"
+            _API_LOG.info("ingest_received", extra=log_extra)
+            _API_LOG.info(
+                "ingest_duplicate",
+                extra={"job_id": job.job_id, "dedupe_key": job.dedupe_key, "trace_id": job.trace_id},
             )
-            summary_struct = sm.summarise(ocr_text)
-            validation = supervisor.validate(
-                ocr_text=ocr_text,
-                summary=summary_struct,
-                doc_stats=doc_stats,
-            )
-            if not validation.get('supervisor_passed'):
-                result = supervisor.retry_and_merge(
-                    summariser=sm,
-                    ocr_text=ocr_text,
-                    doc_stats=doc_stats,
-                    initial_summary=summary_struct,
-                    initial_validation=validation,
+            response_payload = job_public_view(job)
+            response_payload["duplicate"] = True
+            return JSONResponse(response_payload, status_code=412)
+        except Exception as exc:  # pragma: no cover - unexpected
+            _API_LOG.exception("ingest_create_failed", extra={"error": str(exc)})
+            raise HTTPException(status_code=500, detail="Failed to create pipeline job") from exc
+
+        try:
+            execution_name: str | None
+            pipeline_service_base_url = os.getenv("PIPELINE_SERVICE_BASE_URL")
+            summariser_job_name = os.getenv("SUMMARISER_JOB_NAME")
+            pdf_job_name = os.getenv("PDF_JOB_NAME")
+            pipeline_dlq_topic = os.getenv("PIPELINE_DLQ_TOPIC") or cfg.pipeline_pubsub_topic
+            doc_ai_location_env = os.getenv("DOC_AI_LOCATION")
+
+            workflow_parameters = {
+                "bucket": gcs_obj.bucket,
+                "object_name": gcs_obj.name,
+                "generation": gcs_obj.generation,
+                "gcs_uri": job.object_uri,
+                "object_uri": job.object_uri,
+                "job_id": job.job_id,
+                "trace_id": job.trace_id,
+                "request_id": job.request_id,
+                "dedupe_key": job.dedupe_key,
+                "object_hash": job.object_hash,
+                "md5_hash": job.md5_hash,
+                "pipeline_service_base_url": pipeline_service_base_url,
+                "internal_event_token": app.state.internal_event_token,
+                "project_id": cfg.project_id,
+                "region": cfg.region,
+                "doc_ai_location": doc_ai_location_env or cfg.region,
+                "doc_ai_processor_id": cfg.doc_ai_processor_id,
+                "doc_ai_splitter_processor_id": cfg.doc_ai_splitter_id,
+                "summariser_job_name": summariser_job_name,
+                "pdf_job_name": pdf_job_name,
+                "intake_bucket": cfg.intake_gcs_bucket,
+                "output_bucket": cfg.output_gcs_bucket,
+                "summary_bucket": cfg.summary_bucket,
+                "max_shard_concurrency": cfg.max_shard_concurrency,
+                "pipeline_dlq_topic": pipeline_dlq_topic,
+                "summary_schema_version": cfg.summary_schema_version,
+            }
+
+            if hasattr(workflow_launcher, "launch"):
+                execution_name = workflow_launcher.launch(  # type: ignore[attr-defined]
+                    job=job,
+                    parameters=workflow_parameters,
+                    trace_context=trace_header,
                 )
-                summary_struct = result.summary
-                validation = result.validation
-            if not validation.get('supervisor_passed'):
-                raise SummarizationError(validation.get('reason') or 'Supervisor rejected summary')
-            pdf_bytes = pdf.build(summary_struct)
-            report_name = f"summary_{file_id}.pdf"
-            uploaded_id = upload_pdf(pdf_bytes, report_name)
-            return {"report_file_id": uploaded_id, "validation": validation}
-        except ValidationError:
-            raise
-        except (OCRServiceError, SummarizationError, PDFGenerationError) as exc:
-            _API_LOG.exception("/process_drive stage error: %s", exc)
-            # Re-raise to leverage existing handlers
-            raise
-        except Exception as exc:  # pragma: no cover - generic fallback
-            _API_LOG.exception("/process_drive unexpected error: %s", exc)
-            return JSONResponse(status_code=500, content={"detail": "Drive processing failure", "error": str(exc)})
+            elif callable(workflow_launcher):
+                execution_name = workflow_launcher(  # type: ignore[call-arg]
+                    job=job,
+                    parameters=workflow_parameters,
+                    trace_context=trace_header,
+                )
+            else:
+                raise TypeError("workflow_launcher is not callable")
+        except Exception as exc:
+            state_store.mark_status(
+                job.job_id,
+                PipelineStatus.FAILED,
+                stage="WORKFLOW_DISPATCH",
+                message=str(exc),
+                extra={"error": str(exc)},
+                updates={"last_error": {"stage": "workflow_dispatch", "error": str(exc)}},
+            )
+            _API_LOG.exception(
+                "workflow_dispatch_failed", extra={"job_id": job.job_id, "error": str(exc), "trace_id": job.trace_id}
+            )
+            raise HTTPException(status_code=502, detail="Failed to dispatch workflow") from exc
 
-    # Metrics endpoint (minimal) using prometheus_client if available
+        updates = {}
+        if execution_name:
+            updates["workflow_execution"] = execution_name
+
+        job = state_store.mark_status(
+            job.job_id,
+            PipelineStatus.WORKFLOW_DISPATCHED,
+            stage="WORKFLOW",
+            message="Workflow execution dispatched",
+            extra={"execution": execution_name},
+            updates=updates or None,
+        )
+
+        response_payload = job_public_view(job)
+        response_payload["duplicate"] = False
+        return JSONResponse(response_payload, status_code=202)
+
+    # Status lookup ------------------------------------------------------------
+    @app.get("/status/{job_id}")
+    async def job_status(job_id: str):
+        state_store: PipelineStateStore = app.state.state_store
+        job = state_store.get_job(job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail="Job not found")
+        return job_public_view(job)
+
+    # Internal event ingress ---------------------------------------------------
+    @app.post("/internal/jobs/{job_id}/events")
+    async def record_job_event(job_id: str, event: JobEventPayload, request: Request):
+        _require_internal_token(request, expected=app.state.internal_event_token)
+        state_store: PipelineStateStore = app.state.state_store
+        job = state_store.get_job(job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail="Job not found")
+
+        metadata_base = dict(job.metadata)
+        if event.retry_stage:
+            job = state_store.record_retry(job_id, event.retry_stage)
+
+        updates: dict[str, Any] = {}
+        if event.pdf_uri is not None:
+            updates["pdf_uri"] = event.pdf_uri
+        if event.signed_url is not None:
+            updates["signed_url"] = event.signed_url
+        if event.lro_name is not None:
+            updates["lro_name"] = event.lro_name
+        if event.last_error is not None:
+            updates["last_error"] = event.last_error
+        if event.metadata_patch:
+            updates["metadata"] = _merge_metadata(metadata_base, event.metadata_patch)
+
+        try:
+            job = state_store.mark_status(
+                job_id,
+                event.status,
+                stage=event.stage,
+                message=event.message,
+                extra=event.extra,
+                updates=updates or None,
+            )
+        except KeyError:
+            raise HTTPException(status_code=404, detail="Job not found")
+        return job_public_view(job)
+
+    # Metrics endpoint ---------------------------------------------------------
     try:  # pragma: no cover - optional dependency
-        from prometheus_client import generate_latest, CONTENT_TYPE_LATEST  # type: ignore
+        from prometheus_client import CONTENT_TYPE_LATEST, generate_latest  # type: ignore
 
-        @app.get('/metrics')
+        @app.get("/metrics")
         async def metrics():  # pragma: no cover - simple passthrough
             data = generate_latest()  # type: ignore
-            return PlainTextResponse(data.decode('utf-8'), media_type=CONTENT_TYPE_LATEST)
+            return PlainTextResponse(data.decode("utf-8"), media_type=CONTENT_TYPE_LATEST)
     except Exception:  # pragma: no cover
         _API_LOG.warning("prometheus_client not installed; /metrics disabled")
 
-    @app.on_event('startup')
+    # Startup diagnostics ------------------------------------------------------
+    @app.on_event("startup")
     async def _startup_diag():  # pragma: no cover
         cfg.validate_required()
-        # Log route table for diagnostics
-        routes = [getattr(r, 'path', str(r)) for r in app.router.routes]
-        _API_LOG.info("boot_canary: service=mcc-ocr-summary routes=%s", routes)
+        routes = [getattr(r, "path", str(r)) for r in app.router.routes]
+        _API_LOG.info("boot_canary", extra={"service": "mcc-ocr-summary", "routes": routes})
         _API_LOG.info("service_startup_marker", extra={"phase": "post-config", "version": app.version})
-        # Log OpenAI SDK version for observability
         try:
             import openai  # type: ignore
-            _API_LOG.info("openai_sdk_version", extra={"version": getattr(openai, '__version__', 'unknown')})
+
+            _API_LOG.info("openai_sdk_version", extra={"version": getattr(openai, "__version__", "unknown")})
         except Exception:
             _API_LOG.info("openai_sdk_version_unavailable")
-        # DNS pre-resolution for api.openai.com (diagnostic early warning)
         try:
             resolved_ip = socket.gethostbyname("api.openai.com")
             _API_LOG.info("openai_dns_resolution", extra={"host": "api.openai.com", "ip": resolved_ip})
-        except Exception as e:  # pragma: no cover - environment specific
-            _API_LOG.error("openai_dns_resolution_failed", extra={"error": str(e)})
-        # Fallback health route injection if missing (parity with MCC_Phase1 style)
-        if not any(getattr(r, 'path', '') in {'/healthz', '/healthz/'} for r in app.router.routes):
-            @_API_LOG.info("Injecting fallback /healthz route")
-            @app.get('/healthz')  # type: ignore
-            async def _health_fallback():  # pragma: no cover
-                return {"status": "ok"}
+        except Exception as err:
+            _API_LOG.error("openai_dns_resolution_failed", extra={"error": str(err)})
 
-    # Temporary connectivity diagnostic endpoint (to be removed after batch-v10 validation)
-    @app.get('/ping_openai')
+    # Connectivity diagnostics -------------------------------------------------
+    @app.get("/ping_openai")
     async def ping_openai():  # pragma: no cover - external call
-        import requests  # local import to avoid mandatory dependency if removed later
-        payload: dict[str, object] = {"ts": time.time()}
+        import requests
+
+        payload: dict[str, Any] = {"ts": time.time()}
         host = "api.openai.com"
         start = time.perf_counter()
         try:
             ip = socket.gethostbyname(host)
             payload["dns_ip"] = ip
-        except Exception as e:  # DNS failure
-            payload["dns_error"] = str(e)
+        except Exception as err:
+            payload["dns_error"] = str(err)
             _API_LOG.error("ping_openai_dns_failure", extra=payload)
             return payload
-        # Perform lightweight model list request
+
         api_key_raw = os.getenv("OPENAI_API_KEY", "")
-        api_key = api_key_raw.strip().replace('\n', '')
+        api_key = api_key_raw.strip().replace("\n", "")
         if api_key_raw and api_key != api_key_raw:
             payload["api_key_sanitized"] = True
         headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
         try:
-            resp = requests.get("https://api.openai.com/v1/models", headers=headers, timeout=15)
+            response = requests.get("https://api.openai.com/v1/models", headers=headers, timeout=15)
             elapsed = round(time.perf_counter() - start, 3)
-            payload.update({
-                "status": resp.status_code,
-                "elapsed_s": elapsed,
-                "text_head": resp.text[:120],
-            })
-            level = _API_LOG.info if 200 <= resp.status_code < 300 else _API_LOG.warning
+            payload.update({"status": response.status_code, "elapsed_s": elapsed, "text_head": response.text[:120]})
+            level = _API_LOG.info if 200 <= response.status_code < 300 else _API_LOG.warning
             level("ping_openai_result", extra=payload)
             return payload
-        except Exception as e:
-            payload["error"] = str(e)
+        except Exception as err:  # pragma: no cover - network specific
+            payload["error"] = str(err)
             _API_LOG.error("ping_openai_exception", extra=payload)
             return payload
 
     return app
 
 
-try:  # pragma: no cover
-    # Module-level application instance required for Cloud Run / uvicorn entrypoint (src.main:app)
-    app = create_app()
-except Exception:  # pragma: no cover
-    from fastapi import FastAPI as _F
-    app = _F(title='MCC-OCR-Summary (init failure)')
-
-# NOTE: /healthz is already defined inside create_app(); avoid redefining here to prevent duplicate route entries.
-
-__all__ = ['create_app', 'app']
+__all__ = ["create_app", "OCRService"]

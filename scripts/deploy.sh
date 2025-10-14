@@ -43,6 +43,6 @@ gcloud run deploy "$SERVICE_NAME" \
   --set-env-vars SHEETS_ENABLED="${SHEETS_ENABLED:-false}" \
   --set-env-vars PDF_ENABLED="${PDF_ENABLED:-false}" \
   --set-env-vars FULL_PROCESSING="${FULL_PROCESSING:-true}" \
-  --command uvicorn --args "src.main:app --host 0.0.0.0 --port 8080"
+  --command uvicorn --args "src.main:create_app --factory --host 0.0.0.0 --port 8080"
 
 echo "Deployment complete." >&2
