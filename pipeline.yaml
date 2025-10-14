@@ -1,0 +1,204 @@
+apiVersion: mcc.dev/v1
+kind: PipelineManifest
+metadata:
+  name: mcc-ocr-summary
+  schemaVersion: 2025-10-01
+  description: >
+    Documentation manifest describing the production pipeline components for
+    MCC OCR Summary (ingest → DocAI → summariser → PDF → Drive/GCS).
+  owners:
+    - platform@mcc.dev
+
+services:
+  ingest-api:
+    type: cloud_run_service
+    source: src/main.py
+    image: gcr.io/${PROJECT_ID}/mcc-ocr-summary:${IMAGE_TAG}
+    region: ${REGION}
+    serviceAccount: ${INTAKE_SA_NAME}@${PROJECT_ID}.iam.gserviceaccount.com
+    minInstances: 0
+    concurrency: 1
+    cpu: 1
+    memory: 2Gi
+    timeoutSeconds: 900
+    environment:
+      - PROJECT_ID=${PROJECT_ID}
+      - REGION=${REGION}
+      - DOC_AI_PROCESSOR_ID=${DOC_AI_PROCESSOR_ID}
+      - DOC_AI_SPLITTER_PROCESSOR_ID=${DOC_AI_SPLITTER_PROCESSOR_ID}
+      - INTAKE_BUCKET=${INTAKE_BUCKET}
+      - OUTPUT_BUCKET=${OUTPUT_BUCKET}
+      - SUMMARY_BUCKET=${SUMMARY_BUCKET}
+      - PIPELINE_STATE_BACKEND=gcs
+      - PIPELINE_STATE_BUCKET=${STATE_BUCKET}
+      - PIPELINE_STATE_PREFIX=${STATE_PREFIX}
+      - PIPELINE_DLQ_TOPIC=${PIPELINE_DLQ_TOPIC}
+      - PIPELINE_WORKFLOW_NAME=${WORKFLOW_NAME}
+      - SUMMARISER_JOB_NAME=${SUMMARISER_JOB_NAME}
+      - PDF_JOB_NAME=${PDF_JOB_NAME}
+      - SUMMARY_SCHEMA_VERSION=${SUMMARY_SCHEMA_VERSION}
+    ingress: internal
+    authentication: workload-identity
+
+jobs:
+  summariser:
+    type: cloud_run_job
+    image: gcr.io/${PROJECT_ID}/mcc-ocr-summary:${IMAGE_TAG}
+    region: ${REGION}
+    serviceAccount: ${SUMMARISER_SA_NAME}@${PROJECT_ID}.iam.gserviceaccount.com
+    taskCount: 1
+    maxRetries: 3
+    timeoutSeconds: 900
+    concurrency: 1
+    cpu: 1
+    environment:
+      - PIPELINE_STATE_BACKEND=gcs
+      - PIPELINE_STATE_BUCKET=${STATE_BUCKET}
+      - PIPELINE_STATE_PREFIX=${STATE_PREFIX}
+      - SUMMARY_BUCKET=${SUMMARY_BUCKET}
+      - OUTPUT_BUCKET=${OUTPUT_BUCKET}
+      - SUMMARY_SCHEMA_VERSION=${SUMMARY_SCHEMA_VERSION}
+
+  pdf-writer:
+    type: cloud_run_job
+    image: gcr.io/${PROJECT_ID}/mcc-ocr-summary:${IMAGE_TAG}
+    region: ${REGION}
+    serviceAccount: ${PDF_SA_NAME}@${PROJECT_ID}.iam.gserviceaccount.com
+    taskCount: 1
+    maxRetries: 3
+    timeoutSeconds: 900
+    concurrency: 1
+    cpu: 1
+    environment:
+      - PIPELINE_STATE_BACKEND=gcs
+      - PIPELINE_STATE_BUCKET=${STATE_BUCKET}
+      - PIPELINE_STATE_PREFIX=${STATE_PREFIX}
+      - SUMMARY_BUCKET=${SUMMARY_BUCKET}
+      - OUTPUT_BUCKET=${OUTPUT_BUCKET}
+
+workflows:
+  pipeline:
+    type: google_workflows
+    location: ${REGION}
+    source: workflows/pipeline.yaml
+    serviceAccount: ${WORKFLOW_SA_NAME}@${PROJECT_ID}.iam.gserviceaccount.com
+    rollout:
+      concurrencyLimit: ${MAX_SHARD_CONCURRENCY}
+      ifGenerationMatch: enforced
+      fanout:
+        ocr:
+          maxConcurrency: ${MAX_SHARD_CONCURRENCY}
+        summariser:
+          args:
+            - --gcs-if-generation
+            - "0"
+        pdf-writer:
+          args:
+            - --if-generation-match
+            - "0"
+
+storage:
+  buckets:
+    intake:
+      name: ${INTAKE_BUCKET}
+      purpose: drive-sync-intake
+      location: ${REGION}
+      lifecycle:
+        - action: Delete
+          condition:
+            age: 30
+    output:
+      name: ${OUTPUT_BUCKET}
+      purpose: ocr-results
+    summary:
+      name: ${SUMMARY_BUCKET}
+      purpose: summarised-json-and-pdf
+    state:
+      name: ${STATE_BUCKET}
+      purpose: pipeline-state-store
+
+pubsub:
+  topics:
+    dlq:
+      name: ${PIPELINE_DLQ_TOPIC}
+      subscription: ${PIPELINE_DLQ_TOPIC}-sub
+      retention: 7d
+
+iam:
+  serviceAccounts:
+    intake:
+      id: ${INTAKE_SA_NAME}
+      roles:
+        - roles/run.invoker
+        - roles/workflows.invoker
+        - roles/secretmanager.secretAccessor
+        - roles/logging.logWriter
+        - roles/monitoring.metricWriter
+    workflow:
+      id: ${WORKFLOW_SA_NAME}
+      roles:
+        - roles/run.invoker
+        - roles/documentai.apiUser
+        - roles/storage.objectViewer
+        - roles/storage.objectCreator
+        - roles/pubsub.publisher
+    summariser:
+      id: ${SUMMARISER_SA_NAME}
+      roles:
+        - roles/secretmanager.secretAccessor
+        - roles/storage.objectViewer
+        - roles/storage.objectCreator
+        - roles/logging.logWriter
+        - roles/monitoring.metricWriter
+    pdf:
+      id: ${PDF_SA_NAME}
+      roles:
+        - roles/storage.objectViewer
+        - roles/storage.objectCreator
+        - roles/logging.logWriter
+        - roles/monitoring.metricWriter
+        - roles/iam.serviceAccountTokenCreator
+
+observability:
+  logMarkers:
+    - ingest_received
+    - split_done
+    - ocr_lro_started
+    - ocr_lro_finished
+    - summary_done
+    - pdf_writer_complete
+    - drive_upload_complete
+  dashboards:
+    - audit/sample_dashboards.md
+  alertPolicies:
+    - infra/monitoring/alert_policies.yaml
+
+testing:
+  smoke:
+    script: scripts/e2e_smoke.sh
+    expects:
+      status: UPLOADED
+      duplicateStatus: 412
+      logSequence:
+        - ingest_received
+        - split_done
+        - ocr_lro_finished
+        - summary_done
+        - pdf_writer_complete
+        - drive_upload_complete
+
+ci:
+  cloudBuild: cloudbuild.yaml
+  coverageThreshold: 85
+  stages:
+    - lint-and-type
+    - unit-tests
+    - integration-tests
+    - build-image
+    - deploy-service-canary
+    - deploy-summariser-job
+    - deploy-pdf-job
+    - deploy-workflow
+    - e2e-smoke
+    - promote-traffic
+    - record-rollback-info
