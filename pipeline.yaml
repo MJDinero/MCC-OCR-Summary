@@ -15,10 +15,10 @@ services:
     source: src/main.py
     image: gcr.io/${PROJECT_ID}/mcc-ocr-summary:${IMAGE_TAG}
     region: ${REGION}
-    serviceAccount: ${INTAKE_SA_NAME}@${PROJECT_ID}.iam.gserviceaccount.com
+    serviceAccount: ${OCR_SA_NAME}@${PROJECT_ID}.iam.gserviceaccount.com
     minInstances: 0
-    concurrency: 1
-    cpu: 1
+    concurrency: 4
+    cpu: 2
     memory: 2Gi
     timeoutSeconds: 900
     environment:
@@ -29,6 +29,7 @@ services:
       - INTAKE_BUCKET=${INTAKE_BUCKET}
       - OUTPUT_BUCKET=${OUTPUT_BUCKET}
       - SUMMARY_BUCKET=${SUMMARY_BUCKET}
+      - CMEK_KEY_NAME=${CMEK_KEY_NAME}
       - PIPELINE_STATE_BACKEND=gcs
       - PIPELINE_STATE_BUCKET=${STATE_BUCKET}
       - PIPELINE_STATE_PREFIX=${STATE_PREFIX}
@@ -58,12 +59,13 @@ jobs:
       - SUMMARY_BUCKET=${SUMMARY_BUCKET}
       - OUTPUT_BUCKET=${OUTPUT_BUCKET}
       - SUMMARY_SCHEMA_VERSION=${SUMMARY_SCHEMA_VERSION}
+      - CMEK_KEY_NAME=${CMEK_KEY_NAME}
 
   pdf-writer:
     type: cloud_run_job
     image: gcr.io/${PROJECT_ID}/mcc-ocr-summary:${IMAGE_TAG}
     region: ${REGION}
-    serviceAccount: ${PDF_SA_NAME}@${PROJECT_ID}.iam.gserviceaccount.com
+    serviceAccount: ${STORAGE_SA_NAME}@${PROJECT_ID}.iam.gserviceaccount.com
     taskCount: 1
     maxRetries: 3
     timeoutSeconds: 900
@@ -75,6 +77,7 @@ jobs:
       - PIPELINE_STATE_PREFIX=${STATE_PREFIX}
       - SUMMARY_BUCKET=${SUMMARY_BUCKET}
       - OUTPUT_BUCKET=${OUTPUT_BUCKET}
+      - CMEK_KEY_NAME=${CMEK_KEY_NAME}
 
 workflows:
   pipeline:
@@ -103,6 +106,7 @@ storage:
       name: ${INTAKE_BUCKET}
       purpose: drive-sync-intake
       location: ${REGION}
+      encryptionKey: ${CMEK_KEY_NAME}
       lifecycle:
         - action: Delete
           condition:
@@ -110,12 +114,23 @@ storage:
     output:
       name: ${OUTPUT_BUCKET}
       purpose: ocr-results
+      encryptionKey: ${CMEK_KEY_NAME}
     summary:
       name: ${SUMMARY_BUCKET}
       purpose: summarised-json-and-pdf
+      encryptionKey: ${CMEK_KEY_NAME}
     state:
       name: ${STATE_BUCKET}
       purpose: pipeline-state-store
+      encryptionKey: ${CMEK_KEY_NAME}
+  bigquery:
+    datasets:
+      summary:
+        datasetId: ${SUMMARY_BIGQUERY_DATASET}
+        defaultEncryptionKey: ${CMEK_KEY_NAME}
+        tables:
+          - tableId: ${SUMMARY_BIGQUERY_TABLE}
+            encryptionKey: ${CMEK_KEY_NAME}
 
 pubsub:
   topics:
@@ -126,12 +141,27 @@ pubsub:
 
 iam:
   serviceAccounts:
-    intake:
-      id: ${INTAKE_SA_NAME}
+    ocr:
+      id: ${OCR_SA_NAME}
       roles:
-        - roles/run.invoker
-        - roles/workflows.invoker
+        - roles/documentai.apiUser
+        - roles/storage.objectViewer (gs://${INTAKE_BUCKET})
+        - roles/storage.objectCreator (gs://${OUTPUT_BUCKET})
+        - roles/logging.logWriter
+        - roles/monitoring.metricWriter
+    summariser:
+      id: ${SUMMARISER_SA_NAME}
+      roles:
         - roles/secretmanager.secretAccessor
+        - roles/storage.objectViewer (gs://${OUTPUT_BUCKET})
+        - roles/storage.objectCreator (gs://${SUMMARY_BUCKET})
+        - roles/logging.logWriter
+        - roles/monitoring.metricWriter
+    storage:
+      id: ${STORAGE_SA_NAME}
+      roles:
+        - roles/storage.objectAdmin (gs://${SUMMARY_BUCKET})
+        - roles/bigquery.dataEditor (${SUMMARY_BIGQUERY_DATASET})
         - roles/logging.logWriter
         - roles/monitoring.metricWriter
     workflow:
@@ -139,25 +169,9 @@ iam:
       roles:
         - roles/run.invoker
         - roles/documentai.apiUser
-        - roles/storage.objectViewer
-        - roles/storage.objectCreator
+        - roles/storage.objectViewer (gs://${INTAKE_BUCKET})
+        - roles/storage.objectCreator (gs://${OUTPUT_BUCKET})
         - roles/pubsub.publisher
-    summariser:
-      id: ${SUMMARISER_SA_NAME}
-      roles:
-        - roles/secretmanager.secretAccessor
-        - roles/storage.objectViewer
-        - roles/storage.objectCreator
-        - roles/logging.logWriter
-        - roles/monitoring.metricWriter
-    pdf:
-      id: ${PDF_SA_NAME}
-      roles:
-        - roles/storage.objectViewer
-        - roles/storage.objectCreator
-        - roles/logging.logWriter
-        - roles/monitoring.metricWriter
-        - roles/iam.serviceAccountTokenCreator
 
 observability:
   logMarkers:
@@ -169,9 +183,12 @@ observability:
     - pdf_writer_complete
     - drive_upload_complete
   dashboards:
-    - audit/sample_dashboards.md
+    - infra/monitoring/dashboard_pipeline_latency.json
+    - infra/monitoring/dashboard_throughput_cpu_mem.json
   alertPolicies:
-    - infra/monitoring/alert_policies.yaml
+    - infra/monitoring/alert_dlq_backlog.json
+    - infra/monitoring/alert_5xx_rate.json
+    - infra/monitoring/alert_slo_breach.json
 
 testing:
   smoke:
@@ -189,7 +206,7 @@ testing:
 
 ci:
   cloudBuild: cloudbuild.yaml
-  coverageThreshold: 85
+  coverageThreshold: 90
   stages:
     - lint-and-type
     - unit-tests

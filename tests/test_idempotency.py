@@ -18,6 +18,7 @@ def _set_env(monkeypatch):
     monkeypatch.setenv("INTAKE_GCS_BUCKET", "intake")
     monkeypatch.setenv("OUTPUT_GCS_BUCKET", "output")
     monkeypatch.setenv("SUMMARY_BUCKET", "output")
+    monkeypatch.setenv("INTERNAL_EVENT_TOKEN", "token")
 
 
 def _payload(md5_bytes):

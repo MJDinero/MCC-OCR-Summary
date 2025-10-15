@@ -34,6 +34,7 @@ from src.services.pipeline import (
     create_state_store_from_env,
 )
 from src.services.supervisor import CommonSenseSupervisor
+from src.utils.secrets import SecretResolutionError, resolve_secret_env
 
 _LOG = logging.getLogger("summariser.refactored")
 
@@ -819,7 +820,13 @@ def _cli(argv: Optional[Iterable[str]] = None) -> None:
         backend: ChunkSummaryBackend = HeuristicChunkBackend()
         _LOG.info("heuristic_backend_active", extra={"input_chars": len(text)})
     else:
-        api_key = args.api_key or os.getenv("OPENAI_API_KEY")
+        api_key = args.api_key
+        if not api_key:
+            project_id = os.getenv("PROJECT_ID")
+            try:
+                api_key = resolve_secret_env("OPENAI_API_KEY", project_id=project_id)
+            except SecretResolutionError:
+                api_key = os.getenv("OPENAI_API_KEY")
         if not api_key:
             parser.error("OPENAI_API_KEY must be set (or --api-key provided) when not using --dry-run.")
         backend = OpenAIResponsesBackend(model=args.model, api_key=api_key)

@@ -30,8 +30,6 @@ from src.config import get_config, AppConfig
 
 _LOG = logging.getLogger("ocr_service.batch")
 
-INTAKE_BUCKET = "quantify-agent-intake"
-OUTPUT_BUCKET = "quantify-agent-output"
 POLL_INTERVAL_SECONDS = 5
 TIMEOUT_SECONDS = 30 * 60  # 30 minutes
 
@@ -143,8 +141,12 @@ def batch_process_documents_gcs(
     clients = clients or _default_clients(region)
     storage_client = clients.storage
     docai_client = clients.docai
+    kms_key = getattr(cfg, "cmek_key_name", None)
 
     # Ensure input is in GCS
+    intake_bucket = (cfg.intake_gcs_bucket or "").strip() or "quantify-agent-intake"
+    output_bucket = (cfg.output_gcs_bucket or cfg.summary_bucket or "").strip() or "quantify-agent-output"
+
     if input_uri.startswith("gs://"):
         gcs_input_uri = input_uri
     else:
@@ -154,10 +156,12 @@ def batch_process_documents_gcs(
         if local_path.suffix.lower() != '.pdf':
             raise ValidationError("Only PDF inputs supported for batch")
         target_name = f"uploads/{uuid.uuid4().hex}-{local_path.name}".replace('//', '/')
-        gcs_input_uri = _gcs_uri(INTAKE_BUCKET, target_name)
+        gcs_input_uri = _gcs_uri(intake_bucket, target_name)
         # Upload
-        bucket = storage_client.bucket(INTAKE_BUCKET)
+        bucket = storage_client.bucket(intake_bucket)
         blob = bucket.blob(target_name)
+        if kms_key:
+            setattr(blob, "kms_key_name", kms_key)
         _LOG.info("batch_upload_start", extra={"gcs_uri": gcs_input_uri, "size_bytes": local_path.stat().st_size})
         blob.upload_from_filename(str(local_path))
         _LOG.info("batch_upload_complete", extra={"gcs_uri": gcs_input_uri})
@@ -167,7 +171,7 @@ def batch_process_documents_gcs(
         output_prefix = output_uri.rstrip('/') + '/'
     else:
         unique_prefix = f"batch/{time.strftime('%Y%m%d')}/{uuid.uuid4().hex}/"
-        output_prefix = _gcs_uri(OUTPUT_BUCKET, unique_prefix)
+        output_prefix = _gcs_uri(output_bucket, unique_prefix)
 
     name = f"projects/{project_id}/locations/{region}/processors/{processor_id}"
     request = {
@@ -180,9 +184,11 @@ def batch_process_documents_gcs(
             }
         },
         "document_output_config": {
-            "gcs_output_config": {"gcs_uri": output_prefix}
+            "gcs_output_config": {"gcs_uri": output_prefix, **({"kms_key_name": kms_key} if kms_key else {})}
         },
     }
+    if kms_key:
+        request["encryption_spec"] = {"kms_key_name": kms_key}
 
     _LOG.info(
         "batch_start",

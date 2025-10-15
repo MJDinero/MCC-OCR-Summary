@@ -16,6 +16,8 @@ from google.cloud import workflows_v1
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from starlette.responses import JSONResponse
 
+from src.utils.secrets import SecretResolutionError, resolve_secret_env
+
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
 logging.basicConfig(
     level=LOG_LEVEL,
@@ -52,6 +54,13 @@ def _env(name: str, default: Optional[str] = None) -> str:
     if value is None or value == "":
         raise RuntimeError(f"Missing required environment variable: {name}")
     return value
+
+
+def _optional_secret(name: str, project_id: Optional[str]) -> Optional[str]:
+    try:
+        return resolve_secret_env(name, project_id=project_id)
+    except SecretResolutionError:
+        return os.getenv(name)
 
 
 if hasattr(workflows_v1, "ExecutionsClient"):
@@ -251,13 +260,13 @@ async def ingest(request: Request) -> Dict[str, Any]:
     project = _env("PROJECT_ID")
     region = _env("REGION", "us-central1")
     optional_fields = {
-        "doc_ai_processor_id": os.getenv("DOC_AI_PROCESSOR_ID"),
-        "doc_ai_splitter_processor_id": os.getenv("DOC_AI_SPLITTER_PROCESSOR_ID"),
+        "doc_ai_processor_id": _optional_secret("DOC_AI_PROCESSOR_ID", project),
+        "doc_ai_splitter_processor_id": _optional_secret("DOC_AI_SPLITTER_PROCESSOR_ID", project),
         "summariser_job_name": os.getenv("SUMMARISER_JOB_NAME"),
         "pdf_job_name": os.getenv("PDF_JOB_NAME"),
         "pipeline_dlq_topic": os.getenv("PIPELINE_DLQ_TOPIC"),
         "max_shard_concurrency": os.getenv("MAX_SHARD_CONCURRENCY"),
-        "internal_event_token": os.getenv("INTERNAL_EVENT_TOKEN"),
+        "internal_event_token": _optional_secret("INTERNAL_EVENT_TOKEN", project),
         "project_id": project,
         "region": region,
     }

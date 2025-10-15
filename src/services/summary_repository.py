@@ -14,6 +14,7 @@ except Exception:  # pragma: no cover
     bigquery = None  # type: ignore
     storage = None  # type: ignore
 
+from src.config import get_config
 from ..models.events import SummaryResultMessage
 from .storage_service import SummaryRepository
 
@@ -30,6 +31,7 @@ class HybridSummaryRepository(SummaryRepository):  # pragma: no cover - requires
         region: str,
         bq_client: bigquery.Client | None = None,
         storage_client: storage.Client | None = None,
+        kms_key_name: str | None = None,
     ) -> None:
         if bigquery is None or storage is None:
             raise RuntimeError("google-cloud-bigquery and google-cloud-storage are required")
@@ -40,6 +42,9 @@ class HybridSummaryRepository(SummaryRepository):  # pragma: no cover - requires
         self.bq_client = bq_client or bigquery.Client()
         self.storage_client = storage_client or storage.Client()
         self.bucket = self.storage_client.bucket(bucket_name)
+        cfg = get_config()
+        self.kms_key_name = kms_key_name or getattr(cfg, "cmek_key_name", None)
+        self._table_encryption_validated = False
 
     def write_summary(
         self,
@@ -67,6 +72,8 @@ class HybridSummaryRepository(SummaryRepository):  # pragma: no cover - requires
             "created_at": datetime.now(timezone.utc).isoformat(),
         }
         blob = self.bucket.blob(f"{job_id}/final_summary.json")
+        if self.kms_key_name:
+            setattr(blob, "kms_key_name", self.kms_key_name)
         blob.metadata = metadata
         conflict_exc = gexc.Conflict if gexc else Exception  # type: ignore[arg-type]
         try:
@@ -88,6 +95,7 @@ class HybridSummaryRepository(SummaryRepository):  # pragma: no cover - requires
         metadata: dict[str, str],
     ) -> None:
         table_ref = f"{self.dataset}.{self.table}"
+        self._ensure_table_encryption(table_ref)
         rows = [
             {
                 "job_id": job_id,
@@ -104,6 +112,21 @@ class HybridSummaryRepository(SummaryRepository):  # pragma: no cover - requires
         )
         if errors:
             raise RuntimeError(f"Failed to insert summary rows: {errors}")
+
+    def _ensure_table_encryption(self, table_ref: str) -> None:
+        if not self.kms_key_name or self._table_encryption_validated:
+            return
+        try:
+            table = self.bq_client.get_table(table_ref)
+        except Exception as exc:  # pragma: no cover - network call
+            raise RuntimeError(f"Unable to verify encryption for {table_ref}: {exc}") from exc
+        encryption_cfg = getattr(table, "encryption_configuration", None)
+        kms_key = getattr(encryption_cfg, "kms_key_name", None) if encryption_cfg else None
+        if kms_key != self.kms_key_name:
+            raise RuntimeError(
+                f"BigQuery table {table_ref} is not encrypted with expected CMEK {self.kms_key_name}"
+            )
+        self._table_encryption_validated = True
 
 
 class InMemorySummaryRepository(SummaryRepository):

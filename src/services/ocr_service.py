@@ -15,6 +15,7 @@ from ..models.events import DocumentIngestionEvent, OCRChunkMessage
 from ..utils.redact import redact_mapping
 from .chunker import Chunk, Chunker
 from .interfaces import MetricsClient, PubSubPublisher
+from .metrics import PrometheusMetrics
 
 LOG = logging.getLogger(__name__)
 
@@ -37,7 +38,7 @@ class OCRService:
         self.summary_topic = summary_topic
         self.publisher = publisher
         self.dlq_topic = dlq_topic
-        self.metrics = metrics
+        self.metrics = metrics or PrometheusMetrics.default()
         self.chunker = chunker or Chunker()
         self._docai_client = docai_client or documentai.DocumentProcessorServiceAsyncClient()
 
@@ -74,8 +75,24 @@ class OCRService:
                     "duration_seconds": duration,
                 },
             )
+            if self.metrics:
+                self.metrics.increment("jobs_completed_total", stage="ocr")
+            latency_ms = int(duration * 1000)
+            LOG.info(
+                "ocr_service_completed",
+                extra={
+                    "job_id": event.job_id,
+                    "trace_id": event.trace_id,
+                    "latency_ms": latency_ms,
+                    "stage": "ocr",
+                    "service": "ocr_service",
+                    "chunk_count": chunk_count,
+                    "redaction_applied": False,
+                },
+            )
         except Exception as exc:  # noqa: BLE001 - propagate to DLQ
-            await self._handle_failure(event, exc)
+            duration = time.perf_counter() - start
+            await self._handle_failure(event, exc, duration)
             raise
 
     async def _chunk_document(self, pages: AsyncIterator[str]) -> AsyncIterator[Chunk]:
@@ -109,10 +126,24 @@ class OCRService:
         data, attributes = message.to_pubsub()
         await self.publisher.publish(self.summary_topic, data, attributes)
 
-    async def _handle_failure(self, event: DocumentIngestionEvent, error: Exception) -> None:
+    async def _handle_failure(
+        self,
+        event: DocumentIngestionEvent,
+        error: Exception,
+        duration: float | None = None,
+    ) -> None:
+        latency_ms = int(duration * 1000) if duration is not None else None
         LOG.exception(
             "ocr_service_failed",
-            extra={"job_id": event.job_id, "trace_id": event.trace_id},
+            extra={
+                "job_id": event.job_id,
+                "trace_id": event.trace_id,
+                "latency_ms": latency_ms,
+                "stage": "ocr",
+                "service": "ocr_service",
+                "error_type": type(error).__name__,
+                "redaction_applied": True,
+            },
         )
         payload = {
             "event": redact_mapping(asdict(event)),
@@ -120,6 +151,7 @@ class OCRService:
                 "type": type(error).__name__,
                 "message": str(error),
             },
+            "redaction_applied": True,
         }
         await self.publisher.publish(
             self.dlq_topic,

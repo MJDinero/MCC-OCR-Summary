@@ -14,6 +14,7 @@ except Exception:  # pragma: no cover
     gexc = None  # type: ignore
     storage = None  # type: ignore
 
+from src.config import get_config
 from ..models.events import SummaryResultMessage
 from .summarization_service import ChunkSummaryStore
 
@@ -27,12 +28,15 @@ class GCSChunkSummaryStore(ChunkSummaryStore):  # pragma: no cover - requires re
         bucket_name: str,
         client: storage.Client | None = None,
         prefix: str = "summaries",
+        kms_key_name: str | None = None,
     ) -> None:
         if storage is None:
             raise RuntimeError("google-cloud-storage is required for GCSChunkSummaryStore")
         self.client = client or storage.Client()
         self.bucket = self.client.bucket(bucket_name)
         self.prefix = prefix.rstrip("/")
+        cfg = get_config()
+        self.kms_key_name = kms_key_name or getattr(cfg, "cmek_key_name", None)
 
     async def write_chunk_summary(self, *, record: SummaryResultMessage) -> None:
         payload = asdict(record)
@@ -43,6 +47,8 @@ class GCSChunkSummaryStore(ChunkSummaryStore):  # pragma: no cover - requires re
 
         def _upload() -> None:
             blob = self.bucket.blob(self._blob_name(record.job_id, record.chunk_id))
+            if self.kms_key_name:
+                setattr(blob, "kms_key_name", self.kms_key_name)
             blob.metadata = {key: str(value) for key, value in (record.metadata or {}).items()}
             try:
                 blob.upload_from_string(

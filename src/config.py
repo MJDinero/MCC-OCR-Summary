@@ -16,9 +16,14 @@ All legacy flags (metrics, sheets, multiple processor fallbacks, CORS, etc.) rem
 """
 from __future__ import annotations
 
+import os
 from functools import lru_cache
+from typing import Any
+
 from pydantic import Field, AliasChoices
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from src.utils.secrets import resolve_secret
 
 
 def parse_bool(value: str | None) -> bool:
@@ -75,6 +80,26 @@ class AppConfig(BaseSettings):
     max_pdf_bytes: int = 20 * 1024 * 1024  # 20MB limit for uploaded PDFs
     model_config = SettingsConfigDict(env_file='.env', extra='ignore', case_sensitive=False)
 
+    def model_post_init(self, __context: Any) -> None:
+        project_hint = resolve_secret(self.project_id, project_id=None)
+        if isinstance(project_hint, str) and project_hint:
+            self.project_id = project_hint
+        project_hint = self.project_id or os.getenv("PROJECT_ID")
+
+        secret_fields = (
+            "openai_api_key",
+            "doc_ai_processor_id",
+            "doc_ai_splitter_id",
+            "drive_input_folder_id",
+            "drive_report_folder_id",
+            "cmek_key_name",
+        )
+        for field_name in secret_fields:
+            value = getattr(self, field_name, None)
+            resolved = resolve_secret(value, project_id=project_hint)
+            if resolved is not None:
+                setattr(self, field_name, resolved)
+
     @property
     def use_structured_summariser(self) -> bool:  # accessor applying robust parsing
         raw = self.use_structured_summariser_raw
@@ -115,7 +140,6 @@ class AppConfig(BaseSettings):
         # corresponding env var is absent entirely, treat it as missing so that tests
         # which purposely clear environment variables still detect the absence.
         # This covers scenarios where upstream tooling injects fallback defaults.
-        import os as _os  # local import to avoid polluting module namespace
         # NOTE (v11j-fix): REGION has a safe default ('us') so we no longer require the
         # explicit env var to be present when a non-empty value already exists. This
         # prevents startup failures in environments where REGION was omitted but a
@@ -132,7 +156,7 @@ class AppConfig(BaseSettings):
         }
         unmet_env: list[str] = []
         for name, value, env_name in required_pairs:
-            if env_name not in _os.environ and env_name in strict_env_presence and name not in missing:
+            if env_name not in os.environ and env_name in strict_env_presence and name not in missing:
                 if value not in (None, ""):
                     # Even if value is non-empty but came from a default and env is absent
                     # we enforce explicit provisioning for strict vars.

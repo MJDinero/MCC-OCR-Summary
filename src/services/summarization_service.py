@@ -14,6 +14,7 @@ from ..models.events import OCRChunkMessage, StorageRequestMessage, SummaryReque
 from ..utils.redact import redact_mapping
 from .chunker import Chunker
 from .interfaces import MetricsClient, PubSubPublisher
+from .metrics import PrometheusMetrics
 
 LOG = logging.getLogger(__name__)
 
@@ -83,7 +84,7 @@ class SummarizationService:
         self.llm_client = llm_client
         self.store = store
         self.config = config
-        self.metrics = metrics
+        self.metrics = metrics or PrometheusMetrics.default()
         # Chunk OCR output into manageable sections for hierarchical summarisation
         self.section_chunker = Chunker(
             max_tokens=max(1024, config.chunk_size // 2),
@@ -123,6 +124,19 @@ class SummarizationService:
                     duration,
                     stage="summarization",
                 )
+                self.metrics.increment("chunks_processed_total", stage="summarization")
+            LOG.info(
+                "summarization_chunk_completed",
+                extra={
+                    "job_id": message.job_id,
+                    "trace_id": message.trace_id,
+                    "chunk_id": message.chunk_id,
+                    "latency_ms": int(duration * 1000),
+                    "stage": "summarization",
+                    "service": "summarization_service",
+                    "redaction_applied": False,
+                },
+            )
         except Exception as exc:  # noqa: BLE001
             await self._handle_failure(message, exc)
             raise
@@ -178,11 +192,18 @@ class SummarizationService:
         raise RuntimeError("Summarisation retries exhausted")
 
     async def _publish_final_summary(self, message: OCRChunkMessage, doc_type: str) -> None:
+        started = time.perf_counter()
         summaries = await self.store.list_chunk_summaries(job_id=message.job_id)
         if not summaries:
             LOG.warning(
                 "summarization_no_chunks",
-                extra={"job_id": message.job_id, "trace_id": message.trace_id},
+                extra={
+                    "job_id": message.job_id,
+                    "trace_id": message.trace_id,
+                    "stage": "summarization",
+                    "service": "summarization_service",
+                    "redaction_applied": False,
+                },
             )
             return
         summaries.sort(key=lambda item: item.section_index)
@@ -202,6 +223,25 @@ class SummarizationService:
         )
         data, attributes = storage_message.to_pubsub()
         await self.publisher.publish(self.storage_topic, data, attributes)
+        elapsed = time.perf_counter() - started
+        if self.metrics:
+            self.metrics.observe_latency(
+                "summarization_aggregate_latency_seconds",
+                elapsed,
+                stage="summarization",
+            )
+            self.metrics.increment("jobs_completed_total", stage="summarization")
+        LOG.info(
+            "summarization_final_published",
+            extra={
+                "job_id": message.job_id,
+                "trace_id": message.trace_id,
+                "latency_ms": int(elapsed * 1000),
+                "stage": "summarization",
+                "service": "summarization_service",
+                "redaction_applied": False,
+            },
+        )
 
     def _is_last_chunk(self, message: OCRChunkMessage) -> bool:
         if not message.metadata:
@@ -211,7 +251,14 @@ class SummarizationService:
     async def _handle_failure(self, message: OCRChunkMessage, error: Exception) -> None:
         LOG.exception(
             "summarization_failed",
-            extra={"job_id": message.job_id, "trace_id": message.trace_id},
+            extra={
+                "job_id": message.job_id,
+                "trace_id": message.trace_id,
+                "stage": "summarization",
+                "service": "summarization_service",
+                "error_type": type(error).__name__,
+                "redaction_applied": True,
+            },
         )
         payload = {
             "message": redact_mapping(message.metadata or {}),
@@ -219,6 +266,7 @@ class SummarizationService:
                 "type": type(error).__name__,
                 "message": str(error),
             },
+            "redaction_applied": True,
         }
         await self.publisher.publish(
             self.dlq_topic,

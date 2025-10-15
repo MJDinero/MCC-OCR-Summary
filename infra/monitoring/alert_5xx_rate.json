@@ -1,0 +1,18 @@
+{
+  "displayName": "MCC OCR Cloud Run 5xx Rate",
+  "combiner": "OR",
+  "conditions": [
+    {
+      "displayName": "5xx error rate exceeds 1% (5m)",
+      "conditionMonitoringQueryLanguage": {
+        "duration": "300s",
+        "query": "fetch cloud_run_revision\n| filter resource.service_name =~ 'mcc-ocr-service|mcc-summarisation-service|mcc-storage-service'\n| { metric 'run.googleapis.com/request_count'\n    | filter metric.response_code_class = '5xx'\n    | align rate(5m)\n    | group_by [resource.service_name], sum(val())\n  ; metric 'run.googleapis.com/request_count'\n    | align rate(5m)\n    | group_by [resource.service_name], sum(val()) }\n| ratio\n| condition val() > 0.01"
+      }
+    }
+  ],
+  "notificationChannels": [],
+  "alertStrategy": {
+    "autoClose": "3600s"
+  },
+  "enabled": true
+}

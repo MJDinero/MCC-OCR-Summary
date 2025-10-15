@@ -1,0 +1,29 @@
+{
+  "displayName": "MCC OCR DLQ Backlog",
+  "combiner": "OR",
+  "conditions": [
+    {
+      "displayName": "DLQ backlog > 100 messages (5m)",
+      "conditionThreshold": {
+        "filter": "metric.type=\"pubsub.googleapis.com/subscription/num_undelivered_messages\" resource.type=\"pubsub_subscription\" resource.label.\"subscription_id\"=\"mcc-ocr-pipeline-dlq-sub\"",
+        "comparison": "COMPARISON_GT",
+        "thresholdValue": 100,
+        "duration": "300s",
+        "trigger": {
+          "count": 1
+        },
+        "aggregations": [
+          {
+            "alignmentPeriod": "60s",
+            "perSeriesAligner": "ALIGN_MEAN"
+          }
+        ]
+      }
+    }
+  ],
+  "notificationChannels": [],
+  "alertStrategy": {
+    "autoClose": "3600s"
+  },
+  "enabled": true
+}

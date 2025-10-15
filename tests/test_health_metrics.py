@@ -12,6 +12,14 @@ class _StubOCR:
 
 def _build_app(monkeypatch):
     monkeypatch.setattr('src.main.OCRService', lambda *args, **kwargs: _StubOCR())
+    monkeypatch.setenv("PROJECT_ID", "proj")
+    monkeypatch.setenv("REGION", "us")
+    monkeypatch.setenv("DOC_AI_PROCESSOR_ID", "pid")
+    monkeypatch.setenv("OPENAI_API_KEY", "dummy")
+    monkeypatch.setenv("DRIVE_INPUT_FOLDER_ID", "in")
+    monkeypatch.setenv("DRIVE_REPORT_FOLDER_ID", "out")
+    monkeypatch.setenv("PIPELINE_STATE_BACKEND", "memory")
+    monkeypatch.setenv("INTERNAL_EVENT_TOKEN", "token")
     app = create_app()
     app.state.ocr_service = _StubOCR()
     return app

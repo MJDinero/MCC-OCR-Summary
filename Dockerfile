@@ -46,4 +46,4 @@ LABEL org.opencontainers.image.revision="${GIT_SHA}" \
 # HEALTHCHECK uses curl installed above
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 CMD curl -fsS http://127.0.0.1:8080/healthz || exit 1
 
-CMD ["uvicorn", "src.main:create_app", "--factory", "--host", "0.0.0.0", "--port", "8080"]
+CMD ["python", "-m", "src.runtime_server"]

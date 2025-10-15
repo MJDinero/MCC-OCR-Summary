@@ -1,0 +1,62 @@
+{
+  "displayName": "MCC OCR Pipeline - Latency",
+  "mosaicLayout": {
+    "columns": 12,
+    "tiles": [
+      {
+        "xPos": 0,
+        "yPos": 0,
+        "width": 12,
+        "height": 6,
+        "widget": {
+          "title": "Stage Latency p95 (5m)",
+          "xyChart": {
+            "chartOptions": {
+              "mode": "COLOR"
+            },
+            "dataSets": [
+              {
+                "plotType": "LINE",
+                "legendTemplate": "{{stage}}",
+                "timeSeriesQuery": {
+                  "prometheusQuery": "histogram_quantile(0.95, sum(rate(mcc_pipeline_latency_seconds_bucket[5m])) by (stage, le))"
+                }
+              }
+            ],
+            "yAxis": {
+              "label": "seconds",
+              "scale": "LINEAR"
+            }
+          }
+        }
+      },
+      {
+        "xPos": 0,
+        "yPos": 6,
+        "width": 12,
+        "height": 6,
+        "widget": {
+          "title": "Stage Latency p50 (5m)",
+          "xyChart": {
+            "chartOptions": {
+              "mode": "COLOR"
+            },
+            "dataSets": [
+              {
+                "plotType": "LINE",
+                "legendTemplate": "{{stage}}",
+                "timeSeriesQuery": {
+                  "prometheusQuery": "histogram_quantile(0.5, sum(rate(mcc_pipeline_latency_seconds_bucket[5m])) by (stage, le))"
+                }
+              }
+            ],
+            "yAxis": {
+              "label": "seconds",
+              "scale": "LINEAR"
+            }
+          }
+        }
+      }
+    ]
+  }
+}

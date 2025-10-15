@@ -113,7 +113,7 @@ main:
           - httpHeaders:
               X-Cloud-Trace-Context: ${event.trace_context}
               Content-Type: application/json
-              X-Internal-Token: ${internalToken}
+              X-Internal-Event-Token: ${internalToken}
     - hydrateObjectUri:
         steps:
           - fallbackToGcsUri:

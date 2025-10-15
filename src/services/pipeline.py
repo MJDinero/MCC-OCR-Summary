@@ -33,6 +33,8 @@ from dataclasses import dataclass, field, asdict
 from enum import Enum
 from typing import Any, Dict, MutableMapping, Protocol, TypedDict
 
+from src.utils.secrets import resolve_secret_env
+
 try:  # pragma: no cover - optional dependency for GCS persistence
     from google.cloud import storage  # type: ignore
     from google.api_core import exceptions as gexc  # type: ignore
@@ -376,12 +378,20 @@ def _clone_job(job: PipelineJob) -> PipelineJob:
 class GCSStateStore(PipelineStateStore):  # pragma: no cover - exercised via integration
     """GCS-backed state store with strong consistency and idempotent writes."""
 
-    def __init__(self, bucket: str, prefix: str = "pipeline-state", *, client: Any | None = None) -> None:
+    def __init__(
+        self,
+        bucket: str,
+        prefix: str = "pipeline-state",
+        *,
+        client: Any | None = None,
+        kms_key_name: str | None = None,
+    ) -> None:
         if storage is None:
             raise RuntimeError("google-cloud-storage is required for GCSStateStore")
         self._client = client or storage.Client()
         self._bucket = self._client.bucket(bucket)
         self._prefix = prefix.rstrip("/")
+        self._kms_key = kms_key_name
 
     def create_job(self, payload: PipelineJobCreate) -> PipelineJob:
         safe_generation = payload.generation or "nogeneration"
@@ -554,12 +564,18 @@ class GCSStateStore(PipelineStateStore):  # pragma: no cover - exercised via int
 
     def _job_blob(self, job_id: str):
         path = f"{self._prefix}/jobs/{job_id}.json"
-        return self._bucket.blob(path)
+        blob = self._bucket.blob(path)
+        if self._kms_key:
+            setattr(blob, "kms_key_name", self._kms_key)
+        return blob
 
     def _dedupe_blob(self, dedupe_key: str):
         encoded = base64.urlsafe_b64encode(dedupe_key.encode("utf-8")).decode("ascii").rstrip("=")
         path = f"{self._prefix}/dedupe/{encoded}.json"
-        return self._bucket.blob(path)
+        blob = self._bucket.blob(path)
+        if self._kms_key:
+            setattr(blob, "kms_key_name", self._kms_key)
+        return blob
 
     def _write_job(self, job: PipelineJob, *, if_generation_match: int | None) -> None:
         blob = self._job_blob(job.job_id)
@@ -701,8 +717,12 @@ def create_state_store_from_env() -> PipelineStateStore:
         if not bucket:
             raise RuntimeError("PIPELINE_STATE_BUCKET required when PIPELINE_STATE_BACKEND=gcs")
         prefix = os.getenv("PIPELINE_STATE_PREFIX", "pipeline-state")
+        project_id = os.getenv("PROJECT_ID")
+        kms_key = resolve_secret_env("PIPELINE_STATE_KMS_KEY", project_id=project_id)
+        if not kms_key:
+            kms_key = resolve_secret_env("CMEK_KEY_NAME", project_id=project_id)
         print(f"STATE_STORE_BACKEND=gcs bucket={bucket} prefix={prefix}", flush=True)
-        return GCSStateStore(bucket=bucket, prefix=prefix)
+        return GCSStateStore(bucket=bucket, prefix=prefix, kms_key_name=kms_key)
     print("STATE_STORE_BACKEND=memory", flush=True)
     return InMemoryStateStore()
 

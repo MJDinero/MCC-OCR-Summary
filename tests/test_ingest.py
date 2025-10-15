@@ -22,6 +22,8 @@ def _set_env(monkeypatch):
     monkeypatch.setenv("PIPELINE_STATE_BACKEND", "memory")
     monkeypatch.setenv("INTAKE_GCS_BUCKET", "intake-test")
     monkeypatch.setenv("OUTPUT_GCS_BUCKET", "output-test")
+    monkeypatch.setenv("SUMMARY_BUCKET", "summary-test")
+    monkeypatch.setenv("INTERNAL_EVENT_TOKEN", "token")
 
 
 def test_ingest_dedupe_key_contains_hash(monkeypatch):

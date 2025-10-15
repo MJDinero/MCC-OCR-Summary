@@ -28,6 +28,7 @@ steps:
         set -euo pipefail
         pip install -r requirements-dev.txt -c constraints.txt
         make audit-deps
+        mkdir -p outputs
         make sbom
   - name: 'python:3.11'
     id: benchmark
@@ -53,85 +54,140 @@ steps:
       - push
       - '${_IMAGE_REPO}:$SHORT_SHA'
   - name: 'gcr.io/cloud-builders/docker'
-    id: tag-latest
+    id: capture-digest
+    entrypoint: bash
     args:
-      - tag
-      - '${_IMAGE_REPO}:$SHORT_SHA'
-      - '${_IMAGE_REPO}:latest'
-  - name: 'gcr.io/cloud-builders/docker'
-    id: push-latest
+      - -c
+      - |
+        set -euo pipefail
+        docker pull '${_IMAGE_REPO}:$SHORT_SHA'
+        docker inspect --format='{{index .RepoDigests 0}}' '${_IMAGE_REPO}:$SHORT_SHA' > /workspace/image-digest.txt
+        cat /workspace/image-digest.txt
+  - name: 'gcr.io/cloud-builders/gcloud'
+    id: artifact-metadata
+    entrypoint: bash
     args:
-      - push
-      - '${_IMAGE_REPO}:latest'
+      - -c
+      - |
+        set -euo pipefail
+        mkdir -p outputs
+        DIGEST=$(cat /workspace/image-digest.txt)
+        gcloud artifacts docker images list-vulnerabilities "$DIGEST" --location=${_REGION} --format=json > outputs/vulnerability.json
+        gcloud artifacts docker images describe "$DIGEST" --location=${_REGION} --format=json > outputs/provenance.json
+  - name: 'gcr.io/projectsigstore/cosign'
+    id: sign-image
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        set -euo pipefail
+        export COSIGN_EXPERIMENTAL=1
+        DIGEST=$(cat /workspace/image-digest.txt)
+        cosign sign --yes --key gcpkms://projects/quantify-agent/locations/us-central1/keyRings/mcc-phi/cryptoKeys/mcc-phi-key "$DIGEST"
   - name: 'gcr.io/cloud-builders/gcloud'
     id: deploy-ocr
+    entrypoint: bash
     args:
-      - run
-      - deploy
-      - ${_OCR_SERVICE}
-      - '--image=${_IMAGE_REPO}:$SHORT_SHA'
-      - '--region=${_REGION}'
-      - '--platform=managed'
-      - '--execution-environment=gen2'
-      - '--cpu=2'
-      - '--memory=2Gi'
-      - '--timeout=900'
-      - '--service-account=${_RUNTIME_SERVICE_ACCOUNT}'
-      - '--set-env-vars=SERVICE_STAGE=ocr,PROJECT_ID=$PROJECT_ID,REGION=${_REGION},INTAKE_GCS_BUCKET=${_INTAKE_BUCKET},OUTPUT_GCS_BUCKET=${_OUTPUT_BUCKET},SUMMARY_BUCKET=${_SUMMARY_BUCKET}'
-      - '--set-secrets=DOC_AI_PROCESSOR_ID=${_DOC_AI_PROCESSOR_SECRET}:latest,DRIVE_INPUT_FOLDER_ID=${_DRIVE_INPUT_FOLDER_SECRET}:latest,DRIVE_REPORT_FOLDER_ID=${_DRIVE_REPORT_FOLDER_SECRET}:latest,OPENAI_API_KEY=${_OPENAI_API_KEY_SECRET}:latest'
+      - -c
+      - |
+        set -euo pipefail
+        DIGEST=$(cat /workspace/image-digest.txt)
+        gcloud run deploy ${_OCR_SERVICE} \
+          --image="${DIGEST}" \
+          --region=${_REGION} \
+          --platform=managed \
+          --execution-environment=gen2 \
+          --cpu=2 \
+          --memory=2Gi \
+          --timeout=900 \
+          --concurrency=${_OCR_CONCURRENCY} \
+          --min-instances=0 \
+          --max-instances=${_OCR_MAX_INSTANCES} \
+          --service-account=${_OCR_SERVICE_ACCOUNT} \
+          --set-env-vars=SERVICE_STAGE=ocr,PROJECT_ID=$PROJECT_ID,REGION=${_REGION},INTAKE_GCS_BUCKET=${_INTAKE_BUCKET},OUTPUT_GCS_BUCKET=${_OUTPUT_BUCKET},SUMMARY_BUCKET=${_SUMMARY_BUCKET},CMEK_KEY_NAME=${_CMEK_KEY_NAME},PIPELINE_STATE_BACKEND=${_PIPELINE_STATE_BACKEND},PIPELINE_STATE_BUCKET=${_PIPELINE_STATE_BUCKET},PIPELINE_STATE_PREFIX=${_PIPELINE_STATE_PREFIX},PIPELINE_WORKFLOW_NAME=${_PIPELINE_WORKFLOW_NAME},PIPELINE_SERVICE_BASE_URL=${_PIPELINE_SERVICE_BASE_URL},PIPELINE_DLQ_TOPIC=${_PIPELINE_DLQ_TOPIC} \
+          --set-secrets=DOC_AI_PROCESSOR_ID=${_DOC_AI_PROCESSOR_SECRET}:latest,DRIVE_INPUT_FOLDER_ID=${_DRIVE_INPUT_FOLDER_SECRET}:latest,DRIVE_REPORT_FOLDER_ID=${_DRIVE_REPORT_FOLDER_SECRET}:latest,OPENAI_API_KEY=${_OPENAI_API_KEY_SECRET}:latest,INTERNAL_EVENT_TOKEN=${_INTERNAL_EVENT_TOKEN_SECRET}:latest
   - name: 'gcr.io/cloud-builders/gcloud'
     id: deploy-summarisation
+    entrypoint: bash
     args:
-      - run
-      - deploy
-      - ${_SUMMARY_SERVICE}
-      - '--image=${_IMAGE_REPO}:$SHORT_SHA'
-      - '--region=${_REGION}'
-      - '--platform=managed'
-      - '--execution-environment=gen2'
-      - '--cpu=2'
-      - '--memory=2Gi'
-      - '--timeout=900'
-      - '--service-account=${_RUNTIME_SERVICE_ACCOUNT}'
-      - '--set-env-vars=SERVICE_STAGE=summarization,PROJECT_ID=$PROJECT_ID,REGION=${_REGION},INTAKE_GCS_BUCKET=${_INTAKE_BUCKET},OUTPUT_GCS_BUCKET=${_OUTPUT_BUCKET},SUMMARY_BUCKET=${_SUMMARY_BUCKET}'
-      - '--set-secrets=DOC_AI_PROCESSOR_ID=${_DOC_AI_PROCESSOR_SECRET}:latest,DRIVE_INPUT_FOLDER_ID=${_DRIVE_INPUT_FOLDER_SECRET}:latest,DRIVE_REPORT_FOLDER_ID=${_DRIVE_REPORT_FOLDER_SECRET}:latest,OPENAI_API_KEY=${_OPENAI_API_KEY_SECRET}:latest'
+      - -c
+      - |
+        set -euo pipefail
+        DIGEST=$(cat /workspace/image-digest.txt)
+        gcloud run deploy ${_SUMMARY_SERVICE} \
+          --image="${DIGEST}" \
+          --region=${_REGION} \
+          --platform=managed \
+          --execution-environment=gen2 \
+          --cpu=2 \
+          --memory=2Gi \
+          --timeout=900 \
+          --concurrency=${_SUMMARY_CONCURRENCY} \
+          --min-instances=0 \
+          --max-instances=${_SUMMARY_MAX_INSTANCES} \
+          --service-account=${_SUMMARISER_SERVICE_ACCOUNT} \
+          --set-env-vars=SERVICE_STAGE=summarization,PROJECT_ID=$PROJECT_ID,REGION=${_REGION},INTAKE_GCS_BUCKET=${_INTAKE_BUCKET},OUTPUT_GCS_BUCKET=${_OUTPUT_BUCKET},SUMMARY_BUCKET=${_SUMMARY_BUCKET},CMEK_KEY_NAME=${_CMEK_KEY_NAME},PIPELINE_STATE_BACKEND=${_PIPELINE_STATE_BACKEND},PIPELINE_STATE_BUCKET=${_PIPELINE_STATE_BUCKET},PIPELINE_STATE_PREFIX=${_PIPELINE_STATE_PREFIX},PIPELINE_WORKFLOW_NAME=${_PIPELINE_WORKFLOW_NAME},PIPELINE_SERVICE_BASE_URL=${_PIPELINE_SERVICE_BASE_URL},PIPELINE_DLQ_TOPIC=${_PIPELINE_DLQ_TOPIC} \
+          --set-secrets=DOC_AI_PROCESSOR_ID=${_DOC_AI_PROCESSOR_SECRET}:latest,DRIVE_INPUT_FOLDER_ID=${_DRIVE_INPUT_FOLDER_SECRET}:latest,DRIVE_REPORT_FOLDER_ID=${_DRIVE_REPORT_FOLDER_SECRET}:latest,OPENAI_API_KEY=${_OPENAI_API_KEY_SECRET}:latest,INTERNAL_EVENT_TOKEN=${_INTERNAL_EVENT_TOKEN_SECRET}:latest
   - name: 'gcr.io/cloud-builders/gcloud'
     id: deploy-storage
+    entrypoint: bash
     args:
-      - run
-      - deploy
-      - ${_STORAGE_SERVICE}
-      - '--image=${_IMAGE_REPO}:$SHORT_SHA'
-      - '--region=${_REGION}'
-      - '--platform=managed'
-      - '--execution-environment=gen2'
-      - '--cpu=1'
-      - '--memory=1Gi'
-      - '--timeout=600'
-      - '--service-account=${_RUNTIME_SERVICE_ACCOUNT}'
-      - '--set-env-vars=SERVICE_STAGE=storage,PROJECT_ID=$PROJECT_ID,REGION=${_REGION},INTAKE_GCS_BUCKET=${_INTAKE_BUCKET},OUTPUT_GCS_BUCKET=${_OUTPUT_BUCKET},SUMMARY_BUCKET=${_SUMMARY_BUCKET}'
-      - '--set-secrets=DOC_AI_PROCESSOR_ID=${_DOC_AI_PROCESSOR_SECRET}:latest,DRIVE_INPUT_FOLDER_ID=${_DRIVE_INPUT_FOLDER_SECRET}:latest,DRIVE_REPORT_FOLDER_ID=${_DRIVE_REPORT_FOLDER_SECRET}:latest,OPENAI_API_KEY=${_OPENAI_API_KEY_SECRET}:latest'
+      - -c
+      - |
+        set -euo pipefail
+        DIGEST=$(cat /workspace/image-digest.txt)
+        gcloud run deploy ${_STORAGE_SERVICE} \
+          --image="${DIGEST}" \
+          --region=${_REGION} \
+          --platform=managed \
+          --execution-environment=gen2 \
+          --cpu=1 \
+          --memory=1Gi \
+          --timeout=600 \
+          --concurrency=${_STORAGE_CONCURRENCY} \
+          --min-instances=0 \
+          --max-instances=${_STORAGE_MAX_INSTANCES} \
+          --service-account=${_STORAGE_SERVICE_ACCOUNT} \
+          --set-env-vars=SERVICE_STAGE=storage,PROJECT_ID=$PROJECT_ID,REGION=${_REGION},INTAKE_GCS_BUCKET=${_INTAKE_BUCKET},OUTPUT_GCS_BUCKET=${_OUTPUT_BUCKET},SUMMARY_BUCKET=${_SUMMARY_BUCKET},CMEK_KEY_NAME=${_CMEK_KEY_NAME},PIPELINE_STATE_BACKEND=${_PIPELINE_STATE_BACKEND},PIPELINE_STATE_BUCKET=${_PIPELINE_STATE_BUCKET},PIPELINE_STATE_PREFIX=${_PIPELINE_STATE_PREFIX},PIPELINE_WORKFLOW_NAME=${_PIPELINE_WORKFLOW_NAME},PIPELINE_SERVICE_BASE_URL=${_PIPELINE_SERVICE_BASE_URL},PIPELINE_DLQ_TOPIC=${_PIPELINE_DLQ_TOPIC} \
+          --set-secrets=DOC_AI_PROCESSOR_ID=${_DOC_AI_PROCESSOR_SECRET}:latest,DRIVE_INPUT_FOLDER_ID=${_DRIVE_INPUT_FOLDER_SECRET}:latest,DRIVE_REPORT_FOLDER_ID=${_DRIVE_REPORT_FOLDER_SECRET}:latest,OPENAI_API_KEY=${_OPENAI_API_KEY_SECRET}:latest,INTERNAL_EVENT_TOKEN=${_INTERNAL_EVENT_TOKEN_SECRET}:latest
 artifacts:
   objects:
     location: 'gs://${_ARTIFACT_BUCKET}/build-artifacts/$BUILD_ID'
     paths:
       - outputs/sbom.json
       - outputs/pip-audit.json
+      - outputs/provenance.json
+      - outputs/vulnerability.json
 substitutions:
   _IMAGE_REPO: us-central1-docker.pkg.dev/quantify-agent/mcc/mcc-ocr-summary
   _OCR_SERVICE: mcc-ocr-service
   _SUMMARY_SERVICE: mcc-summarisation-service
   _STORAGE_SERVICE: mcc-storage-service
   _REGION: us-central1
-  _ARTIFACT_BUCKET: mcc-artifacts
-  _RUNTIME_SERVICE_ACCOUNT: mcc-orch-sa@quantify-agent.iam.gserviceaccount.com
+  _ARTIFACT_BUCKET: quantify-agent-mcc-phi-artifacts
   _INTAKE_BUCKET: quantify-agent-intake
   _OUTPUT_BUCKET: quantify-agent-output
   _SUMMARY_BUCKET: quantify-agent-output
+  _CMEK_KEY_NAME: projects/quantify-agent/locations/us-central1/keyRings/mcc-phi/cryptoKeys/mcc-phi-key
+  _PIPELINE_STATE_BACKEND: gcs
+  _PIPELINE_STATE_BUCKET: quantify-agent-mcc-state
+  _PIPELINE_STATE_PREFIX: state/
+  _PIPELINE_WORKFLOW_NAME: pipeline-main
+  _PIPELINE_SERVICE_BASE_URL: https://mcc-ocr-service-us-central1-a.run.app
+  _PIPELINE_DLQ_TOPIC: projects/quantify-agent/topics/mcc-ocr-pipeline-dlq
   _DOC_AI_PROCESSOR_SECRET: mcc_docai_processor_id
   _DRIVE_INPUT_FOLDER_SECRET: mcc_drive_intake_folder_id
   _DRIVE_REPORT_FOLDER_SECRET: mcc_drive_root_folder_id
   _OPENAI_API_KEY_SECRET: mcc_openai_api_key
+  _INTERNAL_EVENT_TOKEN_SECRET: internal-event-token
+  _OCR_SERVICE_ACCOUNT: mcc-ocr-sa@quantify-agent.iam.gserviceaccount.com
+  _SUMMARISER_SERVICE_ACCOUNT: mcc-summariser-sa@quantify-agent.iam.gserviceaccount.com
+  _STORAGE_SERVICE_ACCOUNT: mcc-storage-sa@quantify-agent.iam.gserviceaccount.com
+  _OCR_CONCURRENCY: 4
+  _OCR_MAX_INSTANCES: 10
+  _SUMMARY_CONCURRENCY: 2
+  _SUMMARY_MAX_INSTANCES: 5
+  _STORAGE_CONCURRENCY: 2
+  _STORAGE_MAX_INSTANCES: 5
 images:
   - '${_IMAGE_REPO}:$SHORT_SHA'
-  - '${_IMAGE_REPO}:latest'

@@ -13,7 +13,7 @@ import uuid
 from typing import Any, Dict, Mapping, MutableMapping
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import JSONResponse, PlainTextResponse
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, ValidationError as PydanticValidationError, field_validator
 
 from src.config import get_config
@@ -31,6 +31,8 @@ from src.services.pipeline import (
     job_public_view,
 )
 from src.services.docai_helper import OCRService
+from src.services.metrics import PrometheusMetrics
+from src.utils.secrets import resolve_secret_env
 
 # Force stdout logging early (before configure_logging)
 logging.basicConfig(
@@ -224,8 +226,8 @@ async def _parse_ingest_request(request: Request) -> IngestRequest:
 
 def _require_internal_token(request: Request, *, expected: str | None) -> None:
     if not expected:
-        return
-    provided = request.headers.get("x-internal-token", "")
+        raise HTTPException(status_code=401, detail="Missing or invalid internal token")
+    provided = request.headers.get("x-internal-event-token", "")
     if not provided or not secrets.compare_digest(provided, expected):
         raise HTTPException(status_code=401, detail="Missing or invalid internal token")
 
@@ -249,7 +251,11 @@ def create_app() -> FastAPI:
     app.state.config = cfg
     app.state.state_store = create_state_store_from_env()
     app.state.workflow_launcher = create_workflow_launcher_from_env()
-    app.state.internal_event_token = os.getenv("INTERNAL_EVENT_TOKEN")
+    app.state.metrics = PrometheusMetrics.instrument_app(app)
+    internal_token = resolve_secret_env("INTERNAL_EVENT_TOKEN", project_id=cfg.project_id)
+    if not internal_token:
+        raise RuntimeError("INTERNAL_EVENT_TOKEN must be configured via Secret Manager or environment variable")
+    app.state.internal_event_token = internal_token
 
     @app.exception_handler(ValidationError)
     async def _val_handler(_r: Request, exc: ValidationError):
@@ -499,17 +505,6 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=404, detail="Job not found")
         return job_public_view(job)
 
-    # Metrics endpoint ---------------------------------------------------------
-    try:  # pragma: no cover - optional dependency
-        from prometheus_client import CONTENT_TYPE_LATEST, generate_latest  # type: ignore
-
-        @app.get("/metrics")
-        async def metrics():  # pragma: no cover - simple passthrough
-            data = generate_latest()  # type: ignore
-            return PlainTextResponse(data.decode("utf-8"), media_type=CONTENT_TYPE_LATEST)
-    except Exception:  # pragma: no cover
-        _API_LOG.warning("prometheus_client not installed; /metrics disabled")
-
     # Startup diagnostics ------------------------------------------------------
     @app.on_event("startup")
     async def _startup_diag():  # pragma: no cover
@@ -545,7 +540,9 @@ def create_app() -> FastAPI:
             _API_LOG.error("ping_openai_dns_failure", extra=payload)
             return payload
 
-        api_key_raw = os.getenv("OPENAI_API_KEY", "")
+        cfg_state = getattr(app.state, "config", None)
+        project_id = getattr(cfg_state, "project_id", None)
+        api_key_raw = resolve_secret_env("OPENAI_API_KEY", project_id=project_id) or ""
         api_key = api_key_raw.strip().replace("\n", "")
         if api_key_raw and api_key != api_key_raw:
             payload["api_key_sanitized"] = True

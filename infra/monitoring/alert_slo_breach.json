@@ -1,0 +1,18 @@
+{
+  "displayName": "MCC OCR Pipeline SLO Breach",
+  "combiner": "OR",
+  "conditions": [
+    {
+      "displayName": "Pipeline success ratio < 99.5% (30m)",
+      "conditionMonitoringQueryLanguage": {
+        "duration": "1800s",
+        "query": "fetch prometheus_target\n| { metric 'prometheus.googleapis.com/mcc_pipeline_events_total' | filter metric.label.stage = 'storage' && metric.label.name = 'jobs_completed_total' | align rate(5m) | group_by [], sum(val()) ; metric 'prometheus.googleapis.com/mcc_pipeline_events_total' | filter metric.label.stage = 'storage' && metric.label.name = 'dlq_messages_total' | align rate(5m) | group_by [], sum(val()) }\n| join\n| value.a / (value.a + value.b)\n| condition val() < 0.995"
+      }
+    }
+  ],
+  "notificationChannels": [],
+  "alertStrategy": {
+    "autoClose": "7200s"
+  },
+  "enabled": true
+}

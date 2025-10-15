@@ -5,6 +5,7 @@ import pytest
 
 from src.services.docai_batch_helper import batch_process_documents_gcs, _BatchClients
 from src.errors import OCRServiceError, ValidationError
+from src.config import get_config
 
 PDF_BYTES = b"%PDF-1.4\n1 0 obj<<>>endobj\ntrailer<<>>\n%%EOF"
 
@@ -13,6 +14,7 @@ class DummyBlob:
     def __init__(self, name: str, data: bytes):
         self.name = name
         self._data = data
+        self.kms_key_name = None
 
     def download_as_bytes(self):  # noqa: D401
         return self._data
@@ -79,15 +81,22 @@ class DummyOperation:
 class DummyDocAIClient:
     def __init__(self, storage_client: DummyStorageClient):
         self.storage_client = storage_client
+        self.requests = []
 
     def batch_process_documents(self, request):  # noqa: D401
         # Populate fake output JSON immediately so once operation completes polling will read it
-        output_prefix = request["document_output_config"]["gcs_output_config"]["gcs_uri"].replace("gs://quantify-agent-output/", "")
+        self.requests.append(request)
+        output_uri = request["document_output_config"]["gcs_output_config"]["gcs_uri"]
+        assert output_uri.startswith("gs://")
+        _, _, bucket_and_path = output_uri.partition("://")
+        _, _, prefix = bucket_and_path.partition("/")
+        if not prefix.endswith("/"):
+            prefix = f"{prefix}/"
         # Simulate two shard JSON outputs
         for i in range(2):
             pages = [{"layout": {"text": f"page {i+1}"}}]
             doc = {"text": f"full text {i+1}", "pages": pages}
-            blob_name = f"{output_prefix}output-{i}.json"
+            blob_name = f"{prefix}output-{i}.json"
             self.storage_client._blobs[blob_name] = DummyBlob(blob_name, json.dumps({"document": doc}).encode("utf-8"))
         return DummyOperation()
 
@@ -97,6 +106,19 @@ def tmp_pdf(tmp_path):
     p = tmp_path / "test.pdf"
     p.write_bytes(PDF_BYTES)
     return p
+
+
+@pytest.fixture(autouse=True)
+def _cmek_env(monkeypatch):
+    monkeypatch.setenv("PROJECT_ID", "proj")
+    monkeypatch.setenv("REGION", "us")
+    monkeypatch.setenv("INTAKE_GCS_BUCKET", "unit-intake-bucket")
+    monkeypatch.setenv("OUTPUT_GCS_BUCKET", "unit-output-bucket")
+    monkeypatch.setenv("SUMMARY_BUCKET", "unit-summary-bucket")
+    monkeypatch.setenv("CMEK_KEY_NAME", "projects/demo/locations/us/keyRings/test/cryptoKeys/test-key")
+    get_config.cache_clear()
+    yield
+    get_config.cache_clear()
 
 
 def test_batch_process_local_upload(tmp_pdf, monkeypatch):
@@ -110,7 +132,14 @@ def test_batch_process_local_upload(tmp_pdf, monkeypatch):
     assert meta["status"] == "succeeded"
     # pages_processed may come from operation metadata (simulated 3) which can differ
     assert meta["pages_processed"] >= 2
-    assert meta["output_uri"].startswith("gs://quantify-agent-output/")
+    assert meta["output_uri"].startswith("gs://unit-output-bucket/")
+    # Ensure we set encryption configuration on request and upload blob
+    request = doc_client.requests[0]
+    gcs_cfg = request["document_output_config"]["gcs_output_config"]
+    assert gcs_cfg["kms_key_name"].endswith("test-key")
+    upload_blobs = [blob for name, blob in storage_client._blobs.items() if name.startswith("uploads/")]
+    assert upload_blobs, "expected local upload to be written to intake bucket"
+    assert upload_blobs[0].kms_key_name and upload_blobs[0].kms_key_name.endswith("test-key")
 
 
 def test_batch_requires_pdf(monkeypatch, tmp_path):

@@ -107,6 +107,7 @@ class OCRService:
         # Build regional endpoint (region previously doc_ai_location)
         self._endpoint = f"{self._cfg.region}-documentai.googleapis.com"
         self._client = self._client_factory(self._endpoint)
+        self._kms_key = getattr(self._cfg, "cmek_key_name", None)
 
     def close(self) -> None:  # pragma: no cover - underlying client close may not be needed
         close_attr = getattr(self._client, "close", None)
@@ -223,6 +224,9 @@ class OCRService:
         except Exception as exc:  # wrap any other
             raise OCRServiceError(f"Failed building request: {exc}") from exc
 
+        if self._kms_key:
+            request["encryption_spec"] = {"kms_key_name": self._kms_key}
+
         start = time.perf_counter()
         try:
             result = self._client.process_document(request=request)
@@ -281,7 +285,11 @@ def _gcs_upload_json(
 
     bucket_name, object_name = _split_gcs_uri(gcs_uri)
     client = storage.Client()
+    cfg = get_config()
+    kms_key = getattr(cfg, "cmek_key_name", None)
     blob = client.bucket(bucket_name).blob(object_name)
+    if kms_key:
+        setattr(blob, "kms_key_name", kms_key)
     upload_kwargs: Dict[str, Any] = {"content_type": "application/json"}
     if if_generation_match is not None:
         upload_kwargs["if_generation_match"] = if_generation_match
@@ -449,13 +457,19 @@ def run_splitter(
     client = client or documentai.DocumentProcessorServiceClient(
         client_options=ClientOptions(api_endpoint=f"{location}-documentai.googleapis.com")
     )
+    kms_key = getattr(cfg, "cmek_key_name", None)
+    gcs_output: Dict[str, Any] = {"gcs_uri": destination_uri}
+    if kms_key:
+        gcs_output["kms_key_name"] = kms_key
     request = {
         "name": f"projects/{project_id}/locations/{location}/processors/{processor_id}",
         "input_documents": {
             "gcs_documents": {"documents": [{"gcs_uri": gcs_uri, "mime_type": "application/pdf"}]}
         },
-        "document_output_config": {"gcs_output_config": {"gcs_uri": destination_uri}},
+        "document_output_config": {"gcs_output_config": gcs_output},
     }
+    if kms_key:
+        request["encryption_spec"] = {"kms_key_name": kms_key}
     resolved_store = _resolve_state_store(job_id, state_store)
     job_snapshot = None
     if resolved_store and job_id:
@@ -605,13 +619,19 @@ def run_batch_ocr(
         except StopIteration:
             return False
         dest_uri = f"gs://{output_bucket.rstrip('/')}/{base_prefix.lstrip('/')}{shard_index:04d}/"
+        kms_key = getattr(cfg, "cmek_key_name", None)
+        output_config: Dict[str, Any] = {"gcs_uri": dest_uri}
+        if kms_key:
+            output_config["kms_key_name"] = kms_key
         request = {
             "name": f"projects/{project_id}/locations/{location}/processors/{processor_id}",
             "input_documents": {
                 "gcs_documents": {"documents": [{"gcs_uri": shard_uri, "mime_type": "application/pdf"}]}
             },
-            "document_output_config": {"gcs_output_config": {"gcs_uri": dest_uri}},
+            "document_output_config": {"gcs_output_config": output_config},
         }
+        if kms_key:
+            request["encryption_spec"] = {"kms_key_name": kms_key}
         operation = client.batch_process_documents(request=request)
         started_at = time.perf_counter()
         inflight.append((shard_index, shard_uri, dest_uri, operation, started_at))

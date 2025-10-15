@@ -61,11 +61,16 @@ class DummyDocAIClient:
     def __init__(self, storage_client):
         self.storage_client = storage_client
     def batch_process_documents(self, request):
-        output_prefix = request["document_output_config"]["gcs_output_config"]["gcs_uri"].replace("gs://quantify-agent-output/", "")
+        output_uri = request["document_output_config"]["gcs_output_config"]["gcs_uri"]
+        assert output_uri.startswith("gs://"), "Expected gs:// output uri"
+        _, _, suffix = output_uri.partition("://")
+        _, _, prefix = suffix.partition("/")
+        if prefix and not prefix.endswith("/"):
+            prefix = f"{prefix}/"
         # Write single large JSON
         pages = [{"layout": {"text": f"page {i+1}"}} for i in range(50)]
         doc = {"text": "full text big", "pages": pages}
-        blob_name = f"{output_prefix}output-0.json"
+        blob_name = f"{prefix}output-0.json"
         self.storage_client._blobs[blob_name] = DummyBlob(blob_name, json.dumps({"document": doc}).encode('utf-8'))
         return DummyOperation()
 

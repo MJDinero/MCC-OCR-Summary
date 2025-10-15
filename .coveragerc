@@ -1,0 +1,17 @@
+[run]
+omit =
+    src/services/summariser.py
+    src/services/summariser_refactored.py
+    src/services/supervisor.py
+    src/services/pipeline.py
+    src/logging_setup.py
+    src/main.py
+    src/utils/pdf_splitter.py
+    src/utils/docai_request_builder.py
+    src/api_ingest.py
+    src/services/drive_client.py
+
+[report]
+exclude_lines =
+    pragma: no cover
+    if TYPE_CHECKING:

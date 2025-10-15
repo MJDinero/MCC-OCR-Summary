@@ -58,10 +58,10 @@ Modular, event-driven pipeline that converts medical PDF intake documents into r
 # Install dependencies
 make install
 
-# Run format + type + tests
-make lint
-make type
-make test            # runs pytest with coverage ≥85%
+# Run static analysis + type + tests
+make lint            # ruff + pylint (strict)
+make type            # mypy --strict on critical services
+make test            # pytest with coverage ≥90%
 
 # Execute targeted tests
 python3 -m pytest tests/test_summarization_service_pipeline.py -q
@@ -104,19 +104,26 @@ All services consume the same config module, enabling override via `ConfigMap` o
 
 ## Security & Privacy
 
-- **Secrets**: Retrieved at runtime from Secret Manager. No secrets stored in source control.
-- **Encryption**: Intake, summary, and output buckets require CMEK (`CMEK_KEY_NAME`). BigQuery tables enforce CMEK-aligned dataset.
+- **Secrets**: Retrieved at runtime from Secret Manager (see `src/utils/secrets.py`). Use `scripts/verify_cmek.sh` to validate CMEK coverage before releases.
+- **Encryption**: Intake, summary, output, and state buckets plus the BigQuery dataset all enforce CMEK (`CMEK_KEY_NAME`).
 - **Redaction**: All logs pass through `utils/redact.py` before emitting messages that contain user-provided text.
-- **IAM**: Each service (OCR, summarisation, storage) runs with its own service account scoped to the minimum roles listed in `AGENTS.md`.
+- **IAM**: Stage-scoped identities (`mcc-ocr-sa`, `mcc-summariser-sa`, `mcc-storage-sa`) are created via `infra/iam.sh` with least-privilege, and Cloud Build impersonates them only via `roles/iam.serviceAccountUser`.
 - **Diagnostics**: `ENABLE_DIAG_ENDPOINTS=false` by default; enable only for controlled debugging sessions.
 
 ---
 
 ## Observability
 
-- **Metrics**: `ocr_latency_seconds`, `summarization_latency_seconds`, `jobs_completed_total`, and `dlq_messages_total` exported via Prometheus (`src/services/metrics.py`).
-- **Logs**: Structured JSON logs with `trace_id`, `job_id`, `stage` fields. Pub/Sub message attributes also mirror correlation IDs.
-- **Monitoring**: `infra/monitoring/alert_policies.yaml` defines burn-rate alerts for DLQ backlog and latency regression. Extend with GCS / BigQuery metrics as needed.
+- **Metrics**: Prometheus instrumentation is enabled by default (`/metrics` endpoint attached via `PrometheusMetrics.instrument_app`). Latency, throughput, DLQ counters, and job completions are emitted per stage.
+- **Logs**: Structured JSON logs now include `stage`, `service`, `latency_ms`, `error_type`, and `redaction_applied` to streamline SRE triage.
+- **Monitoring Assets**: Dashboards in `infra/monitoring/dashboard_pipeline_latency.json` and `infra/monitoring/dashboard_throughput_cpu_mem.json` visualise latency distributions and Cloud Run CPU/memory. Alert policies (`alert_dlq_backlog.json`, `alert_5xx_rate.json`, `alert_slo_breach.json`) enforce DLQ backlog, 5xx error rate, and pipeline SLOs.
+- **Verification**: After deployment, run `gcloud monitoring dashboards create` / `alert-policies create` with the JSON manifests and confirm `/metrics` exposes Prometheus samples.
+
+## Runtime Tuning
+
+- **Worker Auto-sizing**: `src/runtime_server.py` computes `UVICORN_WORKERS` from available CPU cores (overridable via env) before starting Uvicorn.
+- **Cloud Run Scaling**: `cloudbuild.yaml` deploys each revision with explicit concurrency & max instance caps (`_OCR_CONCURRENCY`, `_SUMMARY_CONCURRENCY`, `_STORAGE_CONCURRENCY`).
+- **Temp Cleanup**: Batch OCR helper reuses CMEK-backed buckets and cleans transient uploads after completion.
 
 ---
 
@@ -138,8 +145,8 @@ Re-run benchmarks after model or configuration updates. Results feed the README 
 ## CI / CD
 
 1. `make lint` (ruff + pylint)  
-2. `make type` (mypy)  
-3. `make test` (pytest, coverage ≥85%, include new pipeline tests)  
+2. `make type` (mypy --strict on critical services)  
+3. `make test` (pytest, coverage ≥90%, include new pipeline tests)  
 4. `make audit-deps` (pip-audit)  
 5. `make sbom` (CycloneDX SBOM)  
 6. Build + deploy Cloud Run images  

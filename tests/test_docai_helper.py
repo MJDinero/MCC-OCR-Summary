@@ -4,7 +4,7 @@ from google.api_core import exceptions as gexc
 
 from src.services.docai_helper import OCRService, run_splitter, run_batch_ocr
 from src.errors import OCRServiceError, ValidationError
-from src.config import AppConfig
+from src.config import AppConfig, get_config
 from src.services.pipeline import InMemoryStateStore, PipelineJobCreate, PipelineStatus
 
 VALID_PDF = b"%PDF-1.4\n1 0 obj<<>>endobj\ntrailer<<>>\n%%EOF"
@@ -62,6 +62,10 @@ def test_validation_error_propagates():
 
 
 def test_run_splitter_updates_state_and_manifest(monkeypatch):
+    monkeypatch.setenv("PROJECT_ID", "proj")
+    monkeypatch.setenv("REGION", "us")
+    monkeypatch.setenv("CMEK_KEY_NAME", "projects/demo/locations/us-central1/keyRings/test/cryptoKeys/test-key")
+    get_config.cache_clear()
     store = InMemoryStateStore()
     job = store.create_job(
         PipelineJobCreate(
@@ -119,6 +123,9 @@ def test_run_splitter_updates_state_and_manifest(monkeypatch):
     )
 
     assert client.requests, "Splitter should issue Document AI request"
+    request = client.requests[0]
+    assert request["document_output_config"]["gcs_output_config"]["kms_key_name"].endswith("test-key")
+    assert request["encryption_spec"]["kms_key_name"].endswith("test-key")
     assert result["manifest_uri"].endswith("manifest.json")
     assert len(result["shards"]) == 2
     assert uploads and uploads[0][0].endswith("manifest.json")
@@ -127,6 +134,7 @@ def test_run_splitter_updates_state_and_manifest(monkeypatch):
     assert updated_job.status is PipelineStatus.SPLIT_DONE
     assert "split_shards" in updated_job.metadata
     assert updated_job.metadata["split_shards"][0].endswith("0000.pdf")
+    get_config.cache_clear()
 
 
 def test_run_batch_ocr_fanout_updates_metadata(monkeypatch):

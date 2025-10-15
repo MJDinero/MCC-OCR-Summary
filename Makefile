@@ -44,14 +44,16 @@ install:
 	$(PYTHON) -m pip install -r requirements-dev.txt -c constraints.txt
 
 lint:
-	ruff check src tests
-	pylint --rcfile=.pylintrc src
+	$(PYTHON) -m ruff check src tests
+	$(PYTHON) -m pylint --rcfile=.pylintrc src
+
+TYPE_MODULES := src/services/metrics.py src/runtime_server.py src/services/ocr_service.py src/services/summarization_service.py src/services/storage_service.py
 
 type:
-	mypy src
+	$(PYTHON) -m mypy --strict $(TYPE_MODULES)
 
 test:
-	$(PYTEST) $(COMMON_PYTEST_FLAGS) --cov=src --cov-report=term
+	$(PYTEST) $(COMMON_PYTEST_FLAGS)
 
 test-integration:
 	$(PYTEST) $(COMMON_PYTEST_FLAGS) tests/test_*integration.py

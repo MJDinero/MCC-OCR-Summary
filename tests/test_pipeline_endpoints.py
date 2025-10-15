@@ -103,7 +103,7 @@ def test_internal_event_updates_status(monkeypatch):
     client = TestClient(app)
     ingest = client.post("/ingest", json=_ingest_payload())
     job_id = ingest.json()["job_id"]
-    headers = {"X-Internal-Token": "secret-token"}
+    headers = {"X-Internal-Event-Token": "secret-token"}
     update_payload = {
         "status": "SUMMARY_DONE",
         "stage": "summary",
