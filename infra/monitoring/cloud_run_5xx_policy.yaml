@@ -1,0 +1,25 @@
+displayName: "MCC OCR Summary – Cloud Run 5xx Error Ratio > 2%"
+combiner: OR
+conditions:
+  - displayName: "Cloud Run 5xx ratio (1m) > 2% for 5m"
+    conditionMonitoringQueryLanguage:
+      query: |
+        total = fetch cloud_run_revision
+          | metric 'run.googleapis.com/request_count'
+          | align rate(1m)
+          | group_by [resource.service_name], sum;
+        errors = fetch cloud_run_revision
+          | metric 'run.googleapis.com/request_count'
+          | filter (metric.response_code_class = 5)
+          | align rate(1m)
+          | group_by [resource.service_name], sum;
+        join(errors, total)
+          | value errors.value / total.value
+          | group_by [resource.service_name], sum
+          | condition val() > 0.02
+      duration: 300s
+      trigger:
+        count: 1
+enabled: true
+severity: CRITICAL
+notificationChannels: []

@@ -73,6 +73,8 @@ def test_upload_pdf_stubs(monkeypatch, fail_shared_drive):
 
     class _Cfg:
         drive_report_folder_id = 'folder-id'
+        summary_schema_version = '2025-10-01'
+        project_id = 'test-project'
 
     monkeypatch.setattr(drive_client, 'get_config', lambda: _Cfg())
 
@@ -106,6 +108,8 @@ def test_upload_pdf_validations(monkeypatch):
 
     class _Cfg:
         drive_report_folder_id = ''
+        summary_schema_version = '2025-10-01'
+        project_id = 'test-project'
 
     monkeypatch.setattr(drive_client, 'get_config', lambda: _Cfg())
     with pytest.raises(RuntimeError):

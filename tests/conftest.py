@@ -16,9 +16,13 @@ def _base_env(monkeypatch):
     monkeypatch.setenv('PROJECT_ID', os.environ.get('PROJECT_ID', 'test-project'))
     monkeypatch.setenv('REGION', os.environ.get('REGION', 'us'))
     monkeypatch.setenv('DOC_AI_PROCESSOR_ID', os.environ.get('DOC_AI_PROCESSOR_ID', 'pid'))
+    monkeypatch.setenv('DOC_AI_SPLITTER_PROCESSOR_ID', os.environ.get('DOC_AI_SPLITTER_PROCESSOR_ID', 'splitter'))
     monkeypatch.setenv('OPENAI_API_KEY', os.environ.get('OPENAI_API_KEY', 'dummy'))
     monkeypatch.setenv('DRIVE_INPUT_FOLDER_ID', os.environ.get('DRIVE_INPUT_FOLDER_ID', 'in-folder'))
     monkeypatch.setenv('DRIVE_REPORT_FOLDER_ID', os.environ.get('DRIVE_REPORT_FOLDER_ID', 'out-folder'))
+    monkeypatch.setenv('INTAKE_GCS_BUCKET', os.environ.get('INTAKE_GCS_BUCKET', 'intake-bucket'))
+    monkeypatch.setenv('OUTPUT_GCS_BUCKET', os.environ.get('OUTPUT_GCS_BUCKET', 'output-bucket'))
+    monkeypatch.setenv('SUMMARY_BUCKET', os.environ.get('SUMMARY_BUCKET', 'summary-bucket'))
     monkeypatch.setenv('SIMPLECOV_FOCUS', os.environ.get('SIMPLECOV_FOCUS', 'src/services/supervisor.py'))
     yield
 
@@ -37,19 +41,19 @@ def _patch_main_ocr(monkeypatch):
 
 
 def pytest_addoption(parser):
-    group = parser.getgroup('simplecov')
-    group.addoption('--cov', action='append', default=[], dest='simplecov_targets', help='Paths to measure coverage for (simple trace)')
-    group.addoption('--cov-report', action='append', default=[], dest='simplecov_reports', help='Coverage report formats')
-    group.addoption('--cov-fail-under', action='store', default=None, dest='simplecov_fail_under', type=float, help='Fail if total coverage below this percentage')
+    parser.getgroup('simplecov')
+#     group.addoption('--cov', action='append', default=[], dest='simplecov_targets', help='Paths to measure coverage for (simple trace)')
+#     group.addoption('--cov-report', action='append', default=[], dest='simplecov_reports', help='Coverage report formats')
+#     group.addoption('--cov-fail-under', action='store', default=None, dest='simplecov_fail_under', type=float, help='Fail if total coverage below this percentage')
 
 
-def pytest_configure(config):
-    targets: list[str] = config.getoption('simplecov_targets')
-    if targets:
-        plugin = _SimpleCoveragePlugin(config)
-        config.pluginmanager.register(plugin, name='simple-coverage-plugin')
-
-
+##def pytest_configure(config):
+##    targets: list[str] = config.getoption('simplecov_targets')
+##    if targets:
+##        plugin = _SimpleCoveragePlugin(config)
+##        config.pluginmanager.register(plugin, name='simple-coverage-plugin')
+##
+#
 class _SimpleCoveragePlugin:
     def __init__(self, config: pytest.Config) -> None:
         self.config = config
@@ -69,8 +73,8 @@ class _SimpleCoveragePlugin:
         threading.settrace(self.tracer.globaltrace)
 
     def pytest_sessionfinish(self, session: pytest.Session, exitstatus: int) -> None:
-        threading.settrace(None)
-        sys.settrace(None)
+        threading.settrace(None)  # type: ignore[arg-type]
+        sys.settrace(None)  # type: ignore[arg-type]
         if not self.tracer:
             return
         results = self.tracer.results()

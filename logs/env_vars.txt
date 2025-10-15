@@ -1,0 +1,17 @@
+spec.template.spec.containers[0].env[0].name:                        PROJECT_ID
+spec.template.spec.containers[0].env[0].valueFrom.secretKeyRef.key:  latest
+spec.template.spec.containers[0].env[0].valueFrom.secretKeyRef.name: PROJECT_ID
+spec.template.spec.containers[0].env[1].name:                        DOC_AI_PROCESSOR_ID
+spec.template.spec.containers[0].env[1].valueFrom.secretKeyRef.key:  latest
+spec.template.spec.containers[0].env[1].valueFrom.secretKeyRef.name: mcc_docai_processor_id
+spec.template.spec.containers[0].env[2].name:                        OPENAI_API_KEY
+spec.template.spec.containers[0].env[2].valueFrom.secretKeyRef.key:  latest
+spec.template.spec.containers[0].env[2].valueFrom.secretKeyRef.name: mcc_openai_api_key
+spec.template.spec.containers[0].env[3].name:                        DRIVE_INPUT_FOLDER_ID
+spec.template.spec.containers[0].env[3].valueFrom.secretKeyRef.key:  latest
+spec.template.spec.containers[0].env[3].valueFrom.secretKeyRef.name: mcc_drive_intake_folder_id
+spec.template.spec.containers[0].env[4].name:                        DRIVE_REPORT_FOLDER_ID
+spec.template.spec.containers[0].env[4].valueFrom.secretKeyRef.key:  latest
+spec.template.spec.containers[0].env[4].valueFrom.secretKeyRef.name: mcc_drive_root_folder_id
+spec.template.spec.containers[0].env[5].name:                        LOG_LEVEL
+spec.template.spec.containers[0].env[5].value:                       DEBUG

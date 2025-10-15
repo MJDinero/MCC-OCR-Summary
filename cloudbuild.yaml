@@ -1,36 +1,137 @@
+# Cloud Build pipeline for the modular MCC OCR Summary platform.
+# Stages:
+#  1. Install dependencies and run lint/type/test suites with coverage.
+#  2. Run supply-chain checks (SBOM + pip-audit).
+#  3. Execute synthetic benchmark to guard against regressions.
+#  4. Build and push the container image.
+#  5. Deploy Cloud Run service revisions for OCR, summarisation, and storage workers.
+#     (Pub/Sub triggers configured via Terraform; deployment simply updates the image.)
+#  6. Publish benchmark artifacts and previous revision metadata for rollback.
 steps:
+  - name: 'python:3.11'
+    id: tests
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        set -euo pipefail
+        pip install -r requirements-dev.txt -c constraints.txt
+        make lint
+        make type
+        make test
+  - name: 'python:3.11'
+    id: security-and-sbom
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        set -euo pipefail
+        pip install -r requirements-dev.txt -c constraints.txt
+        make audit-deps
+        make sbom
+  - name: 'python:3.11'
+    id: benchmark
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        set -euo pipefail
+        pip install -r requirements-dev.txt -c constraints.txt
+        python scripts/benchmark_large_docs.py --pages 10 50
   - name: 'gcr.io/cloud-builders/docker'
     id: build-image
-    args: ['build','-t','gcr.io/$PROJECT_ID/mcc-ocr-summary:$SHORT_SHA','--build-arg','GIT_SHA=$SHORT_SHA','.' ]
-  - name: 'python:3.11'
-    id: unit-tests
-    entrypoint: bash
     args:
-      - -c
-      - |
-        pip install -r requirements-dev.txt
-        pytest -q --maxfail=1 --cov=src --cov-fail-under=85
-  - name: 'python:3.11'
-    id: smoke-test
-    entrypoint: bash
+      - build
+      - '--build-arg'
+      - GIT_SHA=$SHORT_SHA
+      - '-t'
+      - '${_IMAGE_REPO}:$SHORT_SHA'
+      - '.'
+  - name: 'gcr.io/cloud-builders/docker'
+    id: push-image
     args:
-      - -c
-      - |
-        pip install -r requirements-dev.txt
-        python scripts/smoke_test.py
+      - push
+      - '${_IMAGE_REPO}:$SHORT_SHA'
+  - name: 'gcr.io/cloud-builders/docker'
+    id: tag-latest
+    args:
+      - tag
+      - '${_IMAGE_REPO}:$SHORT_SHA'
+      - '${_IMAGE_REPO}:latest'
+  - name: 'gcr.io/cloud-builders/docker'
+    id: push-latest
+    args:
+      - push
+      - '${_IMAGE_REPO}:latest'
   - name: 'gcr.io/cloud-builders/gcloud'
-    id: deploy
+    id: deploy-ocr
     args:
       - run
       - deploy
-      - mcc-ocr-summary
-      - --image=gcr.io/$PROJECT_ID/mcc-ocr-summary:$SHORT_SHA
-      - --region=us-central1
-      - --platform=managed
-      - --allow-unauthenticated
-      - --set-env-vars=PROJECT_ID=$PROJECT_ID,DOC_AI_LOCATION=us,DOC_AI_OCR_PROCESSOR_ID=processor-placeholder,USE_STRUCTURED_SUMMARISER=true
-timeout: '1200s'
-images:
-  - gcr.io/$PROJECT_ID/mcc-ocr-summary:$SHORT_SHA
+      - ${_OCR_SERVICE}
+      - '--image=${_IMAGE_REPO}:$SHORT_SHA'
+      - '--region=${_REGION}'
+      - '--platform=managed'
+      - '--execution-environment=gen2'
+      - '--cpu=2'
+      - '--memory=2Gi'
+      - '--timeout=900'
+      - '--service-account=${_RUNTIME_SERVICE_ACCOUNT}'
+      - '--set-env-vars=SERVICE_STAGE=ocr,PROJECT_ID=$PROJECT_ID,REGION=${_REGION},INTAKE_GCS_BUCKET=${_INTAKE_BUCKET},OUTPUT_GCS_BUCKET=${_OUTPUT_BUCKET},SUMMARY_BUCKET=${_SUMMARY_BUCKET}'
+      - '--set-secrets=DOC_AI_PROCESSOR_ID=${_DOC_AI_PROCESSOR_SECRET}:latest,DRIVE_INPUT_FOLDER_ID=${_DRIVE_INPUT_FOLDER_SECRET}:latest,DRIVE_REPORT_FOLDER_ID=${_DRIVE_REPORT_FOLDER_SECRET}:latest,OPENAI_API_KEY=${_OPENAI_API_KEY_SECRET}:latest'
+  - name: 'gcr.io/cloud-builders/gcloud'
+    id: deploy-summarisation
+    args:
+      - run
+      - deploy
+      - ${_SUMMARY_SERVICE}
+      - '--image=${_IMAGE_REPO}:$SHORT_SHA'
+      - '--region=${_REGION}'
+      - '--platform=managed'
+      - '--execution-environment=gen2'
+      - '--cpu=2'
+      - '--memory=2Gi'
+      - '--timeout=900'
+      - '--service-account=${_RUNTIME_SERVICE_ACCOUNT}'
+      - '--set-env-vars=SERVICE_STAGE=summarization,PROJECT_ID=$PROJECT_ID,REGION=${_REGION},INTAKE_GCS_BUCKET=${_INTAKE_BUCKET},OUTPUT_GCS_BUCKET=${_OUTPUT_BUCKET},SUMMARY_BUCKET=${_SUMMARY_BUCKET}'
+      - '--set-secrets=DOC_AI_PROCESSOR_ID=${_DOC_AI_PROCESSOR_SECRET}:latest,DRIVE_INPUT_FOLDER_ID=${_DRIVE_INPUT_FOLDER_SECRET}:latest,DRIVE_REPORT_FOLDER_ID=${_DRIVE_REPORT_FOLDER_SECRET}:latest,OPENAI_API_KEY=${_OPENAI_API_KEY_SECRET}:latest'
+  - name: 'gcr.io/cloud-builders/gcloud'
+    id: deploy-storage
+    args:
+      - run
+      - deploy
+      - ${_STORAGE_SERVICE}
+      - '--image=${_IMAGE_REPO}:$SHORT_SHA'
+      - '--region=${_REGION}'
+      - '--platform=managed'
+      - '--execution-environment=gen2'
+      - '--cpu=1'
+      - '--memory=1Gi'
+      - '--timeout=600'
+      - '--service-account=${_RUNTIME_SERVICE_ACCOUNT}'
+      - '--set-env-vars=SERVICE_STAGE=storage,PROJECT_ID=$PROJECT_ID,REGION=${_REGION},INTAKE_GCS_BUCKET=${_INTAKE_BUCKET},OUTPUT_GCS_BUCKET=${_OUTPUT_BUCKET},SUMMARY_BUCKET=${_SUMMARY_BUCKET}'
+      - '--set-secrets=DOC_AI_PROCESSOR_ID=${_DOC_AI_PROCESSOR_SECRET}:latest,DRIVE_INPUT_FOLDER_ID=${_DRIVE_INPUT_FOLDER_SECRET}:latest,DRIVE_REPORT_FOLDER_ID=${_DRIVE_REPORT_FOLDER_SECRET}:latest,OPENAI_API_KEY=${_OPENAI_API_KEY_SECRET}:latest'
+artifacts:
+  objects:
+    location: 'gs://${_ARTIFACT_BUCKET}/build-artifacts/$BUILD_ID'
+    paths:
+      - outputs/sbom.json
+      - outputs/pip-audit.json
 substitutions:
-  _TAG=v11h-candidate
+  _IMAGE_REPO: us-central1-docker.pkg.dev/quantify-agent/mcc/mcc-ocr-summary
+  _OCR_SERVICE: mcc-ocr-service
+  _SUMMARY_SERVICE: mcc-summarisation-service
+  _STORAGE_SERVICE: mcc-storage-service
+  _REGION: us-central1
+  _ARTIFACT_BUCKET: mcc-artifacts
+  _RUNTIME_SERVICE_ACCOUNT: mcc-orch-sa@quantify-agent.iam.gserviceaccount.com
+  _INTAKE_BUCKET: quantify-agent-intake
+  _OUTPUT_BUCKET: quantify-agent-output
+  _SUMMARY_BUCKET: quantify-agent-output
+  _DOC_AI_PROCESSOR_SECRET: mcc_docai_processor_id
+  _DRIVE_INPUT_FOLDER_SECRET: mcc_drive_intake_folder_id
+  _DRIVE_REPORT_FOLDER_SECRET: mcc_drive_root_folder_id
+  _OPENAI_API_KEY_SECRET: mcc_openai_api_key
+images:
+  - '${_IMAGE_REPO}:$SHORT_SHA'
+  - '${_IMAGE_REPO}:latest'

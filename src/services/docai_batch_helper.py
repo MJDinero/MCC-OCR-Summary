@@ -23,7 +23,7 @@ from typing import Any, Dict, List, Optional
 from google.api_core.client_options import ClientOptions
 from google.api_core import exceptions as gexc
 from google.cloud import documentai_v1 as documentai
-from google.cloud import storage
+from google.cloud import storage  # type: ignore[attr-defined]
 
 from src.errors import OCRServiceError, ValidationError
 from src.config import get_config, AppConfig
@@ -70,7 +70,6 @@ def _read_output_documents(storage_client: storage.Client, output_prefix: str) -
     # Split gs://bucket/path/
     without_scheme = output_prefix[5:]
     bucket_name, _, prefix = without_scheme.partition('/')
-    bucket = storage_client.bucket(bucket_name)
     blobs = list(storage_client.list_blobs(bucket_name, prefix=prefix))
     json_blobs = [b for b in blobs if b.name.endswith(".json")]
     if not json_blobs:

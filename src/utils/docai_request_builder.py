@@ -1,12 +1,14 @@
-from __future__ import annotations
 """Pure helper for constructing Document AI process_document request payloads.
 
 Extracted from `mcc.services.docai_helper.process_document` to allow offline
 unit testing without requiring Google client imports.
 """
-from pathlib import Path
-from typing import Tuple, Union, Optional
+
+from __future__ import annotations
+
 import mimetypes
+from pathlib import Path
+from typing import Optional, Tuple, Union
 
 from src.errors import ValidationError
 

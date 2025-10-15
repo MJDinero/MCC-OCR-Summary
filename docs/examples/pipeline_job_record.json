@@ -1,0 +1,29 @@
+{
+  "job_id": "f0c1234abc",
+  "dedupe_key": "intake-bucket/drive/file.pdf@1707420000000",
+  "object_uri": "gs://intake-bucket/drive/file.pdf",
+  "status": "SUMMARY_DONE",
+  "trace_id": "6a3ef29f9fdc4cf898d9a2de9a9c12ab",
+  "request_id": "5fb9ce7ddcb149e2b6b03d9edc14e8bb",
+  "workflow_execution": "projects/proj/locations/us-central1/workflows/mcc-ocr-pipeline/executions/000001",
+  "metadata": {
+    "source": "drive-webhook",
+    "drive_file_id": "1aBcDeFg",
+    "summary_sections": ["Patient Information", "Medical Summary", "Billing Highlights", "Legal / Notes"],
+    "summary_char_length": 2140,
+    "summary_generated_at": "2025-10-11T05:14:22Z"
+  },
+  "retries": {
+    "SUMMARY_JOB": 1
+  },
+  "history": [
+    {"status": "INGESTED", "timestamp": 1759861160.121, "message": "Eventarc intake"},
+    {"status": "WORKFLOW_DISPATCHED", "timestamp": 1759861160.322, "stage": "WORKFLOW"},
+    {"status": "OCR_DONE", "timestamp": 1759861259.101, "stage": "ocr", "extra": {"pages": 84}},
+    {"status": "SUMMARY_DONE", "timestamp": 1759861345.554, "stage": "summary", "extra": {"summary_char_length": 2140}}
+  ],
+  "pdf_uri": "gs://summary-output/pdf/f0c1234abc.pdf",
+  "signed_url": "https://storage.googleapis.com/...",
+  "created_at": 1759861160.019,
+  "updated_at": 1759861345.554
+}

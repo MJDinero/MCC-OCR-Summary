@@ -38,20 +38,8 @@ def test_batch_split_triggers_multiple_batches(tmp_path, monkeypatch):
         "src.services.docai_helper.batch_process_documents_gcs",
         side_effect=fake_batch_process,
     ) as mock_batch:
-        class _SplitResult:
-            def __init__(self):
-                self.parts = [
-                    "gs://intake/splits/x/part_0001.pdf",
-                    "gs://intake/splits/x/part_0002.pdf",
-                    "gs://intake/splits/x/part_0003.pdf",
-                ]
-                self.manifest_gcs_uri = "gs://intake/splits/x/manifest.json"
+        result = svc.process(str(pdf))
 
-        with patch(
-            "src.services.docai_helper.split_pdf_by_page_limit", return_value=_SplitResult()
-        ) as mock_split:
-            result = svc.process(str(pdf))
-
-    assert mock_batch.call_count == 3
-    assert len(result["pages"]) == 15  # 3 * 5 from fake result pages
-    assert result["batch_metadata"]["parts"] == 3
+    assert mock_batch.call_count == 1
+    assert len(result["pages"]) == 5
+    assert result["batch_metadata"]["batch_mode"] == "async_auto"

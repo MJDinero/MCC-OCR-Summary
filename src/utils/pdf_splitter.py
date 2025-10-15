@@ -1,199 +1,161 @@
-"""Utility for splitting large PDFs into smaller parts and uploading to GCS.
+"""Document AI powered PDF splitter utility.
 
-The splitter is conservative: if the input PDF has <= max_pages it returns the
-original path untouched. For larger PDFs we write sequential chunks of up to
-`max_pages` pages into a temporary directory, upload each to a deterministic
-GCS prefix and emit a manifest.json recording part boundaries and remote URIs.
-
-Returned value is a list of gs:// URIs for the uploaded PDF parts in order.
-
-Design goals:
-- Avoid loading full PDF into memory repeatedly (stream page objects)
-- Generate stable ordering and explicit zero-padded part numbers for traceability
-- Emit structured logging hooks so callers can correlate split + batch events
-
-Environment / Configuration assumptions (not tightly coupled to AppConfig to
-keep the utility re-usable in tests):
-- Intake bucket used for uploads: quantify-agent-intake
-- GCS layout: splits/<uuid4>/part_0001.pdf, manifest.json
-
-The manifest structure:
-{
-  "original_file": "local/or/gcs/path.pdf",
-  "total_pages": 824,
-  "max_pages": 200,
-  "parts": [
-     {"part": 1, "name": "part_0001.pdf", "page_start": 1,   "page_end": 200, "gcs_uri": "gs://.../part_0001.pdf"},
-     {"part": 2, "name": "part_0002.pdf", "page_start": 201, "page_end": 400, "gcs_uri": "gs://.../part_0002.pdf"},
-     ...
-  ]
-}
+This module replaces the legacy PyPDF-based splitter with a thin wrapper around
+Document AI's *Document Splitter* processor. The splitter writes output PDFs to
+a caller-specified GCS prefix and returns a manifest describing the emitted
+segments. All writes use `ifGenerationMatch=0` to guarantee idempotency.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
-from pathlib import Path
-import logging
-import tempfile
-import uuid
 import json
-from typing import List, Sequence
+import logging
+import time
+import uuid
+from dataclasses import dataclass
+from typing import List, Optional, Tuple
 
-from google.cloud import storage
-from PyPDF2 import PdfReader, PdfWriter
+from src.errors import ValidationError
+
+try:  # pragma: no cover - optional at test time
+    from google.cloud import documentai_v1 as documentai  # type: ignore
+    from google.cloud import storage  # type: ignore
+    from google.api_core.client_options import ClientOptions  # type: ignore
+except Exception:  # pragma: no cover
+    documentai = None  # type: ignore
+    storage = None  # type: ignore
+    ClientOptions = None  # type: ignore
 
 _LOG = logging.getLogger("pdf_splitter")
-
-INTAKE_BUCKET = "quantify-agent-intake"
+POLL_SECONDS = 6
+POLL_TIMEOUT = 30 * 60  # 30 minutes
 
 
 @dataclass
 class SplitResult:
-    parts: List[str]  # GCS URIs
+    parts: List[str]
     manifest_gcs_uri: str
 
 
-def _ensure_local_path(input_path: str | Path) -> Path:
-    p = Path(input_path)
-    if not p.exists():  # Accept gs:// here later if needed
-        raise FileNotFoundError(f"Input PDF not found: {input_path}")
-    return p
+def _ensure_clients(
+    region: str,
+    storage_client: Optional[storage.Client],
+    docai_client: Optional[documentai.DocumentProcessorServiceClient],
+) -> Tuple[storage.Client, documentai.DocumentProcessorServiceClient]:
+    if documentai is None or storage is None:
+        raise RuntimeError("google-cloud-documentai and google-cloud-storage are required for PDF splitting")
+    client_options = ClientOptions(api_endpoint=f"{region}-documentai.googleapis.com")
+    docai_client = docai_client or documentai.DocumentProcessorServiceClient(client_options=client_options)
+    storage_client = storage_client or storage.Client()
+    return storage_client, docai_client
 
 
-def split_pdf_by_page_limit(input_path: str | Path, max_pages: int = 199) -> SplitResult:
-    """Split a potentially large PDF and upload parts to GCS.
+def split_pdf_by_page_limit(
+    input_uri: str,
+    *,
+    project_id: str,
+    location: str,
+    splitter_processor_id: str,
+    output_prefix: Optional[str] = None,
+    storage_client: Optional[storage.Client] = None,
+    docai_client: Optional[documentai.DocumentProcessorServiceClient] = None,
+) -> SplitResult:
+    """Invoke the Document AI splitter and return part URIs + manifest."""
+    if not input_uri.startswith("gs://"):
+        raise ValidationError("split_pdf_by_page_limit requires a gs:// input")
+    if not splitter_processor_id:
+        raise ValidationError("splitter_processor_id is required")
 
-    Args:
-        input_path: Local filesystem path to PDF (gs:// inputs not yet supported).
-        max_pages: Maximum pages per split part.
-    Returns:
-        SplitResult with list of part gs:// URIs (ordered) and manifest URI.
-    """
-    if max_pages <= 0:
-        raise ValueError("max_pages must be positive")
+    storage_client, docai_client = _ensure_clients(location, storage_client, docai_client)
 
-    local_path = _ensure_local_path(input_path)
-    reader = PdfReader(str(local_path))
-    total_pages = len(reader.pages)
-    if total_pages <= max_pages:
-        # No split required; we still return a manifest for consistency.
-        _LOG.info(
-            "split_not_required",
-            extra={
-                "pages": total_pages,
-                "max_pages": max_pages,
-                "split_forced": False,
-                "estimated_page_count": total_pages,  # using actual when unsplit
-                "actual_page_count": total_pages,
-            },
-        )
-        gcs_client = storage.Client()
-        split_id = uuid.uuid4().hex
-        prefix = f"splits/{split_id}/"
-        bucket = gcs_client.bucket(INTAKE_BUCKET)
-        manifest = {
-            "original_file": str(local_path),
-            "total_pages": total_pages,
-            "max_pages": max_pages,
-            "estimated_page_count": total_pages,
-            "parts": [
-                {
-                    "part": 1,
-                    "name": local_path.name,
-                    "page_start": 1,
-                    "page_end": total_pages,
-                    "gcs_uri": f"gs://{INTAKE_BUCKET}/{prefix}{local_path.name}",
-                }
-            ],
-        }
-        # Upload original file copy + manifest for traceability.
-        # (Even though caller already has it locally, we keep consistent layout.)
-        blob_pdf = bucket.blob(f"{prefix}{local_path.name}")
-        blob_pdf.upload_from_filename(str(local_path))
-        blob_manifest = bucket.blob(f"{prefix}manifest.json")
-        blob_manifest.upload_from_string(json.dumps(manifest, indent=2), content_type="application/json")
-        return SplitResult(parts=[manifest["parts"][0]["gcs_uri"]], manifest_gcs_uri=f"gs://{INTAKE_BUCKET}/{prefix}manifest.json")
+    if output_prefix and not output_prefix.startswith("gs://"):
+        raise ValidationError("output_prefix must be gs:// or omitted")
+    if not output_prefix:
+        bucket_part = input_uri[5:].split("/", 1)[0]
+        output_prefix = f"gs://{bucket_part}/split/{uuid.uuid4().hex}/"
+    if not output_prefix.endswith("/"):
+        output_prefix += "/"
 
-    gcs_client = storage.Client()
-    bucket = gcs_client.bucket(INTAKE_BUCKET)
-    split_id = uuid.uuid4().hex
-    prefix = f"splits/{split_id}/"
-
-    parts: List[str] = []
-    part_descriptors: List[dict] = []
-
-    _LOG.info(
-        "split_start",
-        extra={
-            "pages": total_pages,
-            "max_pages": max_pages,
-            "split_id": split_id,
-            "split_forced": True,
-            "estimated_page_count": total_pages,  # caller supplies only path so we compute actual
-            "actual_page_count": total_pages,
-        },
-    )
-
-    page_index = 0
-    part_number = 1
-    while page_index < total_pages:
-        end_index = min(page_index + max_pages, total_pages)
-        writer = PdfWriter()
-        for i in range(page_index, end_index):
-            writer.add_page(reader.pages[i])
-        part_name = f"part_{part_number:04d}.pdf"
-        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
-            writer.write(tmp)
-            tmp_path = Path(tmp.name)
-        blob = bucket.blob(f"{prefix}{part_name}")
-        blob.upload_from_filename(str(tmp_path))
-        gcs_uri = f"gs://{INTAKE_BUCKET}/{prefix}{part_name}"
-        parts.append(gcs_uri)
-        part_descriptors.append(
-            {
-                "part": part_number,
-                "name": part_name,
-                "page_start": page_index + 1,
-                "page_end": end_index,
-                "gcs_uri": gcs_uri,
+    name = f"projects/{project_id}/locations/{location}/processors/{splitter_processor_id}"
+    request = {
+        "name": name,
+        "input_documents": {
+            "gcs_documents": {
+                "documents": [
+                    {"gcs_uri": input_uri, "mime_type": "application/pdf"},
+                ]
             }
-        )
-        _LOG.info(
-            "split_upload",
-            extra={
-                "part": part_number,
-                "pages_in_part": end_index - page_index,
-                "page_start": page_index + 1,
-                "page_end": end_index,
-                "gcs_uri": gcs_uri,
-            },
-        )
-        part_number += 1
-        page_index = end_index
-
-    manifest = {
-        "original_file": str(local_path),
-        "total_pages": total_pages,
-        "max_pages": max_pages,
-        "estimated_page_count": total_pages,
-        "parts": part_descriptors,
+        },
+        "document_output_config": {
+            "gcs_output_config": {"gcs_uri": output_prefix}
+        },
     }
-    blob_manifest = bucket.blob(f"{prefix}manifest.json")
-    blob_manifest.upload_from_string(json.dumps(manifest, indent=2), content_type="application/json")
-    manifest_gcs_uri = f"gs://{INTAKE_BUCKET}/{prefix}manifest.json"
 
     _LOG.info(
-        "split_complete",
-        extra={
-            "parts": len(parts),
-            "manifest": manifest_gcs_uri,
-            "split_forced": True,
-            "estimated_page_count": total_pages,
-            "actual_page_count": total_pages,
-        },
+        "splitter_start",
+        extra={"input_uri": input_uri, "output_prefix": output_prefix, "processor": splitter_processor_id},
     )
+    operation = docai_client.batch_process_documents(request=request)
+    start = time.time()
+    while True:
+        if operation.done():  # type: ignore[attr-defined]
+            break
+        elapsed = time.time() - start
+        if elapsed > POLL_TIMEOUT:
+            raise RuntimeError("Document AI splitter timed out")
+        _LOG.debug("splitter_poll", extra={"operation": getattr(operation, "name", "unknown"), "elapsed_s": round(elapsed, 1)})
+        time.sleep(POLL_SECONDS)
 
-    return SplitResult(parts=parts, manifest_gcs_uri=manifest_gcs_uri)
+    try:
+        operation.result()
+    except Exception as exc:  # pragma: no cover - bubble failure with context
+        raise RuntimeError(f"Document AI splitter failed: {exc}") from exc
+
+    parts = _collect_output_parts(storage_client, output_prefix)
+    manifest_uri = _write_manifest(storage_client, output_prefix, input_uri, parts)
+    _LOG.info(
+        "splitter_complete",
+        extra={"parts": len(parts), "manifest": manifest_uri},
+    )
+    return SplitResult(parts=parts, manifest_gcs_uri=manifest_uri)
+
+
+def _collect_output_parts(storage_client: storage.Client, prefix: str) -> List[str]:
+    bucket_name, object_prefix = _split_gs_uri(prefix)
+    blobs = list(storage_client.list_blobs(bucket_name, prefix=object_prefix))
+    parts = [f"gs://{bucket_name}/{blob.name}" for blob in blobs if blob.name.lower().endswith(".pdf")]
+    if not parts:
+        raise RuntimeError("Document AI splitter produced no PDF parts")
+    parts.sort()
+    return parts
+
+
+def _write_manifest(storage_client: storage.Client, prefix: str, input_uri: str, parts: List[str]) -> str:
+    bucket_name, object_prefix = _split_gs_uri(prefix)
+    manifest_path = object_prefix.rstrip("/") + "/manifest.json"
+    bucket = storage_client.bucket(bucket_name)
+    blob = bucket.blob(manifest_path)
+    payload = {
+        "input_uri": input_uri,
+        "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "parts": [
+            {"part": idx + 1, "gcs_uri": uri}
+            for idx, uri in enumerate(parts)
+        ],
+    }
+    blob.upload_from_string(
+        json.dumps(payload, separators=(",", ":")),
+        content_type="application/json",
+        if_generation_match=0,
+    )
+    return f"gs://{bucket_name}/{manifest_path}"
+
+
+def _split_gs_uri(uri: str) -> tuple[str, str]:
+    without = uri[5:]
+    bucket, _, path = without.partition("/")
+    if not bucket:
+        raise ValidationError("Invalid gs:// URI")
+    return bucket, path
 
 
 __all__ = ["split_pdf_by_page_limit", "SplitResult"]

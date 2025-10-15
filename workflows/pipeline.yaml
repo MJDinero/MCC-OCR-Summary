@@ -1,0 +1,573 @@
+# Cloud Workflows definition for the MCC OCR → Summary pipeline (October 2025)
+# Triggered by the ingestion service via Cloud Workflows executions. The workflow
+# fans out Document AI OCR work across shards, orchestrates Cloud Run Jobs for
+# summarisation and PDF generation, and updates pipeline state through the
+# ingestion API (`/internal/jobs/{job_id}/events`).
+
+main:
+  params: [event]
+  steps:
+    - init:
+        assign:
+          - jobId: ${event.job_id}
+          - traceId: ${event.trace_id}
+          - requestId: ${event.request_id}
+          - dedupeKey: ${event.dedupe_key}
+          - objectUri: ${event.object_uri}
+          - workflowBase: ${event.pipeline_service_base_url}
+          - internalToken: ${event.internal_event_token}
+          - callerServiceAccount: ${sys.get_env("WORKFLOW_CALLER_SA")}
+          - project: ${event.project_id}
+          - location: ${event.region}
+          - splitterProcessor: ${event.doc_ai_splitter_processor_id}
+          - ocrProcessor: ${event.doc_ai_processor_id}
+          - summariserJob: ${event.summariser_job_name}
+          - pdfJob: ${event.pdf_job_name}
+          - intakeBucket: ${event.intake_bucket}
+          - outputBucket: ${event.output_bucket}
+          - summaryBucket: ${event.summary_bucket}
+          - fanoutConcurrency: ${event.max_shard_concurrency}
+          - dlqTopic: ${event.pipeline_dlq_topic}
+          - splitOutputUri: null
+          - splitManifestUri: null
+          - shards: []
+          - ocrResults: []
+          - hasSplitter: ${false}
+          - docAiLocation: ${event.doc_ai_location}
+    - hydrateWorkflowBase:
+        switch:
+          - condition: ${workflowBase == null}
+            assign:
+              - workflowBase: ${sys.get_env("PIPELINE_SERVICE_BASE_URL")}
+    - hydrateProject:
+        switch:
+          - condition: ${project == null}
+            assign:
+              - project: ${sys.get_env("PROJECT_ID")}
+    - hydrateRegion:
+        switch:
+          - condition: ${location == null}
+            assign:
+              - location: ${sys.get_env("REGION")}
+    - hydrateDocAiLocation:
+        switch:
+          - condition: ${docAiLocation == null}
+            assign:
+              - docAiLocation: ${sys.get_env("DOC_AI_LOCATION")}
+    - defaultDocAiLocation:
+        switch:
+          - condition: ${docAiLocation == null}
+            assign:
+              - docAiLocation: ${location}
+    - hydrateProcessors:
+        steps:
+          - ensureSplitter:
+              switch:
+                - condition: ${splitterProcessor == null}
+                  assign:
+                    - splitterProcessor: ${sys.get_env("DOC_AI_SPLITTER_PROCESSOR_ID")}
+          - normalizeBlankSplitter:
+              switch:
+                - condition: ${splitterProcessor == ""}
+                  assign:
+                    - splitterProcessor: null
+          - ensureOcr:
+              switch:
+                - condition: ${ocrProcessor == null}
+                  assign:
+                    - ocrProcessor: ${sys.get_env("DOC_AI_PROCESSOR_ID")}
+    - hydrateJobs:
+        steps:
+          - ensureSummariser:
+              switch:
+                - condition: ${summariserJob == null}
+                  assign:
+                    - summariserJob: ${sys.get_env("SUMMARISER_JOB_NAME")}
+          - ensurePdf:
+              switch:
+                - condition: ${pdfJob == null}
+                  assign:
+                    - pdfJob: ${sys.get_env("PDF_JOB_NAME")}
+    - hydrateFanout:
+        switch:
+          - condition: ${fanoutConcurrency == null}
+            assign:
+              - fanoutConcurrency: ${sys.get_env("MAX_SHARD_CONCURRENCY")}
+    - hydrateDlq:
+        switch:
+          - condition: ${dlqTopic == null}
+            assign:
+              - dlqTopic: ${sys.get_env("PIPELINE_DLQ_TOPIC")}
+    - hydrateInternalToken:
+        switch:
+          - condition: ${internalToken == null}
+            assign:
+              - internalToken: ${sys.get_env("INTERNAL_EVENT_TOKEN")}
+    - defaultInternalToken:
+        switch:
+          - condition: ${internalToken == null}
+            assign:
+              - internalToken: ""
+    - buildHttpHeaders:
+        assign:
+          - httpHeaders:
+              X-Cloud-Trace-Context: ${event.trace_context}
+              Content-Type: application/json
+              X-Internal-Token: ${internalToken}
+    - hydrateObjectUri:
+        steps:
+          - fallbackToGcsUri:
+              switch:
+                - condition: ${objectUri == null}
+                  assign:
+                    - objectUri: ${event.gcs_uri}
+          - ensureObjectUri:
+              switch:
+                - condition: ${objectUri == null}
+                  assign:
+                    - objectUri: "none"
+    - hydrateIntakeBucket:
+        switch:
+          - condition: ${intakeBucket == null}
+            assign:
+              - intakeBucket: ${sys.get_env("INTAKE_GCS_BUCKET")}
+    - ensureIntakeBucket:
+        switch:
+          - condition: ${intakeBucket == null}
+            raise: "INTAKE_BUCKET or INTAKE_GCS_BUCKET must be configured"
+    - hydrateOutputBucket:
+        switch:
+          - condition: ${outputBucket == null}
+            assign:
+              - outputBucket: ${sys.get_env("OUTPUT_GCS_BUCKET")}
+    - ensureOutputBucket:
+        switch:
+          - condition: ${outputBucket == null}
+            raise: "OUTPUT_BUCKET or OUTPUT_GCS_BUCKET must be configured"
+    - hydrateSummaryBucket:
+        steps:
+          - fallbackToOutputBucket:
+              switch:
+                - condition: ${summaryBucket == null}
+                  assign:
+                    - summaryBucket: ${outputBucket}
+          - fallbackToOutputGcsBucket:
+              switch:
+                - condition: ${summaryBucket == null}
+                  assign:
+                    - summaryBucket: ${sys.get_env("OUTPUT_GCS_BUCKET")}
+    - ensureSummaryBucket:
+        switch:
+          - condition: ${summaryBucket == null}
+            raise: "SUMMARY_BUCKET or OUTPUT buckets must be configured"
+    - hydrateFanoutConcurrency:
+        steps:
+          - ensureFanoutDefault:
+              switch:
+                - condition: ${fanoutConcurrency == null}
+                  assign:
+                    - fanoutConcurrency: "12"
+          - parseFanout:
+              assign:
+                - fanoutConcurrency: ${int(fanoutConcurrency)}
+    - validateConfig:
+        switch:
+          - condition: ${workflowBase == null}
+            raise: "PIPELINE_SERVICE_BASE_URL must be configured"
+          - condition: ${ocrProcessor == null}
+            raise: "DOC_AI_PROCESSOR_ID must be configured"
+          - condition: ${summariserJob == null}
+            raise: "SUMMARISER_JOB_NAME must be configured"
+          - condition: ${pdfJob == null}
+            raise: "PDF_JOB_NAME must be configured"
+    - setSplitterFlag:
+        assign:
+          - hasSplitter: ${splitterProcessor != null and splitterProcessor != ""}
+    - runPipeline:
+        try:
+          steps:
+            - markSplitScheduled:
+                call: http.post
+                args:
+                  url: ${workflowBase + "/internal/jobs/" + jobId + "/events"}
+                  auth:
+                    type: OIDC
+                    audience: ${workflowBase}
+                  headers: ${httpHeaders}
+                  body:
+                    status: SPLIT_SCHEDULED
+                    stage: DOC_AI_SPLITTER
+                    message: "Document AI splitter scheduled"
+                    extra:
+                      object_uri: ${objectUri}
+            - maybeSplit:
+                switch:
+                  - condition: ${hasSplitter == false}
+                    assign:
+                      - splitOutputUri: ${objectUri}
+                      - splitManifestUri: null
+                      - shards:
+                          - ${objectUri}
+                  - condition: ${hasSplitter}
+                    steps:
+                      - startSplit:
+                          call: googleapis.documentai.v1.projects.locations.processors.batchProcess
+                          args:
+                            name: ${"projects/" + project + "/locations/" + docAiLocation + "/processors/" + splitterProcessor}
+                            body:
+                              inputDocuments:
+                                gcsDocuments:
+                                  documents:
+                                    - gcsUri: ${objectUri}
+                                      mimeType: application/pdf
+                              documentOutputConfig:
+                                gcsOutputConfig:
+                                  gcsUri: ${"gs://" + intakeBucket + "/split/" + jobId + "/"}
+                          result: splitOperation
+                      - setInitialDelay:
+                          assign:
+                            - splitDelay: 6
+                      - waitForSplit:
+                          steps:
+                            - sleepSplit:
+                                call: sys.sleep
+                                args:
+                                  seconds: ${splitDelay}
+                            - pollSplit:
+                                call: googleapis.documentai.v1.projects.locations.operations.get
+                                args:
+                                  name: ${splitOperation.name}
+                                result: splitStatus
+                            - checkSplitDone:
+                                switch:
+                                  - condition: ${splitStatus.done == false}
+                                    steps:
+                                      - bumpDelay:
+                                          steps:
+                                            - scaleSplitDelay:
+                                                assign:
+                                                  - splitDelay: ${splitDelay * 3 / 2}
+                                            - capSplitDelay:
+                                                switch:
+                                                  - condition: ${splitDelay > 30}
+                                                    assign:
+                                                      - splitDelay: 30
+                                    next: sleepSplit
+                            - assignResult:
+                                steps:
+                                  - setSplitOutputs:
+                                      switch:
+                                        - condition: ${splitStatus.response != null and splitStatus.response.documentOutputConfig != null and splitStatus.response.documentOutputConfig.gcsOutputConfig != null}
+                                          assign:
+                                            - splitOutputUri: ${splitStatus.response.documentOutputConfig.gcsOutputConfig.gcsUri}
+                                            - splitManifestUri: ${splitOutputUri + "split.json"}
+                                        - condition: ${splitStatus.response == null or splitStatus.response.documentOutputConfig == null or splitStatus.response.documentOutputConfig.gcsOutputConfig == null}
+                                          assign:
+                                            - splitOutputUri: ${"gs://" + intakeBucket + "/split/" + jobId + "/"}
+                                            - splitManifestUri: ${splitOutputUri + "split.json"}
+                                  - setShardsFromMetadata:
+                                      switch:
+                                        - condition: ${splitStatus.response.documentMetadata != null and splitStatus.response.documentMetadata.shardGcsUris != null}
+                                          assign:
+                                            - shards: ${splitStatus.response.documentMetadata.shardGcsUris}
+                                        - condition: ${splitStatus.response.documentMetadata == null or splitStatus.response.documentMetadata.shardGcsUris == null}
+                                          assign:
+                                            - shards:
+                                                - ${splitOutputUri}
+                      - defaultShardFallback:
+                          switch:
+                            - condition: ${shards == null or len(shards) == 0}
+                              assign:
+                                - shards:
+                                    - ${splitOutputUri}
+            - markSplitDone:
+                call: http.post
+                args:
+                  url: ${workflowBase + "/internal/jobs/" + jobId + "/events"}
+                  auth:
+                    type: OIDC
+                    audience: ${workflowBase}
+                  headers: ${httpHeaders}
+                  body:
+                    status: SPLIT_DONE
+                    stage: DOC_AI_SPLITTER
+                    message: "Splitter complete"
+                    extra:
+                      manifest_uri: ${splitManifestUri}
+                    metadataPatch:
+                      split_manifest_uri: ${splitManifestUri}
+                      split_shards: ${shards}
+            - markOcrScheduled:
+                call: http.post
+                args:
+                  url: ${workflowBase + "/internal/jobs/" + jobId + "/events"}
+                  auth:
+                    type: OIDC
+                    audience: ${workflowBase}
+                  headers: ${httpHeaders}
+                  body:
+                    status: OCR_SCHEDULED
+                    stage: DOC_AI_OCR
+                    message: "OCR fan-out scheduled"
+            - ocrFanout:
+                for:
+                  in: ${shards}
+                  index: shardIndex
+                  value: shardUri
+                  steps:
+                    - startShard:
+                        call: googleapis.documentai.v1.projects.locations.processors.batchProcess
+                        args:
+                          name: ${"projects/" + project + "/locations/" + docAiLocation + "/processors/" + ocrProcessor}
+                          body:
+                            inputDocuments:
+                              gcsDocuments:
+                                documents:
+                                  - gcsUri: ${shardUri}
+                                    mimeType: application/pdf
+                            documentOutputConfig:
+                              gcsOutputConfig:
+                                gcsUri: ${"gs://" + outputBucket + "/ocr/" + jobId + "/" + string(shardIndex) + "/"}
+                        result: shardOperation
+                    - shardDelayInit:
+                        assign:
+                          - shardDelay: 8
+                    - waitShard:
+                        steps:
+                          - sleepShard:
+                              call: sys.sleep
+                              args:
+                                seconds: ${shardDelay}
+                          - pollShard:
+                              call: googleapis.documentai.v1.projects.locations.operations.get
+                              args:
+                                name: ${shardOperation.name}
+                              result: shardStatus
+                          - shardDone:
+                              switch:
+                                - condition: ${shardStatus.done == false}
+                                  steps:
+                                    - jitterDelay:
+                                        steps:
+                                          - scaleShardDelay:
+                                              assign:
+                                                - shardDelay: ${shardDelay * 3 / 2}
+                                          - capShardDelay:
+                                              switch:
+                                                - condition: ${shardDelay > 30}
+                                                  assign:
+                                                    - shardDelay: 30
+                                  next: sleepShard
+                          - resultAssign:
+                              assign:
+                                - shardOutput: ${"gs://" + outputBucket + "/ocr/" + jobId + "/" + string(shardIndex) + "/"}
+                    - shardEvent:
+                        call: http.post
+                        args:
+                          url: ${workflowBase + "/internal/jobs/" + jobId + "/events"}
+                          auth:
+                            type: OIDC
+                            audience: ${workflowBase}
+                          headers: ${httpHeaders}
+                          body:
+                            status: OCR_SCHEDULED
+                            stage: DOC_AI_OCR
+                            message: ${"Shard " + string(shardIndex) + " processed"}
+                            extra:
+                              shard_uri: ${shardUri}
+                              ocr_output_uri: ${shardOutput}
+            - markOcrDone:
+                call: http.post
+                args:
+                  url: ${workflowBase + "/internal/jobs/" + jobId + "/events"}
+                  auth:
+                    type: OIDC
+                    audience: ${workflowBase}
+                  headers: ${httpHeaders}
+                  body:
+                    status: OCR_DONE
+                    stage: DOC_AI_OCR
+                    message: "OCR fan-out complete"
+                    metadataPatch:
+                      ocr_outputs: ${shards}
+            - markSummaryScheduled:
+                call: http.post
+                args:
+                  url: ${workflowBase + "/internal/jobs/" + jobId + "/events"}
+                  auth:
+                    type: OIDC
+                    audience: ${workflowBase}
+                  headers: ${httpHeaders}
+                  body:
+                    status: SUMMARY_SCHEDULED
+                    stage: SUMMARY_JOB
+                    message: "Summariser job dispatched"
+                    extra:
+                      summariser_job: ${summariserJob}
+            - runSummariserJob:
+                steps:
+                  - setSummariserArgs:
+                      assign:
+                        - summariserArgs:
+                            - "--input"
+                            - ${"gs://" + outputBucket + "/ocr/" + jobId + "/aggregate.json"}
+                            - "--output-gcs"
+                            - ${"gs://" + summaryBucket + "/summaries/" + jobId + ".json"}
+                            - "--job-id"
+                            - ${jobId}
+                            - "--gcs-if-generation"
+                            - "0"
+                  - invokeSummariserJob:
+                      call: googleapis.run.v2.projects.locations.jobs.run
+                      args:
+                        name: ${"projects/" + project + "/locations/" + location + "/jobs/" + summariserJob}
+                        body:
+                          overrides:
+                            containerOverrides:
+                              - args: ${summariserArgs}
+                      result: summariserExecution
+            - waitForSummariser:
+                steps:
+                  - sleepSummariser:
+                      call: sys.sleep
+                      args:
+                        seconds: 8
+                  - pollSummariser:
+                      call: googleapis.run.v2.projects.locations.operations.get
+                      args:
+                        name: ${summariserExecution.name}
+                      result: summariserStatus
+                  - checkSummariserDone:
+                      switch:
+                        - condition: ${summariserStatus.done == false}
+                          next: sleepSummariser
+            - markSupervisorDone:
+                call: http.post
+                args:
+                  url: ${workflowBase + "/internal/jobs/" + jobId + "/events"}
+                  auth:
+                    type: OIDC
+                    audience: ${workflowBase}
+                  headers: ${httpHeaders}
+                  body:
+                    status: SUPERVISOR_DONE
+                    stage: SUPERVISOR
+                    message: "Supervisor validation complete"
+            - markPdfScheduled:
+                call: http.post
+                args:
+                  url: ${workflowBase + "/internal/jobs/" + jobId + "/events"}
+                  auth:
+                    type: OIDC
+                    audience: ${workflowBase}
+                  headers: ${httpHeaders}
+                  body:
+                    status: PDF_SCHEDULED
+                    stage: PDF_JOB
+                    message: "PDF job dispatched"
+                    extra:
+                      pdf_job: ${pdfJob}
+            - runPdfJob:
+                steps:
+                  - setPdfArgs:
+                      assign:
+                        - pdfArgs:
+                            - "--input"
+                            - ${"gs://" + summaryBucket + "/summaries/" + jobId + ".json"}
+                            - "--upload-gcs"
+                            - ${"gs://" + summaryBucket + "/pdf/" + jobId + ".pdf"}
+                            - "--job-id"
+                            - ${jobId}
+                            - "--if-generation-match"
+                            - "0"
+                  - invokePdfJob:
+                      call: googleapis.run.v2.projects.locations.jobs.run
+                      args:
+                        name: ${"projects/" + project + "/locations/" + location + "/jobs/" + pdfJob}
+                        body:
+                          overrides:
+                            containerOverrides:
+                              - args: ${pdfArgs}
+                      result: pdfExecution
+            - waitForPdf:
+                steps:
+                  - sleepPdf:
+                      call: sys.sleep
+                      args:
+                        seconds: 10
+                  - pollPdf:
+                      call: googleapis.run.v2.projects.locations.operations.get
+                      args:
+                        name: ${pdfExecution.name}
+                      result: pdfStatus
+                  - checkPdfDone:
+                      switch:
+                        - condition: ${pdfStatus.done == false}
+                          next: sleepPdf
+            - markPdfDone:
+                steps:
+                  - setFinalPdfUri:
+                      assign:
+                        - finalPdfUri: ${"gs://" + summaryBucket + "/pdf/" + jobId + ".pdf"}
+                  - postPdfDone:
+                      call: http.post
+                      args:
+                        url: ${workflowBase + "/internal/jobs/" + jobId + "/events"}
+                        auth:
+                          type: OIDC
+                          audience: ${workflowBase}
+                        headers: ${httpHeaders}
+                        body:
+                          status: PDF_DONE
+                          stage: PDF_JOB
+                          message: "PDF generation complete"
+                          extra:
+                            pdf_uri: ${finalPdfUri}
+            - markUploaded:
+                call: http.post
+                args:
+                  url: ${workflowBase + "/internal/jobs/" + jobId + "/events"}
+                  auth:
+                    type: OIDC
+                    audience: ${workflowBase}
+                  headers: ${httpHeaders}
+                  body:
+                    status: UPLOADED
+                    stage: PDF_JOB
+                    message: "Signed PDF available"
+                    extra:
+                      pdf_uri: ${finalPdfUri}
+        except:
+          as: e
+          steps:
+            - markFailed:
+                call: http.post
+                args:
+                  url: ${workflowBase + "/internal/jobs/" + jobId + "/events"}
+                  auth:
+                    type: OIDC
+                    audience: ${workflowBase}
+                  headers: ${httpHeaders}
+                  body:
+                    status: FAILED
+                    stage: FAILURE
+                    message: '${"Pipeline failure: " + text.decode(json.encode(e))}'
+                    extra:
+                      error: '${text.decode(json.encode(e))}'
+            - publishDlq:
+                switch:
+                  - condition: ${dlqTopic != null}
+                    steps:
+                      - pushMessage:
+                          call: googleapis.pubsub.v1.projects.topics.publish
+                          args:
+                            topic: ${"projects/" + project + "/topics/" + dlqTopic}
+                            body:
+                              messages:
+                                - data: ${base64.encode(json.encode(e))}
+                                  attributes:
+                                    job_id: ${jobId}
+                                    trace_id: ${traceId}
+    - complete:
+        return:
+          status: "ok"

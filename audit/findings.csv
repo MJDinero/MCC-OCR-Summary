@@ -1,0 +1,60 @@
+category,item,files,lines,severity,impact,fix,effort,owner,status,evidence
+docs,review_README.md,README.md,"added=77,removed=81",Low,Change inspected,N/A,S,owner:platform,Pass,README.md:1
+docs,review_hierarchical_patch_v11k_fix_report.md,audit/hierarchical_patch_v11k_fix_report.md,"added=46,removed=0",Low,Change inspected,N/A,S,owner:platform,Pass,audit/hierarchical_patch_v11k_fix_report.md:1
+audit-artifact,review_ci_canary_rollback.patch,audit/remediation_patches/ci_canary_rollback.patch,"added=37,removed=0",Low,Change inspected,N/A,S,owner:platform,Pass,audit/remediation_patches/ci_canary_rollback.patch:1
+audit-artifact,review_env_validation.patch,audit/remediation_patches/env_validation.patch,"added=51,removed=0",Low,Change inspected,N/A,S,owner:platform,Pass,audit/remediation_patches/env_validation.patch:1
+audit-artifact,review_iam_least_priv.patch,audit/remediation_patches/iam_least_priv.patch,"added=34,removed=0",Low,Change inspected,N/A,S,owner:platform,Pass,audit/remediation_patches/iam_least_priv.patch:1
+audit-artifact,review_observability_logs.patch,audit/remediation_patches/observability_logs.patch,"added=173,removed=0",Low,Change inspected,N/A,S,owner:platform,Pass,audit/remediation_patches/observability_logs.patch:1
+audit-artifact,review_reliability_idempotency.patch,audit/remediation_patches/reliability_idempotency.patch,"added=35,removed=0",Low,Change inspected,N/A,S,owner:platform,Pass,audit/remediation_patches/reliability_idempotency.patch:1
+audit-artifact,review_structured_outputs.patch,audit/remediation_patches/structured_outputs.patch,"added=104,removed=0",Low,Change inspected,N/A,S,owner:platform,Pass,audit/remediation_patches/structured_outputs.patch:1
+docs,review_summariser_v11k_patch_report.md,audit/summariser_v11k_patch_report.md,"added=22,removed=0",Low,Change inspected,N/A,S,owner:platform,Pass,audit/summariser_v11k_patch_report.md:1
+code,review_cloudbuild.yaml,cloudbuild.yaml,"added=199,removed=16",Medium,CI pipeline skips lint/type checks and lacks coverage gate before deploy.,ci_canary_rollback.patch,S,owner:platform,Fail,cloudbuild.yaml:12
+docs,review_pipeline_job_record.json,docs/examples/pipeline_job_record.json,"added=29,removed=0",Low,Change inspected,N/A,S,owner:platform,Pass,docs/examples/pipeline_job_record.json:1
+infra,review_iam.sh,infra/iam.sh,"added=119,removed=0",Medium,Summariser/PDF jobs granted storage.objectAdmin instead of creator+viewer least privilege.,iam_least_priv.patch,S,owner:platform,Fail,infra/iam.sh:101
+infra,review_alert_policies.yaml,infra/monitoring/alert_policies.yaml,"added=72,removed=0",Low,Change inspected,N/A,S,owner:platform,Pass,infra/monitoring/alert_policies.yaml:1
+infra,review_runtime.env.sample,infra/runtime.env.sample,"added=19,removed=0",Low,Change inspected,N/A,S,owner:platform,Pass,infra/runtime.env.sample:1
+logs,review_attempt1_status.txt,logs/attempt1_status.txt,"added=2,removed=0",Low,Change inspected,N/A,S,owner:platform,Pass,logs/attempt1_status.txt:1
+logs,review_attempt2_status.txt,logs/attempt2_status.txt,"added=2,removed=0",Low,Change inspected,N/A,S,owner:platform,Pass,logs/attempt2_status.txt:1
+logs,review_attempt3_status.txt,logs/attempt3_status.txt,"added=2,removed=0",Low,Change inspected,N/A,S,owner:platform,Pass,logs/attempt3_status.txt:1
+logs,review_attempt4_headers.txt,logs/attempt4_headers.txt,"added=8,removed=0",Low,Change inspected,N/A,S,owner:platform,Pass,logs/attempt4_headers.txt:1
+logs,review_attempt4_status.txt,logs/attempt4_status.txt,"added=2,removed=0",Low,Change inspected,N/A,S,owner:platform,Pass,logs/attempt4_status.txt:1
+logs,review_env_vars.txt,logs/env_vars.txt,"added=17,removed=0",Low,Change inspected,N/A,S,owner:platform,Pass,logs/env_vars.txt:1
+logs,review_latest_cloudrun.txt,logs/latest_cloudrun.txt,"added=53,removed=0",Low,Change inspected,N/A,S,owner:platform,Pass,logs/latest_cloudrun.txt:1
+logs,review_latest_cloudrun_attempt1.txt,logs/latest_cloudrun_attempt1.txt,"added=83,removed=0",Low,Change inspected,N/A,S,owner:platform,Pass,logs/latest_cloudrun_attempt1.txt:1
+logs,review_latest_cloudrun_attempt2.txt,logs/latest_cloudrun_attempt2.txt,"added=63,removed=0",Low,Change inspected,N/A,S,owner:platform,Pass,logs/latest_cloudrun_attempt2.txt:1
+logs,review_latest_cloudrun_attempt3.txt,logs/latest_cloudrun_attempt3.txt,"added=73,removed=0",Low,Change inspected,N/A,S,owner:platform,Pass,logs/latest_cloudrun_attempt3.txt:1
+outputs,review_test_summary.json,outputs/test_summary.json,"added=9,removed=0",Low,Change inspected,N/A,S,owner:platform,Pass,outputs/test_summary.json:1
+code,review_pytest.ini,pytest.ini,"added=1,removed=1",Medium,Coverage threshold commented out so pytest no longer enforces >=85%.,Restore coverage gate alongside ci_canary_rollback.patch,S,owner:platform,Fail,pytest.ini:2
+code,review_requirements.txt,requirements.txt,"added=1,removed=1",Low,Change inspected,N/A,S,owner:platform,Pass,requirements.txt:1
+scripts,review_drive_to_gcs.py,scripts/drive_to_gcs.py,"added=176,removed=0",Low,Change inspected,N/A,S,owner:platform,Pass,scripts/drive_to_gcs.py:1
+scripts,review_drive_trigger.py,scripts/drive_trigger.py,"added=0,removed=159",Low,Change inspected,N/A,S,owner:platform,Pass,scripts/drive_trigger.py:1
+scripts,review_e2e_smoke.sh,scripts/e2e_smoke.sh,"added=76,removed=0",Low,Change inspected,N/A,S,owner:platform,Pass,scripts/e2e_smoke.sh:1
+code,review_config.py,src/config.py,"added=16,removed=0",Medium,Required bucket env vars rely on defaults; missing explicit validation for prod.,env_validation.patch,S,owner:platform,Fail,src/config.py:73
+code,review_main.py,src/main.py,"added=288,removed=224",Low,Change inspected,N/A,S,owner:platform,Pass,src/main.py:1
+code,review_docai_helper.py,src/services/docai_helper.py,"added=445,removed=117",Medium,No split_done / ocr_lro markers; state transitions lack required observability fields.,observability_logs.patch,S,owner:platform,Fail,src/services/docai_helper.py:473
+code,review_drive_client.py,src/services/drive_client.py,"added=8,removed=2",Low,Change inspected,N/A,S,owner:platform,Pass,src/services/drive_client.py:1
+code,review_pdf_writer.py,src/services/pdf_writer.py,"added=14,removed=0",Low,Change inspected,N/A,S,owner:platform,Pass,src/services/pdf_writer.py:1
+code,review_pdf_writer_refactored.py,src/services/pdf_writer_refactored.py,"added=361,removed=0",High,CLI defaults omit ifGenerationMatch so reruns can overwrite PDFs without guard.,reliability_idempotency.patch,S,owner:platform,Fail,src/services/pdf_writer_refactored.py:305
+code,review_pipeline.py,src/services/pipeline.py,"added=749,removed=0",Low,Change inspected,N/A,S,owner:platform,Pass,src/services/pipeline.py:1
+code,review_summariser_refactored.py,src/services/summariser_refactored.py,"added=446,removed=8",High,OpenAI responses lack strict schema enforcement and summary_done marker absent.,structured_outputs.patch + observability_logs.patch,S,owner:platform,Fail,src/services/summariser_refactored.py:62
+code,review_supervisor.py,src/services/supervisor.py,"added=10,removed=3",Low,Change inspected,N/A,S,owner:platform,Pass,src/services/supervisor.py:1
+code,review_pdf_splitter.py,src/utils/pdf_splitter.py,"added=133,removed=175",Low,Change inspected,N/A,S,owner:platform,Pass,src/utils/pdf_splitter.py:1
+tests,review_conftest.py,tests/conftest.py,"added=12,removed=12",Low,Change inspected,N/A,S,owner:platform,Pass,tests/conftest.py:1
+tests,review_sample.pdf,tests/fixtures/sample.pdf,"added=30,removed=0",Low,Change inspected,N/A,S,owner:platform,Pass,tests/fixtures/sample.pdf:1
+tests,review_sample_ocr.json,tests/fixtures/sample_ocr.json,"added=9,removed=0",Low,Change inspected,N/A,S,owner:platform,Pass,tests/fixtures/sample_ocr.json:1
+tests,review_test_batch_split_integration.py,tests/test_batch_split_integration.py,"added=5,removed=17",Low,Change inspected,N/A,S,owner:platform,Pass,tests/test_batch_split_integration.py:1
+tests,review_test_docai_escalation.py,tests/test_docai_escalation.py,"added=16,removed=27",Low,Change inspected,N/A,S,owner:platform,Pass,tests/test_docai_escalation.py:1
+tests,review_test_idempotency.py,tests/test_idempotency.py,"added=50,removed=0",Low,Change inspected,N/A,S,owner:platform,Pass,tests/test_idempotency.py:1
+tests,review_test_ingest.py,tests/test_ingest.py,"added=60,removed=0",Low,Change inspected,N/A,S,owner:platform,Pass,tests/test_ingest.py:1
+tests,review_test_ingest_failure.py,tests/test_ingest_failure.py,"added=40,removed=0",Low,Change inspected,N/A,S,owner:platform,Pass,tests/test_ingest_failure.py:1
+tests,review_test_large_pdf_split_integration.py,tests/test_large_pdf_split_integration.py,"added=34,removed=22",Low,Change inspected,N/A,S,owner:platform,Pass,tests/test_large_pdf_split_integration.py:1
+tests,review_test_main_integration.py,tests/test_main_integration.py,"added=25,removed=64",Low,Change inspected,N/A,S,owner:platform,Pass,tests/test_main_integration.py:1
+tests,review_test_pdf_splitter.py,tests/test_pdf_splitter.py,"added=78,removed=68",Low,Change inspected,N/A,S,owner:platform,Pass,tests/test_pdf_splitter.py:1
+tests,review_test_pipeline_endpoints.py,tests/test_pipeline_endpoints.py,"added=96,removed=92",Low,Change inspected,N/A,S,owner:platform,Pass,tests/test_pipeline_endpoints.py:1
+tests,review_test_process_drive_errors.py,tests/test_process_drive_errors.py,"added=0,removed=69",Low,Change inspected,N/A,S,owner:platform,Pass,tests/test_process_drive_errors.py:1
+tests,review_test_process_validation.py,tests/test_process_validation.py,"added=36,removed=13",Low,Change inspected,N/A,S,owner:platform,Pass,tests/test_process_validation.py:1
+tests,review_test_retry_backoff.py,tests/test_retry_backoff.py,"added=53,removed=0",Low,Change inspected,N/A,S,owner:platform,Pass,tests/test_retry_backoff.py:1
+tests,review_test_signed_url.py,tests/test_signed_url.py,"added=62,removed=0",Low,Change inspected,N/A,S,owner:platform,Pass,tests/test_signed_url.py:1
+tests,review_test_status_state.py,tests/test_status_state.py,"added=37,removed=0",Low,Change inspected,N/A,S,owner:platform,Pass,tests/test_status_state.py:1
+tests,review_test_summariser_cli.py,tests/test_summariser_cli.py,"added=23,removed=0",Low,Change inspected,N/A,S,owner:platform,Pass,tests/test_summariser_cli.py:1
+workflows,review_pipeline.yaml,workflows/pipeline.yaml,"added=373,removed=0",High,"PDF job runs without ifGenerationMatch, risking duplicate writes on retries.",reliability_idempotency.patch,S,owner:platform,Fail,workflows/pipeline.yaml:287

@@ -53,7 +53,9 @@ class ReportLabBackend:
             c.setFont("Helvetica", 11)
             for line in _wrap_text(body, 90):
                 if y < 72:
-                    c.showPage(); y = height - 72; c.setFont("Helvetica", 11)
+                    c.showPage()
+                    y = height - 72
+                    c.setFont("Helvetica", 11)
                 c.drawString(72, y, line)
                 y -= 14
             y -= 10
@@ -174,10 +176,24 @@ class PDFWriter:
                 sections_seq.append(("Diagnoses", _fmt_block("Diagnoses", diag_list)))
                 sections_seq.append(("Providers", _fmt_block("Providers", prov_list)))
                 sections_seq.append(("Medications", _fmt_block("Medications / Prescriptions", med_list)))
+        _LOG.info(
+            "pdf_writer_started",
+            extra={
+                "sections": len(sections_seq),
+                "structured_indices": bool(sum(1 for heading, _ in sections_seq if heading in {"Diagnoses", "Providers", "Medications"})),
+            },
+        )
         try:
             result = self.backend.build(self.title, sections_seq)
             if _PDF_CALLS:
                 _PDF_CALLS.labels(status="success").inc()
+            _LOG.info(
+                "pdf_writer_complete",
+                extra={
+                    "bytes": len(result),
+                    "sections": len(sections_seq),
+                },
+            )
             return result
         except PDFGenerationError:
             if _PDF_CALLS:

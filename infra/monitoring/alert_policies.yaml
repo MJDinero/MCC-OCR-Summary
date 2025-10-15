@@ -1,0 +1,73 @@
+policies:
+  - displayName: "MCC OCR Summary - SLO burn rate"
+    combiner: OR
+    conditions:
+      - displayName: "High error ratio (burn rate > 2x target)"
+        conditionThreshold:
+          filter: >
+            metric.type="run.googleapis.com/request_count"
+            AND resource.type="cloud_run_revision"
+            AND metric.label."response_code_class"="5xx"
+          aggregations:
+            - perSeriesAligner: ALIGN_RATE
+              alignmentPeriod: 60s
+              crossSeriesReducer: REDUCE_SUM
+          comparison: COMPARISON_GT
+          duration: 300s
+          thresholdValue: 0.02
+    documentation:
+      content: |
+        Fast burn-rate alert for the ingestion endpoint. Triggered when the
+        five minute 5xx ratio exceeds 2× the 1% SLO budget. Investigate recent
+        deployments or upstream dependencies (Document AI / OpenAI).
+      mimeType: text/markdown
+    notificationChannels: []
+    severity: CRITICAL
+
+  - displayName: "MCC OCR Summary - DLQ backlog"
+    combiner: OR
+    conditions:
+      - displayName: "DLQ depth > 0 for 10 minutes"
+        conditionThreshold:
+          filter: >
+            metric.type="pubsub.googleapis.com/subscription/num_undelivered_messages"
+            AND resource.label."subscription_id"=monitoring.regex("mcc-ocr-(ocr|summary|storage)-dlq-sub")
+          aggregations:
+            - perSeriesAligner: ALIGN_MEAN
+              alignmentPeriod: 60s
+          comparison: COMPARISON_GT
+          duration: 600s
+          thresholdValue: 0
+    documentation:
+      content: |
+        Dead-letter queue backlog detected for the MCC OCR event-driven pipeline.
+        Inspect message payloads, replay healthy jobs, and remediate poisoned
+        events before acknowledging.
+      mimeType: text/markdown
+    notificationChannels: []
+    severity: WARNING
+
+  - displayName: "MCC OCR Summary - OCR stage stalled"
+    combiner: OR
+    conditions:
+      - displayName: "OCR stage exceeds 15 minutes without completion"
+        conditionThreshold:
+          filter: >
+            metric.type="logging.googleapis.com/user/pipeline_status_transition"
+            AND labels.status="OCR_SCHEDULED"
+          aggregations:
+            - alignmentPeriod: 60s
+              perSeriesAligner: ALIGN_COUNT
+          duration: 900s
+          thresholdValue: 0
+          comparison: COMPARISON_EQ
+          trigger:
+            threshold: 1
+    documentation:
+      content: |
+        Pipeline jobs remain in OCR_SCHEDULED for longer than 15 minutes.
+        Investigate Document AI regional availability, quota, or fan-out
+        concurrency configuration.
+      mimeType: text/markdown
+    notificationChannels: []
+    severity: CRITICAL

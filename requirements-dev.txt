@@ -1,9 +1,11 @@
 # Development & Test dependencies (install alongside -r requirements.txt)
 -r requirements.txt
 
-pytest==8.1.1
-pytest-cov==4.1.0
+pytest==8.4.2
+pytest-cov==7.0.0
 pylint==3.1.0
 ruff==0.5.4
 mypy==1.10.0
 prometheus-fastapi-instrumentator==6.0.0  # optional instrumentation used in Phase 3
+pip-audit==2.9.0
+cyclonedx-bom==7.1.0

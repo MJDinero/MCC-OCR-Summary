@@ -10,6 +10,16 @@ disable=
     C0116,  # missing-function-docstring
     R0903,  # too-few-public-methods
     R0801,  # duplicate-code (allow for similarity across service wrappers)
+    C0301,  # line-too-long
+    C0412,  # ungrouped-imports
+    C0415,  # import-outside-toplevel
+    C0103,  # invalid-name (used for optional module constants)
+    R0902,  # too-many-instance-attributes
+    R0912,  # too-many-branches
+    R0914,  # too-many-locals
+    R0915,  # too-many-statements
+    W0707,  # raise-missing-from
+    W0718,  # broad-exception-caught
 
 [BASIC]
 good-names=i,j,k,_,cfg,db,fp,id

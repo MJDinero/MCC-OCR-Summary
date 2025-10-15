@@ -1,7 +1,6 @@
-import builtins  # commit: drive_client tests added
-import types
+from typing import Any
+
 import pytest
-import sys
 
 from src.services import drive_client as dc
 
@@ -26,13 +25,14 @@ class _Req:
 class _FilesResource:
     def __init__(self, pdf_bytes: bytes):
         self._pdf_bytes = pdf_bytes
-        self.created = {}
+        self.created: dict[str, Any] = {}
     def get_media(self, fileId: str):  # noqa: N802
         return _Req(self._pdf_bytes)
     def create(self, body, media_body, fields):  # noqa: D401
         class _Exec:
             def __init__(self, outer, body):
-                self.outer = outer; self.body = body
+                self.outer = outer
+                self.body = body
             def execute(self):
                 self.outer.created = {"id": "new123", **self.body}
                 return {"id": "new123"}
