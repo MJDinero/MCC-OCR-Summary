@@ -48,11 +48,11 @@
     --set-env-vars "DOC_AI_OCR_PROCESSOR_ID=21c8becfabc49de6" \
     --set-env-vars "GOOGLE_APPLICATION_CREDENTIALS=/secrets/mcc-orch-sa-key.json"
   ```
-- Validation evidence:
-  * `drive_impersonation_user=Matt@moneymediausa.com impersonated_as=Matt@moneymediausa.com`
-  * `drive_upload_complete (parent=130jJzsI3OBzMDBweGfBOaXikfEnD2KVg)`
+- Validation status (2025-10-17 18:44Z):
+  * `/process` invocation returns HTTP 500 because Cloud Storage upload fails with `403 Permission denied on Cloud KMS key`
+  * `drive_*` logs not emitted yet (upload blocked before Drive stage); resolve CMEK IAM then re-test
 
 ## Next Steps
-1. Resolve Drive quota/permission blocker and re-run `curl ... /process` end-to-end.
-2. Capture Drive upload evidence (file id, log entry `drive_upload_complete`).
-3. Update this report with successful run artefacts (Drive file id, response status, log excerpts).
+1. Grant `mcc-orch-sa@quantify-agent.iam.gserviceaccount.com` Cloud KMS Encrypter/Decrypter on `projects/quantify-agent/locations/us-central1/keyRings/mcc-phi/cryptoKeys/mcc-phi-key` so Cloud Storage uploads succeed.
+2. Re-run the `/process` curl test and capture `drive_impersonation_user` + `drive_upload_complete (parent=130jJzsI3OBzMDBweGfBOaXikfEnD2KVg)` logs.
+3. Archive/rename the legacy "MCC artifacts" folder in Drive once new uploads confirmed.
