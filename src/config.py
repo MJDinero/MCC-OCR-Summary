@@ -34,8 +34,9 @@ def parse_bool(value: str | None) -> bool:
 
 class AppConfig(BaseSettings):
     project_id: str = Field('', validation_alias='PROJECT_ID')
-    # Accept legacy DOC_AI_LOCATION as alias for REGION (prefer REGION if both present)
-    region: str = Field('us', validation_alias=AliasChoices('REGION', 'DOC_AI_LOCATION'))
+    region: str = Field('us', validation_alias='REGION')
+    # Dedicated Document AI location (falls back to region when not provided).
+    doc_ai_location: str = Field('us', validation_alias=AliasChoices('DOC_AI_LOCATION', 'REGION'))
     doc_ai_processor_id: str = Field('', validation_alias='DOC_AI_PROCESSOR_ID')
     doc_ai_splitter_id: str | None = Field(None, validation_alias='DOC_AI_SPLITTER_PROCESSOR_ID')
     openai_api_key: str | None = Field(None, validation_alias='OPENAI_API_KEY')
@@ -45,6 +46,10 @@ class AppConfig(BaseSettings):
     use_structured_summariser_raw: str | bool | None = Field(True, validation_alias='USE_STRUCTURED_SUMMARISER')
     drive_input_folder_id: str = Field('', validation_alias='DRIVE_INPUT_FOLDER_ID')
     drive_report_folder_id: str = Field('', validation_alias='DRIVE_REPORT_FOLDER_ID')
+    drive_shared_drive_id: str | None = Field(
+        None,
+        validation_alias=AliasChoices('DRIVE_SHARED_DRIVE_ID', 'DRIVE_REPORT_DRIVE_ID', 'SHARED_DRIVE_ID'),
+    )
     intake_gcs_bucket: str = Field('quantify-agent-intake', validation_alias='INTAKE_GCS_BUCKET')
     output_gcs_bucket: str = Field('quantify-agent-output', validation_alias='OUTPUT_GCS_BUCKET')
     summary_bucket: str = Field('quantify-agent-output', validation_alias='SUMMARY_BUCKET')
@@ -80,7 +85,11 @@ class AppConfig(BaseSettings):
     max_pdf_bytes: int = 20 * 1024 * 1024  # 20MB limit for uploaded PDFs
     model_config = SettingsConfigDict(env_file='.env', extra='ignore', case_sensitive=False)
 
-    def model_post_init(self, __context: Any) -> None:
+    def model_post_init(self, __context: Any) -> None:  # pylint: disable=W0221
+        """Resolve secrets after model initialisation.
+
+        Pydantic passes a context argument here; pylint mis-detects the signature difference.
+        """
         project_hint = resolve_secret(self.project_id, project_id=None)
         if isinstance(project_hint, str) and project_hint:
             self.project_id = project_hint
@@ -92,6 +101,7 @@ class AppConfig(BaseSettings):
             "doc_ai_splitter_id",
             "drive_input_folder_id",
             "drive_report_folder_id",
+            "drive_shared_drive_id",
             "cmek_key_name",
         )
         for field_name in secret_fields:
