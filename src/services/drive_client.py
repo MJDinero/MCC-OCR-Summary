@@ -188,11 +188,21 @@ def download_pdf(file_id: str) -> bytes:
     return data
 
 
-def upload_pdf(file_bytes: bytes, report_name: str, *, log_context: Optional[Dict[str, Any]] = None) -> str:
+def upload_pdf(
+    file_bytes: bytes,
+    report_name: str,
+    *,
+    parent_folder_id: str | None = None,
+    log_context: Optional[Dict[str, Any]] = None,
+) -> str:
     if not file_bytes or not file_bytes.startswith(b'%PDF-'):
         raise ValueError('file_bytes must be a PDF (bytes starting with %PDF-)')
     cfg = get_config()
-    folder_id, drive_id = _extract_ids(cfg.drive_report_folder_id, getattr(cfg, "drive_shared_drive_id", None))
+    folder_source = parent_folder_id or cfg.drive_report_folder_id
+    shared_drive_source = (
+        getattr(cfg, "drive_shared_drive_id", None) or os.getenv("DRIVE_SHARED_DRIVE_ID", None)
+    )
+    folder_id, drive_id = _extract_ids(folder_source, shared_drive_source)
     try:
         folder_meta = _resolve_folder_metadata(folder_id)
     except HttpError as err:
@@ -205,11 +215,13 @@ def upload_pdf(file_bytes: bytes, report_name: str, *, log_context: Optional[Dic
     capabilities = folder_meta.get("capabilities") or {}
     can_add_children = bool(capabilities.get("canAddChildren"))
     _LOG.info(
-        "drive_folder_metadata (folder_id=%s drive_id=%s can_add_children=%s permissions=%s)",
-        folder_id,
-        folder_meta.get("driveId") or drive_id,
-        can_add_children,
-        ','.join(folder_meta.get("permissionIds", []) or []),
+        "drive_folder_metadata",
+        extra={
+            "folder_id": folder_id,
+            "drive_id": folder_meta.get("driveId") or drive_id,
+            "can_add_children": can_add_children,
+            "permissions": ','.join(folder_meta.get("permissionIds", []) or []),
+        },
     )
 
     derived_drive_id = folder_meta.get("driveId")
@@ -227,14 +239,12 @@ def upload_pdf(file_bytes: bytes, report_name: str, *, log_context: Optional[Dic
         'mimeType': 'application/pdf',
         'parents': [folder_id],
     }
-    if drive_id:
-        file_metadata['driveId'] = drive_id
     _LOG.info(
         "drive_upload_started",
         extra={
             "report_name": report_name,
             "bytes": len(file_bytes),
-            "parents": [folder_id],
+            "parent": folder_id,
             "drive_id": drive_id,
         },
     )
@@ -243,7 +253,7 @@ def upload_pdf(file_bytes: bytes, report_name: str, *, log_context: Optional[Dic
         request = service.files().create(
             body=file_metadata,
             media_body=media,
-            fields='id,name,parents,driveId',
+            fields='id,name,parents,driveId,webViewLink',
             supportsAllDrives=True,
             supportsTeamDrives=True,
             enforceSingleParent=True,
@@ -252,26 +262,9 @@ def upload_pdf(file_bytes: bytes, report_name: str, *, log_context: Optional[Dic
         request = service.files().create(
             body=file_metadata,
             media_body=media,
-            fields='id,name,parents,driveId',
+            fields='id,name,parents,driveId,webViewLink',
             enforceSingleParent=True,
         )
-
-    if drive_id:
-        try:
-            from urllib.parse import urlencode
-        except ImportError:  # pragma: no cover
-            urlencode = None  # type: ignore
-        if urlencode:
-            extra_params = urlencode(
-                {
-                    "driveId": drive_id,
-                    "corpora": "drive",
-                    "includeItemsFromAllDrives": "true",
-                    "supportsAllDrives": "true",
-                }
-            )
-            connector = "&" if "?" in request.uri else "?"
-            request.uri = f"{request.uri}{connector}{extra_params}"
 
     try:  # pragma: no cover
         created = request.execute()
@@ -314,9 +307,13 @@ def upload_pdf(file_bytes: bytes, report_name: str, *, log_context: Optional[Dic
             "drive_file_id": created.get('id'),
             "bytes": len(file_bytes),
             "drive_id": created.get('driveId') or drive_id,
+            "parent": folder_id,
         }
     )
-    _LOG.info("drive_upload_complete (file_id=%s)", created.get('id'), extra=context)
+    _LOG.info(
+        "drive_upload_complete",
+        extra=context,
+    )
     return created['id']
 
 __all__ = ['download_pdf', 'upload_pdf']

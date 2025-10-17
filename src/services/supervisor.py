@@ -19,6 +19,9 @@ _HEADER_TOKENS: tuple[str, ...] = ("diagnoses:", "clinical findings:", "treatmen
 
 _STOPWORDS: frozenset[str] = frozenset("the and or of to a in for on with at by is are was were be this that from as an it patient patients medical summary plan follow diagnosis".split())  # pragma: no cover
 
+_INVALID_SUMMARY_KEYWORDS: frozenset[str] = frozenset({"n/a", "no data", "none", "empty", "tbd"})
+_PLACEHOLDER_RE = re.compile(r"^(?:n/?a|no data|none|empty|tbd)[\s\.\-]*$", re.IGNORECASE)
+
 
 def _strip_section_headers(summary_text: str) -> str:
     """Remove section headers to focus alignment on substantive content."""
@@ -73,12 +76,14 @@ class CommonSenseSupervisor:
     def __init__(
         self,
         *,
+        simple: bool = False,
         min_ratio: float = 0.01,
         baseline_min_chars: int = 200,
         multi_pass_min_chars: int = 600,
         max_retries: int = 3,
         logger: logging.Logger | None = None,
     ) -> None:
+        self.simple = simple
         self.min_ratio = min_ratio  # pragma: no cover - constructor wiring
         self.baseline_min_chars = baseline_min_chars  # pragma: no cover - constructor wiring
         self.multi_pass_min_chars = multi_pass_min_chars  # pragma: no cover - constructor wiring
@@ -121,6 +126,70 @@ class CommonSenseSupervisor:
         retries: int = 0,
         attempt_label: str | None = None,
     ) -> Dict[str, Any]:
+        if self.simple:
+            ocr_text_normalised = (ocr_text or "").strip()
+            text_len = len(ocr_text_normalised)
+            summary_payload: Dict[str, Any]
+            if isinstance(summary, dict):
+                summary_payload = summary
+            else:
+                summary_payload = {"Medical Summary": str(summary or "")}
+            summary_text = _extract_summary_text(summary_payload).strip()
+            summary_chars = len(summary_text)
+            ratio = summary_chars / max(1, text_len)
+            min_summary_default = str(max(self.baseline_min_chars, 300))
+            min_summary_chars = int(os.getenv("MIN_SUMMARY_CHARS", min_summary_default))
+            min_ratio = float(os.getenv("MIN_SUMMARY_RATIO", "0.005"))
+            summary_lc = summary_text.lower()
+            keyword_hits = sum(summary_lc.count(token) for token in _INVALID_SUMMARY_KEYWORDS)
+            head_fragment = summary_text.strip()[:32]
+            looks_placeholder = bool(_PLACEHOLDER_RE.fullmatch(head_fragment))
+            too_short = summary_chars < min_summary_chars
+            ratio_ok = ratio >= min_ratio if text_len else False
+            semantic_ok = keyword_hits < 2 and not looks_placeholder
+            checks = {
+                "length_ok": not too_short,
+                "semantic_ok": semantic_ok,
+                "ratio_ok": ratio_ok,
+                "structure_ok": semantic_ok,
+                "alignment_ok": True,
+                "multi_pass_required": False,
+                "paragraphs": 1 if summary_chars else 0,
+                "headers": 0,
+            }
+            passed = all(checks[key] for key in ("length_ok", "semantic_ok", "ratio_ok"))
+            failure_reasons = [key for key in ("length_ok", "semantic_ok", "ratio_ok") if not checks[key]]
+            reason = "" if passed else ",".join(failure_reasons) or "failed_checks"
+            validation = {
+                "supervisor_passed": passed,
+                "retries": retries,
+                "reason": reason,
+                "length_score": round(ratio, 3),
+                "content_alignment": 1.0,
+                "doc_stats": {
+                    "pages": int(doc_stats.get("pages") or 0),
+                    "text_length": int(doc_stats.get("text_length") or text_len),
+                    "file_size_mb": float(doc_stats.get("file_size_mb") or 0.0),
+                },
+                "checks": checks,
+            }
+            log_extra = {
+                "length_score": validation["length_score"],
+                "summary_chars": summary_chars,
+            }
+            if passed:
+                self.logger.info("supervisor_simple_passed", extra=log_extra)
+            else:
+                log_extra.update(
+                    {
+                        "reason": reason,
+                        "keyword_hits": keyword_hits,
+                        "placeholder": looks_placeholder,
+                        "min_required": min_summary_chars,
+                    }
+                )
+                self.logger.warning("supervisor_simple_flagged", extra=log_extra)
+            return validation
         self.logger.info(
             "supervisor_validation_started",
             extra={
@@ -229,6 +298,8 @@ class CommonSenseSupervisor:
         initial_summary: Dict[str, Any],
         initial_validation: Dict[str, Any],
     ) -> SupervisorResult:
+        if self.simple:
+            return SupervisorResult(initial_summary, initial_validation)
         best_summary = initial_summary
         best_validation = dict(initial_validation)
         best_score = self._score(initial_validation)

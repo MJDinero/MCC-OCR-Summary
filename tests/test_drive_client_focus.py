@@ -99,7 +99,7 @@ def test_upload_pdf_stubs(monkeypatch, fail_shared_drive):
     assert service.created_payloads
     payload = service.created_payloads[-1]
     assert payload['parents'] == ['folder-id']
-    assert payload['driveId'] == '0AFPP3mbSAh_oUk9PVA'
+    assert 'driveId' not in payload
 
 def test_upload_pdf_normalises_folder_id(monkeypatch):
     service = _DriveUploadService(fail_shared_drive=False)
@@ -129,7 +129,7 @@ def test_upload_pdf_normalises_folder_id(monkeypatch):
     assert file_id == 'generated-id'
     payload = service.created_payloads[-1]
     assert payload['parents'] == ['19xdu6hV9KNgnE_Slt4ogrJdASWXZb5gl']
-    assert payload['driveId'] == '0AFPP3mbSAh_oUk9PVA'
+    assert 'driveId' not in payload
 
 
 def test_upload_pdf_supports_json_secret(monkeypatch):
@@ -160,7 +160,7 @@ def test_upload_pdf_supports_json_secret(monkeypatch):
     assert file_id == 'generated-id'
     payload = service.created_payloads[-1]
     assert payload['parents'] == ['19xdu6hV9KNgnE_Slt4ogrJdASWXZb5gl']
-    assert payload['driveId'] == '0AFPP3mbSAh_oUk9PVA'
+    assert 'driveId' not in payload
 
 
 def test_download_pdf_validations(monkeypatch):

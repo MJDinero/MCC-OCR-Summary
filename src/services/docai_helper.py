@@ -22,6 +22,7 @@ from tenacity import retry, wait_exponential, stop_after_attempt, retry_if_excep
 from google.api_core.client_options import ClientOptions
 from google.api_core import exceptions as gexc
 from google.cloud import documentai_v1 as documentai
+from google.protobuf.json_format import MessageToDict
 
 from src.config import get_config, AppConfig
 from src.utils.docai_request_builder import build_docai_request
@@ -58,10 +59,10 @@ def _extract_document_dict(result: Any) -> Dict[str, Any]:
     else:
         doc = result
 
-    # Real object path: documentai.Document
+    # Real object path: documentai.Document (protobuf message)
     try:  # pragma: no cover - best effort
-        if hasattr(doc, "to_dict"):
-            return doc.to_dict()  # type: ignore
+        if hasattr(doc, "_pb"):
+            return MessageToDict(doc._pb, preserving_proto_field_name=True)
     except (AttributeError, TypeError, ValueError):  # pragma: no cover - narrow expected issues
         pass
 
@@ -104,8 +105,8 @@ class OCRService:
             raise ValueError("processor_id required")
         self._cfg = self.config or get_config()
         self._client_factory = self.client_factory or _default_client
-        # Build regional endpoint (region previously doc_ai_location)
-        self._endpoint = f"{self._cfg.region}-documentai.googleapis.com"
+        self._docai_location = getattr(self._cfg, "doc_ai_location", self._cfg.region)
+        self._endpoint = f"{self._docai_location}-documentai.googleapis.com"
         self._client = self._client_factory(self._endpoint)
         self._kms_key = getattr(self._cfg, "cmek_key_name", None)
 
@@ -136,7 +137,7 @@ class OCRService:
         SIZE_BATCH_THRESHOLD = 40 * 1024 * 1024  # 40MB
 
         project_id = self._cfg.project_id
-        location = self._cfg.region
+        location = getattr(self, "_docai_location", getattr(self._cfg, "doc_ai_location", self._cfg.region))
 
         # Pre-read bytes to estimate size & pages for batching decision.
         pdf_bytes: Optional[bytes] = None
@@ -224,8 +225,13 @@ class OCRService:
         except Exception as exc:  # wrap any other
             raise OCRServiceError(f"Failed building request: {exc}") from exc
 
-        if self._kms_key:
-            request["encryption_spec"] = {"kms_key_name": self._kms_key}
+        # NOTE: The Document AI `ProcessRequest` API does not accept the
+        # `encryption_spec` field used by older batch endpoints. Passing it results
+        # in `Unknown field for ProcessRequest: encryption_spec`. For synchronous
+        # MVP processing we rely on processor-level CMEK configuration instead of
+        # injecting a per-request key here. If an upstream helper injected the
+        # legacy field, strip it to keep the synchronous API compatible.
+        request.pop("encryption_spec", None)
 
         start = time.perf_counter()
         try:
@@ -437,7 +443,7 @@ def run_splitter(
         raise ValidationError("gcs_uri required")
     cfg = get_config()
     project_id = project_id or cfg.project_id
-    location = location or cfg.region
+    location = location or getattr(cfg, "doc_ai_location", cfg.region)
     processor_id = processor_id or cfg.doc_ai_splitter_id
     if not processor_id:
         raise OCRServiceError("DOC_AI_SPLITTER_PROCESSOR_ID not configured")
@@ -577,7 +583,7 @@ def run_batch_ocr(
         raise ValidationError("shards must be a non-empty sequence")
     cfg = get_config()
     project_id = project_id or cfg.project_id
-    location = location or cfg.region
+    location = location or getattr(cfg, "doc_ai_location", cfg.region)
     processor_id = processor_id or cfg.doc_ai_processor_id
     if not processor_id:
         raise OCRServiceError("DOC_AI_PROCESSOR_ID not configured")

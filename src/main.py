@@ -356,9 +356,13 @@ def create_app() -> FastAPI:
                     extra={"report_name": report_name, "folder_id": folder_id, "bytes": len(file_bytes)},
                 )
                 return f"stub-{report_name}"
-            if folder_id and folder_id != cfg.drive_report_folder_id:
-                os.environ["DRIVE_REPORT_FOLDER_ID"] = folder_id
-            return drive_client_module.upload_pdf(file_bytes, report_name)
+            parent_folder = folder_id or cfg.drive_report_folder_id
+            return drive_client_module.upload_pdf(
+                file_bytes,
+                report_name,
+                parent_folder_id=parent_folder,
+                log_context={"component": "process_api"},
+            )
 
         def __getattr__(self, item: str) -> Any:  # pragma: no cover - passthrough to legacy helpers
             return getattr(drive_client_module, item)
@@ -404,13 +408,48 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=400, detail="File must be a PDF")
 
         ocr_result = app.state.ocr_service.process(pdf_bytes)
-        ocr_text = ocr_result.get("text") or ""
-        summary_raw = await app.state.summariser.summarise_async(ocr_text)
-        summary_dict = summary_raw if isinstance(summary_raw, dict) else {"Medical Summary": str(summary_raw)}
+        ocr_text = (ocr_result.get("text") or "").strip()
+        ocr_len = len(ocr_text)
         pages = ocr_result.get("pages") or []
+        _API_LOG.info(
+            "ocr_complete",
+            extra={
+                "text_length": ocr_len,
+                "pages": len(pages),
+            },
+        )
+        min_ocr_chars = int(os.getenv("MIN_OCR_CHARS", "50"))
+        if ocr_len < min_ocr_chars:
+            _API_LOG.error(
+                "ocr_too_short",
+                extra={
+                    "text_length": ocr_len,
+                    "min_required": min_ocr_chars,
+                },
+            )
+            return JSONResponse({"error": "OCR extraction insufficient"}, status_code=422)
+
+        summary_raw = await app.state.summariser.summarise_async(ocr_text)
+        summary_dict = summary_raw if isinstance(summary_raw, dict) else {"Medical Summary": str(summary_raw or "")}
+        summary_text_fragments = [value for value in summary_dict.values() if isinstance(value, str)]
+        summary_text = "\n".join(summary_text_fragments).strip()
+        summary_len = len(summary_text)
+        min_summary_default = "0" if stub_mode else "300"
+        min_summary_chars = int(os.getenv("MIN_SUMMARY_CHARS", min_summary_default))
+        if summary_len < min_summary_chars:
+            _API_LOG.error(
+                "summary_too_short",
+                extra={
+                    "summary_length": summary_len,
+                    "min_required": min_summary_chars,
+                    "ocr_length": ocr_len,
+                },
+            )
+            return JSONResponse({"error": "Summary generation failed"}, status_code=502)
+
         doc_stats = {
             "pages": len(pages),
-            "text_length": len(ocr_text),
+            "text_length": ocr_len,
             "file_size_mb": round(len(pdf_bytes) / (1024 * 1024), 3),
         }
         supervisor_flag = getattr(app.state, "supervisor_simple", supervisor_simple)
@@ -438,7 +477,7 @@ def create_app() -> FastAPI:
             "process_complete",
             extra={
                 "supervisor_passed": validation.get("supervisor_passed"),
-                "summary_chars": len(ocr_text),
+                "summary_chars": summary_len,
                 "pdf_bytes": len(pdf_payload),
             },
         )
