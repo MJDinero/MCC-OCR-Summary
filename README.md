@@ -102,6 +102,36 @@ All services consume the same config module, enabling override via `ConfigMap` o
 
 ---
 
+## Drive Configuration & Runtime Mapping
+
+- **Shared Drive (MedCostContain – Team Drive)**: `0AFPP3mbSAh_oUk9PVA`
+- **Intake Folder (Eventarc staging)**: `19xdu6hV9KNgnE_Slt4ogrJdASWXZb5gl`
+- **Output Folder (Final summaries)**: `130jJzsI3OBzMDBweGfBOaXikfEnD2KVg`
+- **Legacy Folder**: `MCC artifacts` (`1eyMOO126vfLBk3bBQE…`) — decommissioned; remove from configs and env vars.
+
+### Domain-Wide Delegation & Impersonation
+
+1. Grant `mcc-orch-sa@quantify-agent.iam.gserviceaccount.com` **Content manager** access to the shared drive.
+2. In Google Workspace Admin Console → Security → API controls → Domain-wide delegation, authorise the service account client ID with scope `https://www.googleapis.com/auth/drive`.
+3. Set `DRIVE_IMPERSONATION_USER=Matt@moneymediausa.com` for Cloud Run, ensuring the runtime impersonates a user with quota.
+4. Rotate the service-account key stored at `/secrets/mcc-orch-sa-key.json`; protect it with CMEK (Secret Manager supports CMEK on create/update).
+
+### Cloud Run Environment Mapping
+
+Provision the service with:
+
+- `DRIVE_SHARED_DRIVE_ID=0AFPP3mbSAh_oUk9PVA`
+- `DRIVE_REPORT_FOLDER_ID=130jJzsI3OBzMDBweGfBOaXikfEnD2KVg`
+- `DRIVE_IMPERSONATION_USER=Matt@moneymediausa.com`
+- `DOC_AI_OCR_PROCESSOR_ID=21c8becfabc49de6`
+- `PROJECT_ID=quantify-agent`
+- `DOC_AI_LOCATION=us`
+- `GOOGLE_APPLICATION_CREDENTIALS=/secrets/mcc-orch-sa-key.json`
+
+Apply these with `gcloud run services update mcc-ocr-summary --region us-central1 --set-env-vars ...` before triggering deployments.
+
+---
+
 ## Security & Privacy
 
 - **Secrets**: Retrieved at runtime from Secret Manager (see `src/utils/secrets.py`). Use `scripts/verify_cmek.sh` to validate CMEK coverage before releases.
