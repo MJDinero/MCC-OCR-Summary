@@ -29,17 +29,54 @@ _ID_PATTERN = re.compile(r"[A-Za-z0-9_-]{10,}")
 
 
 def _drive_service():
+    impersonate_user = os.getenv("DRIVE_IMPERSONATION_USER")
+    raw_credentials = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
+    if not raw_credentials:
+        try:
+            raw_credentials = getattr(get_config(), "google_application_credentials", None)
+        except Exception:  # pragma: no cover - config loading failures raised later
+            raw_credentials = None
+
+    if not raw_credentials:
+        raise RuntimeError("GOOGLE_APPLICATION_CREDENTIALS is not configured")
+
+    raw_credentials = str(raw_credentials).strip()
+    subject = impersonate_user if impersonate_user else None
     creds = None
-    gac_path = os.environ.get('GOOGLE_APPLICATION_CREDENTIALS')
-    if gac_path and os.path.exists(gac_path):
-        impersonate_user = os.getenv("DRIVE_IMPERSONATION_USER")
-        creds = service_account.Credentials.from_service_account_file(
-            gac_path,
+    if raw_credentials.startswith("{"):
+        try:
+            service_account_info = json.loads(raw_credentials)
+        except json.JSONDecodeError as exc:  # pragma: no cover - configuration error
+            raise RuntimeError("GOOGLE_APPLICATION_CREDENTIALS contains invalid JSON") from exc
+        creds = service_account.Credentials.from_service_account_info(
+            service_account_info,
             scopes=_SCOPES,
-            subject=impersonate_user if impersonate_user else None,
+            subject=subject,
         )  # type: ignore[arg-type]
-    # Fallback: Application Default Credentials (cloud runtime) automatically picked up if creds is None
-    return build('drive', 'v3', credentials=creds, cache_discovery=False)
+    elif os.path.exists(raw_credentials):
+        creds = service_account.Credentials.from_service_account_file(
+            raw_credentials,
+            scopes=_SCOPES,
+            subject=subject,
+        )  # type: ignore[arg-type]
+    else:
+        raise RuntimeError(f"Missing GOOGLE_APPLICATION_CREDENTIALS file at {raw_credentials!r}")
+
+    service = build("drive", "v3", credentials=creds, cache_discovery=False)
+    try:
+        about_info = (
+            service.about()
+            .get(fields="user")
+            .execute()
+        )
+        _LOG.info(
+            "drive_impersonation_user=%s impersonated_as=%s",
+            impersonate_user,
+            about_info.get("user", {}).get("emailAddress"),
+        )
+    except Exception as exc:  # pragma: no cover - diagnostics only
+        _LOG.warning("drive_about_check_failed %s", exc)
+    return service
 
 
 @lru_cache(maxsize=64)
@@ -184,7 +221,7 @@ def upload_pdf(file_bytes: bytes, report_name: str, *, log_context: Optional[Dic
             extra={"folder_id": folder_id, "message": "Folder metadata missing driveId; likely My Drive"},
         )
     service = _drive_service()
-    media = MediaIoBaseUpload(io.BytesIO(file_bytes), mimetype='application/pdf', resumable=False)
+    media = MediaIoBaseUpload(io.BytesIO(file_bytes), mimetype='application/pdf', resumable=True)
     file_metadata: dict[str, Any] = {
         'name': report_name,
         'mimeType': 'application/pdf',
@@ -206,7 +243,7 @@ def upload_pdf(file_bytes: bytes, report_name: str, *, log_context: Optional[Dic
         request = service.files().create(
             body=file_metadata,
             media_body=media,
-            fields='id,driveId,parents,webViewLink',
+            fields='id,name,parents,driveId',
             supportsAllDrives=True,
             supportsTeamDrives=True,
             enforceSingleParent=True,
@@ -215,7 +252,7 @@ def upload_pdf(file_bytes: bytes, report_name: str, *, log_context: Optional[Dic
         request = service.files().create(
             body=file_metadata,
             media_body=media,
-            fields='id,driveId,parents,webViewLink',
+            fields='id,name,parents,driveId',
             enforceSingleParent=True,
         )
 
@@ -279,7 +316,7 @@ def upload_pdf(file_bytes: bytes, report_name: str, *, log_context: Optional[Dic
             "drive_id": created.get('driveId') or drive_id,
         }
     )
-    _LOG.info("drive_upload_complete", extra=context)
+    _LOG.info("drive_upload_complete (file_id=%s)", created.get('id'), extra=context)
     return created['id']
 
 __all__ = ['download_pdf', 'upload_pdf']

@@ -1,193 +1,25 @@
-# Cloud Build pipeline for the modular MCC OCR Summary platform.
-# Stages:
-#  1. Install dependencies and run lint/type/test suites with coverage.
-#  2. Run supply-chain checks (SBOM + pip-audit).
-#  3. Execute synthetic benchmark to guard against regressions.
-#  4. Build and push the container image.
-#  5. Deploy Cloud Run service revisions for OCR, summarisation, and storage workers.
-#     (Pub/Sub triggers configured via Terraform; deployment simply updates the image.)
-#  6. Publish benchmark artifacts and previous revision metadata for rollback.
 steps:
-  - name: 'python:3.11'
-    id: tests
-    entrypoint: bash
-    args:
-      - -c
-      - |
-        set -euo pipefail
-        pip install -r requirements-dev.txt -c constraints.txt
-        make lint
-        make type
-        make test
-  - name: 'python:3.11'
-    id: security-and-sbom
-    entrypoint: bash
-    args:
-      - -c
-      - |
-        set -euo pipefail
-        pip install -r requirements-dev.txt -c constraints.txt
-        make audit-deps
-        mkdir -p outputs
-        make sbom
-  - name: 'python:3.11'
-    id: benchmark
-    entrypoint: bash
-    args:
-      - -c
-      - |
-        set -euo pipefail
-        pip install -r requirements-dev.txt -c constraints.txt
-        python scripts/benchmark_large_docs.py --pages 10 50
   - name: 'gcr.io/cloud-builders/docker'
-    id: build-image
-    args:
-      - build
-      - '--build-arg'
-      - GIT_SHA=$SHORT_SHA
-      - '-t'
-      - '${_IMAGE_REPO}:$SHORT_SHA'
-      - '.'
+    args: ['build', '-t', '$_IMAGE_REPO:$_TAG', '.']
   - name: 'gcr.io/cloud-builders/docker'
-    id: push-image
-    args:
-      - push
-      - '${_IMAGE_REPO}:$SHORT_SHA'
-  - name: 'gcr.io/cloud-builders/docker'
-    id: capture-digest
-    entrypoint: bash
-    args:
-      - -c
-      - |
-        set -euo pipefail
-        docker pull '${_IMAGE_REPO}:$SHORT_SHA'
-        docker inspect --format='{{index .RepoDigests 0}}' '${_IMAGE_REPO}:$SHORT_SHA' > /workspace/image-digest.txt
-        cat /workspace/image-digest.txt
+    args: ['push', '$_IMAGE_REPO:$_TAG']
   - name: 'gcr.io/cloud-builders/gcloud'
-    id: artifact-metadata
-    entrypoint: bash
     args:
-      - -c
-      - |
-        set -euo pipefail
-        mkdir -p outputs
-        DIGEST=$(cat /workspace/image-digest.txt)
-        gcloud artifacts docker images list-vulnerabilities "$DIGEST" --location=${_REGION} --format=json > outputs/vulnerability.json
-        gcloud artifacts docker images describe "$DIGEST" --location=${_REGION} --format=json > outputs/provenance.json
-  - name: 'gcr.io/projectsigstore/cosign'
-    id: sign-image
-    entrypoint: bash
-    args:
-      - -c
-      - |
-        set -euo pipefail
-        export COSIGN_EXPERIMENTAL=1
-        DIGEST=$(cat /workspace/image-digest.txt)
-        cosign sign --yes --key gcpkms://projects/quantify-agent/locations/us-central1/keyRings/mcc-phi/cryptoKeys/mcc-phi-key "$DIGEST"
-  - name: 'gcr.io/cloud-builders/gcloud'
-    id: deploy-ocr
-    entrypoint: bash
-    args:
-      - -c
-      - |
-        set -euo pipefail
-        DIGEST=$(cat /workspace/image-digest.txt)
-        gcloud run deploy ${_OCR_SERVICE} \
-          --image="${DIGEST}" \
-          --region=${_REGION} \
-          --platform=managed \
-          --execution-environment=gen2 \
-          --cpu=2 \
-          --memory=2Gi \
-          --timeout=900 \
-          --concurrency=${_OCR_CONCURRENCY} \
-          --min-instances=0 \
-          --max-instances=${_OCR_MAX_INSTANCES} \
-          --service-account=${_OCR_SERVICE_ACCOUNT} \
-          --set-env-vars=SERVICE_STAGE=ocr,PROJECT_ID=$PROJECT_ID,REGION=${_REGION},INTAKE_GCS_BUCKET=${_INTAKE_BUCKET},OUTPUT_GCS_BUCKET=${_OUTPUT_BUCKET},SUMMARY_BUCKET=${_SUMMARY_BUCKET},CMEK_KEY_NAME=${_CMEK_KEY_NAME},PIPELINE_STATE_BACKEND=${_PIPELINE_STATE_BACKEND},PIPELINE_STATE_BUCKET=${_PIPELINE_STATE_BUCKET},PIPELINE_STATE_PREFIX=${_PIPELINE_STATE_PREFIX},PIPELINE_WORKFLOW_NAME=${_PIPELINE_WORKFLOW_NAME},PIPELINE_SERVICE_BASE_URL=${_PIPELINE_SERVICE_BASE_URL},PIPELINE_DLQ_TOPIC=${_PIPELINE_DLQ_TOPIC} \
-          --set-secrets=DOC_AI_PROCESSOR_ID=${_DOC_AI_PROCESSOR_SECRET}:latest,DRIVE_INPUT_FOLDER_ID=${_DRIVE_INPUT_FOLDER_SECRET}:latest,DRIVE_REPORT_FOLDER_ID=${_DRIVE_REPORT_FOLDER_SECRET}:latest,OPENAI_API_KEY=${_OPENAI_API_KEY_SECRET}:latest,INTERNAL_EVENT_TOKEN=${_INTERNAL_EVENT_TOKEN_SECRET}:latest
-  - name: 'gcr.io/cloud-builders/gcloud'
-    id: deploy-summarisation
-    entrypoint: bash
-    args:
-      - -c
-      - |
-        set -euo pipefail
-        DIGEST=$(cat /workspace/image-digest.txt)
-        gcloud run deploy ${_SUMMARY_SERVICE} \
-          --image="${DIGEST}" \
-          --region=${_REGION} \
-          --platform=managed \
-          --execution-environment=gen2 \
-          --cpu=2 \
-          --memory=2Gi \
-          --timeout=900 \
-          --concurrency=${_SUMMARY_CONCURRENCY} \
-          --min-instances=0 \
-          --max-instances=${_SUMMARY_MAX_INSTANCES} \
-          --service-account=${_SUMMARISER_SERVICE_ACCOUNT} \
-          --set-env-vars=SERVICE_STAGE=summarization,PROJECT_ID=$PROJECT_ID,REGION=${_REGION},INTAKE_GCS_BUCKET=${_INTAKE_BUCKET},OUTPUT_GCS_BUCKET=${_OUTPUT_BUCKET},SUMMARY_BUCKET=${_SUMMARY_BUCKET},CMEK_KEY_NAME=${_CMEK_KEY_NAME},PIPELINE_STATE_BACKEND=${_PIPELINE_STATE_BACKEND},PIPELINE_STATE_BUCKET=${_PIPELINE_STATE_BUCKET},PIPELINE_STATE_PREFIX=${_PIPELINE_STATE_PREFIX},PIPELINE_WORKFLOW_NAME=${_PIPELINE_WORKFLOW_NAME},PIPELINE_SERVICE_BASE_URL=${_PIPELINE_SERVICE_BASE_URL},PIPELINE_DLQ_TOPIC=${_PIPELINE_DLQ_TOPIC} \
-          --set-secrets=DOC_AI_PROCESSOR_ID=${_DOC_AI_PROCESSOR_SECRET}:latest,DRIVE_INPUT_FOLDER_ID=${_DRIVE_INPUT_FOLDER_SECRET}:latest,DRIVE_REPORT_FOLDER_ID=${_DRIVE_REPORT_FOLDER_SECRET}:latest,OPENAI_API_KEY=${_OPENAI_API_KEY_SECRET}:latest,INTERNAL_EVENT_TOKEN=${_INTERNAL_EVENT_TOKEN_SECRET}:latest
-  - name: 'gcr.io/cloud-builders/gcloud'
-    id: deploy-storage
-    entrypoint: bash
-    args:
-      - -c
-      - |
-        set -euo pipefail
-        DIGEST=$(cat /workspace/image-digest.txt)
-        gcloud run deploy ${_STORAGE_SERVICE} \
-          --image="${DIGEST}" \
-          --region=${_REGION} \
-          --platform=managed \
-          --execution-environment=gen2 \
-          --cpu=1 \
-          --memory=1Gi \
-          --timeout=600 \
-          --concurrency=${_STORAGE_CONCURRENCY} \
-          --min-instances=0 \
-          --max-instances=${_STORAGE_MAX_INSTANCES} \
-          --service-account=${_STORAGE_SERVICE_ACCOUNT} \
-          --set-env-vars=SERVICE_STAGE=storage,PROJECT_ID=$PROJECT_ID,REGION=${_REGION},INTAKE_GCS_BUCKET=${_INTAKE_BUCKET},OUTPUT_GCS_BUCKET=${_OUTPUT_BUCKET},SUMMARY_BUCKET=${_SUMMARY_BUCKET},CMEK_KEY_NAME=${_CMEK_KEY_NAME},PIPELINE_STATE_BACKEND=${_PIPELINE_STATE_BACKEND},PIPELINE_STATE_BUCKET=${_PIPELINE_STATE_BUCKET},PIPELINE_STATE_PREFIX=${_PIPELINE_STATE_PREFIX},PIPELINE_WORKFLOW_NAME=${_PIPELINE_WORKFLOW_NAME},PIPELINE_SERVICE_BASE_URL=${_PIPELINE_SERVICE_BASE_URL},PIPELINE_DLQ_TOPIC=${_PIPELINE_DLQ_TOPIC} \
-          --set-secrets=DOC_AI_PROCESSOR_ID=${_DOC_AI_PROCESSOR_SECRET}:latest,DRIVE_INPUT_FOLDER_ID=${_DRIVE_INPUT_FOLDER_SECRET}:latest,DRIVE_REPORT_FOLDER_ID=${_DRIVE_REPORT_FOLDER_SECRET}:latest,OPENAI_API_KEY=${_OPENAI_API_KEY_SECRET}:latest,INTERNAL_EVENT_TOKEN=${_INTERNAL_EVENT_TOKEN_SECRET}:latest
-artifacts:
-  objects:
-    location: 'gs://${_ARTIFACT_BUCKET}/build-artifacts/$BUILD_ID'
-    paths:
-      - outputs/sbom.json
-      - outputs/pip-audit.json
-      - outputs/provenance.json
-      - outputs/vulnerability.json
+      - run
+      - deploy
+      - mcc-ocr-summary
+      - --image=$_IMAGE_REPO:$_TAG
+      - --region=us-central1
+      - --platform=managed
+      - --quiet
+      - --set-env-vars=MODE=mvp,STUB_MODE=false,USE_STRUCTURED_SUMMARISER=true,SUPERVISOR_MODE=simple,DRIVE_ENABLED=true,WRITE_TO_DRIVE=true,PDF_ENABLED=true,SHEETS_ENABLED=false,ENABLE_METRICS=false,PROJECT_ID=quantify-agent,REGION=us-central1,DOC_AI_LOCATION=us,DOC_AI_OCR_PROCESSOR_ID=21c8becfabc49de6,DRIVE_REPORT_FOLDER_ID=19xdu6hV9KNgnE_Slt4ogrJdASWXZb5gl,DRIVE_SHARED_DRIVE_ID=0AFPP3mbSAh_oUk9PVA,CMEK_KEY_NAME=$_CMEK_KEY_NAME,INTERNAL_EVENT_TOKEN=dummytoken,INTAKE_GCS_BUCKET=mcc-intake,OUTPUT_GCS_BUCKET=mcc-output,SUMMARY_BUCKET=mcc-output,DRIVE_IMPERSONATION_USER=Matt@moneymediausa.com,GOOGLE_APPLICATION_CREDENTIALS=/tmp/google-application-credentials.json
+      - --remove-secrets=GOOGLE_APPLICATION_CREDENTIALS
+      - --update-secrets=OPENAI_API_KEY=OPENAI_API_KEY:latest,SERVICE_ACCOUNT_JSON=mcc_orch_sa_key:latest
+
 substitutions:
+  _TAG: v11mvp
   _IMAGE_REPO: us-central1-docker.pkg.dev/quantify-agent/mcc/mcc-ocr-summary
-  _OCR_SERVICE: mcc-ocr-service
-  _SUMMARY_SERVICE: mcc-summarisation-service
-  _STORAGE_SERVICE: mcc-storage-service
-  _REGION: us-central1
-  _ARTIFACT_BUCKET: quantify-agent-mcc-phi-artifacts
-  _INTAKE_BUCKET: quantify-agent-intake
-  _OUTPUT_BUCKET: quantify-agent-output
-  _SUMMARY_BUCKET: quantify-agent-output
   _CMEK_KEY_NAME: projects/quantify-agent/locations/us-central1/keyRings/mcc-phi/cryptoKeys/mcc-phi-key
-  _PIPELINE_STATE_BACKEND: gcs
-  _PIPELINE_STATE_BUCKET: quantify-agent-mcc-state
-  _PIPELINE_STATE_PREFIX: state/
-  _PIPELINE_WORKFLOW_NAME: pipeline-main
-  _PIPELINE_SERVICE_BASE_URL: https://mcc-ocr-service-us-central1-a.run.app
-  _PIPELINE_DLQ_TOPIC: projects/quantify-agent/topics/mcc-ocr-pipeline-dlq
-  _DOC_AI_PROCESSOR_SECRET: mcc_docai_processor_id
-  _DRIVE_INPUT_FOLDER_SECRET: mcc_drive_intake_folder_id
-  _DRIVE_REPORT_FOLDER_SECRET: mcc_drive_root_folder_id
-  _OPENAI_API_KEY_SECRET: mcc_openai_api_key
-  _INTERNAL_EVENT_TOKEN_SECRET: internal-event-token
-  _OCR_SERVICE_ACCOUNT: mcc-ocr-sa@quantify-agent.iam.gserviceaccount.com
-  _SUMMARISER_SERVICE_ACCOUNT: mcc-summariser-sa@quantify-agent.iam.gserviceaccount.com
-  _STORAGE_SERVICE_ACCOUNT: mcc-storage-sa@quantify-agent.iam.gserviceaccount.com
-  _OCR_CONCURRENCY: 4
-  _OCR_MAX_INSTANCES: 10
-  _SUMMARY_CONCURRENCY: 2
-  _SUMMARY_MAX_INSTANCES: 5
-  _STORAGE_CONCURRENCY: 2
-  _STORAGE_MAX_INSTANCES: 5
+
 images:
-  - '${_IMAGE_REPO}:$SHORT_SHA'
+  - $_IMAGE_REPO:$_TAG

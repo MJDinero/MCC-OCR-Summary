@@ -10,10 +10,11 @@ import socket
 import sys
 import time
 import uuid
+from pathlib import Path
 from typing import Any, Dict, Mapping, MutableMapping
 
-from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import JSONResponse
+from fastapi import FastAPI, HTTPException, Request, UploadFile
+from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, Field, ValidationError as PydanticValidationError, field_validator
 
 from src.config import get_config
@@ -31,7 +32,12 @@ from src.services.pipeline import (
     job_public_view,
 )
 from src.services.docai_helper import OCRService
-from src.services.metrics import PrometheusMetrics
+from src.services import drive_client as drive_client_module
+from src.services.metrics import PrometheusMetrics, NullMetrics
+from src.services.pdf_writer import PDFWriter, MinimalPDFBackend
+from src.services.summariser import OpenAIBackend, StructuredSummariser, Summariser
+from src.services.supervisor import CommonSenseSupervisor
+from src.utils.mode_manager import is_mvp
 from src.utils.secrets import resolve_secret_env
 
 # Force stdout logging early (before configure_logging)
@@ -43,7 +49,42 @@ logging.basicConfig(
 )
 logging.info("✅ Logging initialised (stdout)")
 
+def _hydrate_google_credentials_file() -> None:
+    """Persist service account JSON from env to a filesystem path."""
+    target_path = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
+    raw_credentials = os.getenv("SERVICE_ACCOUNT_JSON")
+    if not target_path or not raw_credentials:
+        return
+    trimmed = raw_credentials.strip()
+    if not trimmed:
+        return
+    try:
+        json.loads(trimmed)
+    except json.JSONDecodeError:
+        logging.warning("SERVICE_ACCOUNT_JSON is not valid JSON; skipping credential file hydration")
+        return
+
+    path = Path(target_path)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(trimmed, encoding="utf-8")
+        os.chmod(path, 0o600)
+        os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = str(path)
+    except Exception as exc:  # pragma: no cover - should never happen
+        logging.error("Failed to materialise GOOGLE_APPLICATION_CREDENTIALS file: %s", exc)
+        return
+    finally:
+        os.environ.pop("SERVICE_ACCOUNT_JSON", None)
+
+
+_hydrate_google_credentials_file()
+
 _API_LOG = logging.getLogger("api")
+
+_MVP_MODE = is_mvp()
+MODE = "MVP" if _MVP_MODE else "AUDIT"
+print(f"🚀 MCC-OCR-Summary starting in {MODE} mode")
+ENABLE_METRICS = not _MVP_MODE
 
 
 class StorageObjectPayload(BaseModel):
@@ -249,9 +290,83 @@ def create_app() -> FastAPI:
     cfg = get_config()
     app = FastAPI(title="MCC-OCR-Summary", version="1.0.0")
     app.state.config = cfg
+    current_mvp = is_mvp()
+    stub_mode = os.getenv("STUB_MODE", "false").strip().lower() == "true"
+    supervisor_simple = current_mvp or os.getenv("SUPERVISOR_MODE", "").strip().lower() == "simple"
+    app.state.mvp_mode = current_mvp
+    app.state.stub_mode = stub_mode
+    app.state.supervisor_simple = supervisor_simple
     app.state.state_store = create_state_store_from_env()
     app.state.workflow_launcher = create_workflow_launcher_from_env()
-    app.state.metrics = PrometheusMetrics.instrument_app(app)
+    if current_mvp or not ENABLE_METRICS:
+        app.state.metrics = NullMetrics()
+    else:
+        app.state.metrics = PrometheusMetrics.instrument_app(app)
+
+    if stub_mode:
+        class _StubOCRService:
+            def process(self, _file_bytes: bytes) -> Dict[str, Any]:  # pragma: no cover - simple stub
+                return {"text": "", "pages": []}
+
+            def close(self) -> None:  # pragma: no cover
+                return None
+
+        ocr_service = _StubOCRService()
+    else:
+        ocr_service = OCRService(processor_id=cfg.doc_ai_processor_id, config=cfg)
+    app.state.ocr_service = ocr_service
+
+    def _build_summariser_instance() -> Any:
+        if stub_mode:
+            class _StubSummariser:
+                chunk_target_chars = 1200
+                chunk_hard_max = 1800
+
+                def summarise(self, text: str) -> Dict[str, str]:
+                    payload = (text or "").strip()
+                    trimmed = payload if len(payload) <= 2000 else payload[:2000] + "..."
+                    return {
+                        "Patient Information": "N/A",
+                        "Medical Summary": trimmed or "N/A",
+                        "Billing Highlights": "N/A",
+                        "Legal / Notes": "N/A",
+                    }
+
+                async def summarise_async(self, text: str) -> Dict[str, str]:
+                    return self.summarise(text)
+
+            return _StubSummariser()
+
+        backend = OpenAIBackend(
+            model=cfg.openai_model or "gpt-4o-mini",
+            api_key=cfg.openai_api_key,
+        )
+        summariser_cls = StructuredSummariser if cfg.use_structured_summariser else Summariser
+        return summariser_cls(backend=backend)
+
+    class _DriveClientAdapter:
+        def __init__(self, *, stub: bool) -> None:
+            self._stub = stub
+
+        def upload_pdf(self, file_bytes: bytes, folder_id: str | None = None) -> str:
+            report_name = f"summary-{uuid.uuid4().hex}.pdf"
+            if self._stub:
+                _API_LOG.info(
+                    "drive_upload_stub",
+                    extra={"report_name": report_name, "folder_id": folder_id, "bytes": len(file_bytes)},
+                )
+                return f"stub-{report_name}"
+            if folder_id and folder_id != cfg.drive_report_folder_id:
+                os.environ["DRIVE_REPORT_FOLDER_ID"] = folder_id
+            return drive_client_module.upload_pdf(file_bytes, report_name)
+
+        def __getattr__(self, item: str) -> Any:  # pragma: no cover - passthrough to legacy helpers
+            return getattr(drive_client_module, item)
+
+    app.state.summariser = _build_summariser_instance()
+    app.state.pdf_writer = PDFWriter(MinimalPDFBackend())
+    app.state.drive_client = _DriveClientAdapter(stub=stub_mode)
+
     internal_token = resolve_secret_env("INTERNAL_EVENT_TOKEN", project_id=cfg.project_id)
     if not internal_token:
         raise RuntimeError("INTERNAL_EVENT_TOKEN must be configured via Secret Manager or environment variable")
@@ -277,6 +392,57 @@ def create_app() -> FastAPI:
     @app.get("/", include_in_schema=False)
     async def root_health():
         return _health_payload()
+
+    @app.post("/process")
+    async def process_pdf(file: UploadFile):
+        if file is None:
+            raise HTTPException(status_code=400, detail="File upload required")
+        pdf_bytes = await file.read()
+        if not pdf_bytes:
+            raise HTTPException(status_code=400, detail="Uploaded file empty")
+        if not stub_mode and not pdf_bytes.startswith(b"%PDF-"):
+            raise HTTPException(status_code=400, detail="File must be a PDF")
+
+        ocr_result = app.state.ocr_service.process(pdf_bytes)
+        ocr_text = ocr_result.get("text") or ""
+        summary_raw = await app.state.summariser.summarise_async(ocr_text)
+        summary_dict = summary_raw if isinstance(summary_raw, dict) else {"Medical Summary": str(summary_raw)}
+        pages = ocr_result.get("pages") or []
+        doc_stats = {
+            "pages": len(pages),
+            "text_length": len(ocr_text),
+            "file_size_mb": round(len(pdf_bytes) / (1024 * 1024), 3),
+        }
+        supervisor_flag = getattr(app.state, "supervisor_simple", supervisor_simple)
+        supervisor = CommonSenseSupervisor(simple=supervisor_flag)
+        validation = supervisor.validate(
+            ocr_text=ocr_text,
+            summary=summary_dict,
+            doc_stats=doc_stats,
+        )
+        if not validation.get("supervisor_passed"):
+            _API_LOG.warning("supervisor_basic_check_failed", extra=validation)
+
+        pdf_payload = app.state.pdf_writer.build(dict(summary_dict))
+        write_to_drive = os.getenv("WRITE_TO_DRIVE", "true").strip().lower() == "true"
+        if write_to_drive:
+            folder_id = os.getenv("DRIVE_REPORT_FOLDER_ID", cfg.drive_report_folder_id)
+            try:
+                app.state.drive_client.upload_pdf(pdf_payload, folder_id)
+            except Exception as drive_exc:  # pragma: no cover - external dependency
+                _API_LOG.error("drive_upload_failed", extra={"error": str(drive_exc)})
+                if not stub_mode:
+                    raise
+
+        _API_LOG.info(
+            "process_complete",
+            extra={
+                "supervisor_passed": validation.get("supervisor_passed"),
+                "summary_chars": len(ocr_text),
+                "pdf_bytes": len(pdf_payload),
+            },
+        )
+        return Response(pdf_payload, media_type="application/pdf")
 
     # Event-driven ingestion ---------------------------------------------------
     @app.post("/ingest")
@@ -397,7 +563,7 @@ def create_app() -> FastAPI:
                 "internal_event_token": app.state.internal_event_token,
                 "project_id": cfg.project_id,
                 "region": cfg.region,
-                "doc_ai_location": doc_ai_location_env or cfg.region,
+                "doc_ai_location": doc_ai_location_env or getattr(cfg, "doc_ai_location", cfg.region),
                 "doc_ai_processor_id": cfg.doc_ai_processor_id,
                 "doc_ai_splitter_processor_id": cfg.doc_ai_splitter_id,
                 "summariser_job_name": summariser_job_name,
