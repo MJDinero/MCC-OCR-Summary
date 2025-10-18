@@ -121,12 +121,15 @@ All services consume the same config module, enabling override via `ConfigMap` o
 Provision the service with:
 
 - `DRIVE_SHARED_DRIVE_ID=0AFPP3mbSAh_oUk9PVA`
+- `DRIVE_INPUT_FOLDER_ID=19xdu6hV9KNgnE_Slt4ogrJdASWXZb5gl`
 - `DRIVE_REPORT_FOLDER_ID=130jJzsI3OBzMDBweGfBOaXikfEnD2KVg`
 - `DRIVE_IMPERSONATION_USER=Matt@moneymediausa.com`
-- `DOC_AI_OCR_PROCESSOR_ID=21c8becfabc49de6`
+- `DOC_AI_PROCESSOR_ID=21c8becfabc49de6`
 - `PROJECT_ID=quantify-agent`
+- `REGION=us-central1`
 - `DOC_AI_LOCATION=us`
-- `GOOGLE_APPLICATION_CREDENTIALS=/secrets/mcc-orch-sa-key.json`
+- `CMEK_KEY_NAME=projects/quantify-agent/locations/us/keyRings/mcc-keyring/cryptoKeys/mcc-ocr-summary`
+- `GOOGLE_APPLICATION_CREDENTIALS=/tmp/google-application-credentials.json`
 
 Apply these with `gcloud run services update mcc-ocr-summary --region us-central1 --set-env-vars ...` before triggering deployments.
 
@@ -154,6 +157,7 @@ Apply these with `gcloud run services update mcc-ocr-summary --region us-central
 - **Worker Auto-sizing**: `src/runtime_server.py` computes `UVICORN_WORKERS` from available CPU cores (overridable via env) before starting Uvicorn.
 - **Cloud Run Scaling**: `cloudbuild.yaml` deploys each revision with explicit concurrency & max instance caps (`_OCR_CONCURRENCY`, `_SUMMARY_CONCURRENCY`, `_STORAGE_CONCURRENCY`).
 - **Temp Cleanup**: Batch OCR helper reuses CMEK-backed buckets and cleans transient uploads after completion.
+- **Summary Floor**: `src/utils/summary_thresholds.py` enforces `max(120, int(0.35 * ocr_len))`; adjust `MIN_SUMMARY_DYNAMIC_RATIO` for ratio tuning. The base floor clamps to `120` even if `MIN_SUMMARY_CHARS` is higher, preventing short-doc rejections.
 
 ---
 
