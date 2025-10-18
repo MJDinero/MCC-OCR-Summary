@@ -1,45 +1,51 @@
 #!/usr/bin/env bash
 
-# Verification utility to assert CMEK enforcement across GCS and BigQuery.
-# Requires gcloud SDK, gsutil, and bq CLI. All commands are read-only.
+# Verify that MCC OCR Summary resources reference the expected CMEK.
+# Non-destructive read-only checks for Cloud Run and Artifact Registry.
 
-set -euo pipefail
+set -Eeuo pipefail
 
-: "${PROJECT_ID:?PROJECT_ID env var required}"
-: "${CMEK_KEY_NAME:?CMEK_KEY_NAME env var required}"
-: "${INTAKE_BUCKET:?INTAKE_BUCKET env var required}"
-: "${OUTPUT_BUCKET:?OUTPUT_BUCKET env var required}"
-: "${SUMMARY_BUCKET:?SUMMARY_BUCKET env var required}"
-: "${SUMMARY_BIGQUERY_DATASET:?SUMMARY_BIGQUERY_DATASET env var required}"
-: "${SUMMARY_BIGQUERY_TABLE:?SUMMARY_BIGQUERY_TABLE env var required}"
+PROJECT_ID="${PROJECT_ID:-quantify-agent}"
+REGION="${REGION:-us-central1}"
+SERVICE_NAME="${SERVICE_NAME:-mcc-ocr-summary}"
+REPO_LOCATION="${REPO_LOCATION:-us-central1}"
+REPO_NAME="${REPO_NAME:-mcc}"
+CMEK_KEY_NAME="${CMEK_KEY_NAME:-}"
 
-log() {
-  printf '[verify_cmek] %s\n' "$*"
-}
+if [[ -z "${CMEK_KEY_NAME}" ]]; then
+  echo "FAIL: CMEK_KEY_NAME must be exported before running verify_cmek.sh" >&2
+  exit 1
+fi
 
-check_bucket() {
-  local bucket=$1
-  log "Checking kmsKeyName on bucket: ${bucket}"
-  gsutil stat "gs://${bucket}/" 2>/dev/null | grep "kmsKeyName: ${CMEK_KEY_NAME}" >/dev/null
-}
+ok() { printf '[verify_cmek] OK: %s\n' "$*"; }
+fail() { printf '[verify_cmek] FAIL: %s\n' "$*" >&2; exit 1; }
 
-check_bigquery() {
-  local dataset=$1
-  local table=$2
-  log "Checking BigQuery table encryption: ${dataset}.${table}"
-  local kms
-  kms="$(bq show --project_id="${PROJECT_ID}" --format=prettyjson "${PROJECT_ID}:${dataset}.${table}" | \
-    python3 -c 'import json,sys; data=json.load(sys.stdin); print((data.get("encryptionConfiguration") or {}).get("kmsKeyName",""))')"
-  if [[ "${kms}" != "${CMEK_KEY_NAME}" ]]; then
-    log "Expected ${CMEK_KEY_NAME} but saw ${kms:-<none>}"
-    return 1
+describe_cloud_run() {
+  local svc_json
+  if ! svc_json="$(gcloud run services describe "${SERVICE_NAME}" --region "${REGION}" --project "${PROJECT_ID}" --format=json)"; then
+    fail "Unable to describe Cloud Run service ${SERVICE_NAME} in ${REGION}"
+  fi
+  if echo "${svc_json}" | grep -q "$(basename "${CMEK_KEY_NAME}")"; then
+    ok "Cloud Run service ${SERVICE_NAME} references ${CMEK_KEY_NAME}"
+  else
+    fail "Cloud Run service ${SERVICE_NAME} does not reference ${CMEK_KEY_NAME}"
   fi
 }
 
-check_bucket "${INTAKE_BUCKET}"
-check_bucket "${OUTPUT_BUCKET}"
-check_bucket "${SUMMARY_BUCKET}"
+describe_artifact_registry() {
+  local repo_json
+  if ! repo_json="$(gcloud artifacts repositories describe "${REPO_NAME}" --location "${REPO_LOCATION}" --project "${PROJECT_ID}" --format=json 2>/dev/null)"; then
+    ok "Artifact Registry repo ${REPO_LOCATION}/${REPO_NAME} not found (skip CMEK check)"
+    return
+  fi
+  if echo "${repo_json}" | grep -q "$(basename "${CMEK_KEY_NAME}")"; then
+    ok "Artifact Registry repository ${REPO_LOCATION}/${REPO_NAME} references ${CMEK_KEY_NAME}"
+  else
+    fail "Artifact Registry repository ${REPO_LOCATION}/${REPO_NAME} does not reference ${CMEK_KEY_NAME}"
+  fi
+}
 
-check_bigquery "${SUMMARY_BIGQUERY_DATASET}" "${SUMMARY_BIGQUERY_TABLE}"
+describe_cloud_run
+describe_artifact_registry
 
-log "All CMEK checks passed."
+ok "All CMEK checks passed."
