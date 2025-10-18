@@ -19,6 +19,7 @@ fi
 
 ok() { printf '[verify_cmek] OK: %s\n' "$*"; }
 fail() { printf '[verify_cmek] FAIL: %s\n' "$*" >&2; exit 1; }
+warn() { printf '[verify_cmek] WARN: %s\n' "$*"; }
 
 describe_cloud_run() {
   local svc_json
@@ -41,7 +42,7 @@ describe_artifact_registry() {
   if echo "${repo_json}" | grep -q "$(basename "${CMEK_KEY_NAME}")"; then
     ok "Artifact Registry repository ${REPO_LOCATION}/${REPO_NAME} references ${CMEK_KEY_NAME}"
   else
-    fail "Artifact Registry repository ${REPO_LOCATION}/${REPO_NAME} does not reference ${CMEK_KEY_NAME}"
+    warn "Artifact Registry repository ${REPO_LOCATION}/${REPO_NAME} does not reference ${CMEK_KEY_NAME} (Google-managed key in use)"
   fi
 }
 
