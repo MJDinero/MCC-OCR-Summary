@@ -75,6 +75,7 @@ docker-compose.override.yml
 # Other
 *.log
 /coverage.xml
+outputs/
 # Env
 .env
 .env.*
