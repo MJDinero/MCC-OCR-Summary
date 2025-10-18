@@ -37,7 +37,10 @@ class AppConfig(BaseSettings):
     region: str = Field('us', validation_alias='REGION')
     # Dedicated Document AI location (falls back to region when not provided).
     doc_ai_location: str = Field('us', validation_alias=AliasChoices('DOC_AI_LOCATION', 'REGION'))
-    doc_ai_processor_id: str = Field('', validation_alias='DOC_AI_PROCESSOR_ID')
+    doc_ai_processor_id: str = Field(
+        '',
+        validation_alias=AliasChoices('DOC_AI_PROCESSOR_ID', 'DOC_AI_OCR_PROCESSOR_ID'),
+    )
     doc_ai_splitter_id: str | None = Field(None, validation_alias='DOC_AI_SPLITTER_PROCESSOR_ID')
     openai_api_key: str | None = Field(None, validation_alias='OPENAI_API_KEY')
     openai_model: str | None = Field(None, validation_alias='OPENAI_MODEL')
@@ -50,6 +53,7 @@ class AppConfig(BaseSettings):
         None,
         validation_alias=AliasChoices('DRIVE_SHARED_DRIVE_ID', 'DRIVE_REPORT_DRIVE_ID', 'SHARED_DRIVE_ID'),
     )
+    drive_impersonation_user: str | None = Field(None, validation_alias='DRIVE_IMPERSONATION_USER')
     intake_gcs_bucket: str = Field('quantify-agent-intake', validation_alias='INTAKE_GCS_BUCKET')
     output_gcs_bucket: str = Field('quantify-agent-output', validation_alias='OUTPUT_GCS_BUCKET')
     summary_bucket: str = Field('quantify-agent-output', validation_alias='SUMMARY_BUCKET')
@@ -102,6 +106,7 @@ class AppConfig(BaseSettings):
             "drive_input_folder_id",
             "drive_report_folder_id",
             "drive_shared_drive_id",
+            "drive_impersonation_user",
             "cmek_key_name",
         )
         for field_name in secret_fields:
@@ -140,9 +145,11 @@ class AppConfig(BaseSettings):
             ("openai_api_key", self.openai_api_key, "OPENAI_API_KEY"),
             ("drive_input_folder_id", self.drive_input_folder_id, "DRIVE_INPUT_FOLDER_ID"),
             ("drive_report_folder_id", self.drive_report_folder_id, "DRIVE_REPORT_FOLDER_ID"),
+            ("drive_impersonation_user", self.drive_impersonation_user, "DRIVE_IMPERSONATION_USER"),
             ("intake_gcs_bucket", self.intake_gcs_bucket, "INTAKE_GCS_BUCKET"),
             ("output_gcs_bucket", self.output_gcs_bucket, "OUTPUT_GCS_BUCKET"),
             ("summary_bucket", self.summary_bucket, "SUMMARY_BUCKET"),
+            ("cmek_key_name", self.cmek_key_name, "CMEK_KEY_NAME"),
         ]
         missing = [name for name, value, _env in required_pairs if not value]
 
@@ -160,9 +167,11 @@ class AppConfig(BaseSettings):
             "OPENAI_API_KEY",
             "DRIVE_INPUT_FOLDER_ID",
             "DRIVE_REPORT_FOLDER_ID",
+            "DRIVE_IMPERSONATION_USER",
             "INTAKE_GCS_BUCKET",
             "OUTPUT_GCS_BUCKET",
             "SUMMARY_BUCKET",
+            "CMEK_KEY_NAME",
         }
         unmet_env: list[str] = []
         for name, value, env_name in required_pairs:

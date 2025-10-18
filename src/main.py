@@ -10,7 +10,6 @@ import socket
 import sys
 import time
 import uuid
-from pathlib import Path
 from typing import Any, Dict, Mapping, MutableMapping
 
 from fastapi import FastAPI, HTTPException, Request, UploadFile
@@ -37,6 +36,7 @@ from src.services.metrics import PrometheusMetrics, NullMetrics
 from src.services.pdf_writer import PDFWriter, MinimalPDFBackend
 from src.services.summariser import OpenAIBackend, StructuredSummariser, Summariser
 from src.services.supervisor import CommonSenseSupervisor
+from src.startup import hydrate_google_credentials_file
 from src.utils.mode_manager import is_mvp
 from src.utils.secrets import resolve_secret_env
 
@@ -49,35 +49,7 @@ logging.basicConfig(
 )
 logging.info("✅ Logging initialised (stdout)")
 
-def _hydrate_google_credentials_file() -> None:
-    """Persist service account JSON from env to a filesystem path."""
-    target_path = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
-    raw_credentials = os.getenv("SERVICE_ACCOUNT_JSON")
-    if not target_path or not raw_credentials:
-        return
-    trimmed = raw_credentials.strip()
-    if not trimmed:
-        return
-    try:
-        json.loads(trimmed)
-    except json.JSONDecodeError:
-        logging.warning("SERVICE_ACCOUNT_JSON is not valid JSON; skipping credential file hydration")
-        return
-
-    path = Path(target_path)
-    try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(trimmed, encoding="utf-8")
-        os.chmod(path, 0o600)
-        os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = str(path)
-    except Exception as exc:  # pragma: no cover - should never happen
-        logging.error("Failed to materialise GOOGLE_APPLICATION_CREDENTIALS file: %s", exc)
-        return
-    finally:
-        os.environ.pop("SERVICE_ACCOUNT_JSON", None)
-
-
-_hydrate_google_credentials_file()
+hydrate_google_credentials_file()
 
 _API_LOG = logging.getLogger("api")
 
