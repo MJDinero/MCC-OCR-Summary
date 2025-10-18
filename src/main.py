@@ -38,6 +38,7 @@ from src.services.summariser import OpenAIBackend, StructuredSummariser, Summari
 from src.services.supervisor import CommonSenseSupervisor
 from src.startup import hydrate_google_credentials_file
 from src.utils.mode_manager import is_mvp
+from src.utils.summary_thresholds import compute_summary_min_chars
 from src.utils.secrets import resolve_secret_env
 
 # Force stdout logging early (before configure_logging)
@@ -406,8 +407,7 @@ def create_app() -> FastAPI:
         summary_text_fragments = [value for value in summary_dict.values() if isinstance(value, str)]
         summary_text = "\n".join(summary_text_fragments).strip()
         summary_len = len(summary_text)
-        min_summary_default = "0" if stub_mode else "300"
-        min_summary_chars = int(os.getenv("MIN_SUMMARY_CHARS", min_summary_default))
+        min_summary_chars = compute_summary_min_chars(ocr_len, stub_mode=stub_mode)
         if summary_len < min_summary_chars:
             _API_LOG.error(
                 "summary_too_short",
