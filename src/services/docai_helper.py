@@ -7,6 +7,7 @@ normalisation) and converts errors into internal domain exceptions.
 """
 from __future__ import annotations
 
+import io
 import json
 import logging
 import time
@@ -33,6 +34,7 @@ from src.services.pipeline import (
     PipelineStateStore,
     create_state_store_from_env,
 )
+from PyPDF2 import PdfReader, PdfWriter
 
 _LOG = logging.getLogger("ocr_service")
 
@@ -135,6 +137,7 @@ class OCRService:
         # Thresholds for switching to batch mode (asynchronous Document AI)
         PAGES_BATCH_THRESHOLD = 30
         SIZE_BATCH_THRESHOLD = 40 * 1024 * 1024  # 40MB
+        CHUNK_PAGE_LIMIT = 10
 
         project_id = self._cfg.project_id
         location = getattr(self, "_docai_location", getattr(self._cfg, "doc_ai_location", self._cfg.region))
@@ -191,6 +194,65 @@ class OCRService:
                         temp_path.unlink(missing_ok=True)  # type: ignore[attr-defined]
                     except Exception:  # pragma: no cover - cleanup best effort
                         pass
+
+        def _process_via_chunked_sync() -> Dict[str, Any]:
+            try:
+                reader = PdfReader(io.BytesIO(pdf_bytes))
+            except Exception as exc:  # pragma: no cover - PyPDF fallback
+                raise OCRServiceError(f"Failed to prepare chunked PDF: {exc}") from exc
+            total_pages = len(reader.pages)
+            if total_pages <= CHUNK_PAGE_LIMIT:
+                raise OCRServiceError("Chunked fallback requires documents exceeding chunk limit")
+            _LOG.info(
+                "docai_chunked_sync_start",
+                extra={"total_pages": total_pages, "chunk_page_limit": CHUNK_PAGE_LIMIT},
+            )
+            merged_pages: list[dict[str, Any]] = []
+            texts: list[str] = []
+            chunks_processed = 0
+            for start in range(0, total_pages, CHUNK_PAGE_LIMIT):
+                end = min(start + CHUNK_PAGE_LIMIT, total_pages)
+                writer = PdfWriter()
+                for idx in range(start, end):
+                    writer.add_page(reader.pages[idx])
+                buffer = io.BytesIO()
+                writer.write(buffer)
+                chunk_pdf = buffer.getvalue()
+                try:
+                    _chunk_name, chunk_request = build_docai_request(
+                        chunk_pdf, project_id, location, self.processor_id
+                    )
+                except Exception as exc:
+                    raise OCRServiceError(f"Failed building chunk request: {exc}") from exc
+                chunk_request.pop("encryption_spec", None)
+                try:
+                    chunk_result = self._client.process_document(request=chunk_request)
+                except Exception as exc:
+                    raise OCRServiceError(f"Chunked DocAI call failed: {exc}") from exc
+                chunk_doc = _extract_document_dict(chunk_result)
+                pages = chunk_doc.get("pages") or []
+                for page in pages:
+                    page_copy = dict(page)
+                    page_copy["page_number"] = len(merged_pages) + 1
+                    merged_pages.append(page_copy)
+                text = chunk_doc.get("text")
+                if text:
+                    texts.append(text)
+                chunks_processed += 1
+            combined = {
+                "text": "\n".join(texts),
+                "pages": merged_pages,
+                "batch_metadata": {
+                    "status": "chunked_sync",
+                    "chunks": chunks_processed,
+                    "chunk_page_limit": CHUNK_PAGE_LIMIT,
+                },
+            }
+            _LOG.info(
+                "docai_chunked_sync_complete",
+                extra={"chunks": chunks_processed, "pages": len(merged_pages)},
+            )
+            return combined
 
         use_batch = page_count > PAGES_BATCH_THRESHOLD or size_bytes > SIZE_BATCH_THRESHOLD
         # Escalation: if heuristic says small but actual PDF may exceed limits, re-parse to get real page count.
@@ -253,7 +315,14 @@ class OCRService:
                         "error": message,
                     },
                 )
-                return _process_via_batch(source_path)
+                try:
+                    return _process_via_batch(source_path)
+                except OCRServiceError as batch_exc:
+                    _LOG.warning(
+                        "docai_batch_fallback_failed",
+                        extra={"error": str(batch_exc)},
+                    )
+                    return _process_via_chunked_sync()
             raise OCRServiceError(f"Permanent DocAI failure: {exc}") from exc
         except gexc.GoogleAPICallError as exc:
             raise OCRServiceError(f"Permanent DocAI failure: {exc}") from exc
