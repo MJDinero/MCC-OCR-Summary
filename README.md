@@ -106,7 +106,7 @@ All services consume the same config module, enabling override via `ConfigMap` o
 
 - **Shared Drive (MedCostContain – Team Drive)**: `0AFPP3mbSAh_oUk9PVA`
 - **Intake Folder (Eventarc staging)**: `19xdu6hV9KNgnE_Slt4ogrJdASWXZb5gl`
-- **Output Folder (Final summaries)**: `130jJzsI3OBzMDBweGfBOaXikfEnD2KVg`
+- **Output Folder (Final summaries)**: `1eyMO0126VfLBK3bBQEpWlVOL6tWxriCE`
 - **Legacy Folder**: `MCC artifacts` (`1eyMOO126vfLBk3bBQE…`) — decommissioned; remove from configs and env vars.
 
 ### Domain-Wide Delegation & Impersonation
@@ -122,7 +122,7 @@ Provision the service with:
 
 - `DRIVE_SHARED_DRIVE_ID=0AFPP3mbSAh_oUk9PVA`
 - `DRIVE_INPUT_FOLDER_ID=19xdu6hV9KNgnE_Slt4ogrJdASWXZb5gl`
-- `DRIVE_REPORT_FOLDER_ID=130jJzsI3OBzMDBweGfBOaXikfEnD2KVg`
+- `DRIVE_REPORT_FOLDER_ID=1eyMO0126VfLBK3bBQEpWlVOL6tWxriCE`
 - `DRIVE_IMPERSONATION_USER=Matt@moneymediausa.com`
 - `DOC_AI_PROCESSOR_ID=21c8becfabc49de6`
 - `PROJECT_ID=quantify-agent`

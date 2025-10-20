@@ -9,7 +9,7 @@ Retained variables (env names in parentheses):
  - DOC_AI_PROCESSOR_ID
  - OPENAI_API_KEY
  - DRIVE_INPUT_FOLDER_ID
- - DRIVE_REPORT_FOLDER_ID (MedCostContain Output Folder `130jJzsI3OBzMDBweGfBOaXikfEnD2KVg`)
+ - DRIVE_REPORT_FOLDER_ID (MedCostContain Output Folder `1eyMO0126VfLBK3bBQEpWlVOL6tWxriCE`)
  - GOOGLE_APPLICATION_CREDENTIALS (used implicitly by Google clients)
 
 All legacy flags (metrics, sheets, multiple processor fallbacks, CORS, etc.) removed.
