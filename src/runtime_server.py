@@ -25,8 +25,9 @@ def main() -> None:
     workers = _worker_count()
     os.environ.setdefault("UVICORN_WORKERS", str(workers))
     port = int(os.getenv("PORT", "8080"))
+    app_path = os.getenv("FASTAPI_APP", "src.main:create_app")
     uvicorn.run(
-        "src.main:create_app",
+        app_path,
         host="0.0.0.0",
         port=port,
         factory=True,

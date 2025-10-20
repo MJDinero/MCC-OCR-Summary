@@ -25,6 +25,10 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements-dev.txt
 
+      - name: Type check
+        run: |
+          python -m mypy src
+
       - name: Lint
         run: |
           pylint $(git ls-files '*.py') || (echo 'Pylint completed with warnings/errors'; exit 1)
@@ -47,6 +51,22 @@ jobs:
           INTERNAL_EVENT_TOKEN: dummy
         run: |
           pytest
+
+      - name: Configure gcloud
+        if: ${{ secrets.GCP_SA_KEY != '' }}
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: quantify-agent
+          service_account_key: ${{ secrets.GCP_SA_KEY }}
+          export_default_credentials: true
+
+      - name: Sanity check deployed service
+        if: ${{ secrets.GCP_SA_KEY != '' }}
+        run: |
+          set -euo pipefail
+          RUN_URL=$(gcloud run services describe mcc-ocr-summary --region us-central1 --format='value(status.url)')
+          curl -sf "$RUN_URL/healthz"
+          curl -sfG "$RUN_URL/process_drive" --data-urlencode "file_id=test"
 
       - name: Upload coverage (summary)
         if: always()

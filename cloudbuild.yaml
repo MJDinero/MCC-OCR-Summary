@@ -13,8 +13,8 @@ steps:
       - --project=quantify-agent
       - --platform=managed
       - --quiet
-      - --set-env-vars=MODE=mvp,PROJECT_ID=quantify-agent,REGION=us-central1,DOC_AI_LOCATION=us,DOC_AI_PROCESSOR_ID=21c8becfabc49de6,DRIVE_INPUT_FOLDER_ID=19xdu6hV9KNgnE_Slt4ogrJdASWXZb5gl,DRIVE_REPORT_FOLDER_ID=1eyMO0126VfLBK3bBQEpWlVOL6tWxriCE,DRIVE_SHARED_DRIVE_ID=0AFPP3mbSAh_oUk9PVA,DRIVE_IMPERSONATION_USER=Matt@moneymediausa.com,CMEK_KEY_NAME=$_CMEK_KEY_NAME,GOOGLE_APPLICATION_CREDENTIALS=/tmp/google-application-credentials.json
-      - --set-env-vars=INTAKE_GCS_BUCKET=mcc-intake,OUTPUT_GCS_BUCKET=mcc-output,SUMMARY_BUCKET=mcc-output
+      - --update-env-vars=MODE=mvp,PROJECT_ID=quantify-agent,REGION=us-central1,DOC_AI_LOCATION=us,DOC_AI_PROCESSOR_ID=21c8becfabc49de6,DRIVE_INPUT_FOLDER_ID=19xdu6hV9KNgnE_Slt4ogrJdASWXZb5gl,DRIVE_REPORT_FOLDER_ID=130jJzsl3OBzMD8weGfBOaXikfEnD2KVg,DRIVE_SHARED_DRIVE_ID=0AFPP3mbSAh_oUk9PVA,DRIVE_IMPERSONATION_USER=Matt@moneymediausa.com,CMEK_KEY_NAME=$_CMEK_KEY_NAME,GOOGLE_APPLICATION_CREDENTIALS=/tmp/google-application-credentials.json
+      - --update-env-vars=INTAKE_GCS_BUCKET=mcc-intake,OUTPUT_GCS_BUCKET=mcc-output,SUMMARY_BUCKET=mcc-output
       - --update-secrets=OPENAI_API_KEY=OPENAI_API_KEY:latest,INTERNAL_EVENT_TOKEN=internal-event-token:latest,SERVICE_ACCOUNT_JSON=mcc_orch_sa_key:latest
   - name: 'gcr.io/cloud-builders/gcloud'
     entrypoint: bash

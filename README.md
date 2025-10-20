@@ -87,6 +87,18 @@ Environment variables can be set via `.env` (see `.env.template`). Core configur
 
 ---
 
+## HTTP API
+
+The FastAPI application (see `src/main.py` and `src/api/`) exposes the following publicly reachable routes:
+
+- `POST /process` – Accepts a multipart form upload named `file`, performs OCR + summarisation, returns the generated PDF bytes.
+- `GET /process_drive?file_id=<id>` – Downloads the specified Drive file, runs the same summarisation pipeline, and responds with JSON containing the Drive report ID.
+- `GET /healthz`, `/readyz`, `/health`, `/` – Lightweight health checks used by Cloud Run and load balancers.
+
+All routes are registered unconditionally during startup; `src/runtime_server.py` honours the optional `FASTAPI_APP` environment variable when launching Uvicorn (defaults to `src.main:create_app`).
+
+---
+
 ## Configuration Reference
 
 `src/config.py` exposes the canonical settings:

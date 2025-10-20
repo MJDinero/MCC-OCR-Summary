@@ -304,5 +304,12 @@ def batch_process_documents_gcs(
     )
     return normalised
 
+def _split_gcs_uri(uri: str) -> tuple[str, str]:
+    without_scheme = uri[5:]
+    bucket, _, path = without_scheme.partition('/')
+    if not bucket:
+        raise ValidationError("Invalid gs:// URI")
+    return bucket, path
+
 
 __all__ = ["batch_process_documents_gcs"]
