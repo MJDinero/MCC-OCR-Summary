@@ -160,6 +160,38 @@ class OCRService:
         # Heuristic page count (defensive default to 1 if unexpected)
         page_count = len(re.findall(rb"/Type\s*/Page(?!s)", pdf_bytes)) or 1
 
+        def _process_via_batch(local_source: Optional[Path]) -> Dict[str, Any]:
+            temp_path: Optional[Path] = None
+            try:
+                if local_source is None:
+                    with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
+                        tmp.write(pdf_bytes)
+                        temp_path = Path(tmp.name)
+                    src_for_batch = str(temp_path)
+                else:
+                    src_for_batch = str(local_source)
+                batch_result = batch_process_documents_gcs(
+                    src_for_batch,
+                    None,
+                    self.processor_id,
+                    location,
+                    project_id=project_id,
+                )
+                meta = batch_result.setdefault("batch_metadata", {})
+                meta.setdefault("batch_mode", "async_auto")
+                meta.setdefault("pages_estimated", page_count)
+                return batch_result
+            except ValidationError:
+                raise
+            except Exception as exc:
+                raise OCRServiceError(f"Batch OCR failed: {exc}") from exc
+            finally:
+                if temp_path:
+                    try:
+                        temp_path.unlink(missing_ok=True)  # type: ignore[attr-defined]
+                    except Exception:  # pragma: no cover - cleanup best effort
+                        pass
+
         use_batch = page_count > PAGES_BATCH_THRESHOLD or size_bytes > SIZE_BATCH_THRESHOLD
         # Escalation: if heuristic says small but actual PDF may exceed limits, re-parse to get real page count.
         splitter_enabled = bool(self._cfg.doc_ai_splitter_id)
@@ -184,36 +216,7 @@ class OCRService:
                     "batch_route": True,
                 },
             )
-            temp_path: Optional[Path] = None
-            try:
-                if source_path is None:
-                    with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
-                        tmp.write(pdf_bytes)
-                        temp_path = Path(tmp.name)
-                    src_for_batch = str(temp_path)
-                else:
-                    src_for_batch = str(source_path)
-                batch_result = batch_process_documents_gcs(
-                    src_for_batch,
-                    None,
-                    self.processor_id,
-                    location,
-                    project_id=project_id,
-                )
-                meta = batch_result.setdefault("batch_metadata", {})
-                meta.setdefault("batch_mode", "async_auto")
-                meta.setdefault("pages_estimated", page_count)
-                return batch_result
-            except ValidationError:
-                raise
-            except Exception as exc:
-                raise OCRServiceError(f"Batch OCR failed: {exc}") from exc
-            finally:
-                if temp_path:
-                    try:
-                        temp_path.unlink(missing_ok=True)  # type: ignore[attr-defined]
-                    except Exception:  # pragma: no cover - cleanup best effort
-                        pass
+            return _process_via_batch(source_path)
 
         # Synchronous path (existing behaviour)
         try:
@@ -239,6 +242,19 @@ class OCRService:
         except (gexc.ServiceUnavailable, gexc.DeadlineExceeded):  # will be retried by tenacity
             _LOG.warning("Transient DocAI failure; will retry", exc_info=True)
             raise
+        except gexc.InvalidArgument as exc:
+            message = str(exc)
+            if "PAGE_LIMIT_EXCEEDED" in message or "Document pages exceed the limit" in message:
+                _LOG.warning(
+                    "docai_page_limit_exceeded_sync_fallback",
+                    extra={
+                        "estimated_pages": page_count,
+                        "size_bytes": size_bytes,
+                        "error": message,
+                    },
+                )
+                return _process_via_batch(source_path)
+            raise OCRServiceError(f"Permanent DocAI failure: {exc}") from exc
         except gexc.GoogleAPICallError as exc:
             raise OCRServiceError(f"Permanent DocAI failure: {exc}") from exc
         except Exception as exc:  # pragma: no cover - unexpected library errors
