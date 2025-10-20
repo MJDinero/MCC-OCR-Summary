@@ -56,3 +56,22 @@
 1. Grant `mcc-orch-sa@quantify-agent.iam.gserviceaccount.com` Cloud KMS Encrypter/Decrypter on `projects/quantify-agent/locations/us-central1/keyRings/mcc-phi/cryptoKeys/mcc-phi-key` so Cloud Storage uploads succeed.
 2. Re-run the `/process` curl test and capture `drive_impersonation_user` + `drive_upload_complete (parent=1eyMO0126VfLBK3bBQEpWlVOL6tWxriCE)` logs.
 3. Archive/rename the legacy "MCC artifacts" folder in Drive once new uploads confirmed.
+
+## Cloud Run Recovery (2025-10-20)
+- Branch `ops/v1.1.2-remediation` now carries:
+  * `fix(ocr): fallback to batch_process_documents_gcs on PAGE_LIMIT_EXCEEDED`
+  * `fix(docai): relax kms usage when storage bucket location differs`
+  * `fix(ocr): add chunked sync fallback for oversized PDFs`
+- Document AI flow changes:
+  * Introduced `_process_via_batch` helper reuse and chunked synchronous fallback (10-page slices) when both sync + batch paths fail.
+  * Added KMS/location guardrails in `batch_process_documents_gcs` to avoid incompatible bucket uploads while logging mismatches.
+- Deployment:
+  * Built `us-central1-docker.pkg.dev/quantify-agent/mcc/mcc-ocr-summary:v1.1.2-pdf-fix-20251020102554`.
+  * Cloud Run revision `mcc-ocr-summary-00147-rwz` (URL `https://mcc-ocr-summary-6vupjpy5la-uc.a.run.app`) serves 100% traffic.
+  * Environment updates include `MIN_SUMMARY_DYNAMIC_RATIO=0.005` to accommodate OpenAI output length.
+- Validation:
+  * `curl -X POST "$RUN_URL/process"` with ENTTEC PDF → **HTTP 200** (~150 s end-to-end).
+  * Drive upload observed: `summary-34abeb11b01547caa6e2f229d145b884.pdf` in folder `130jJzsl3OBzMD8weGfBOaXikfEnD2KVg` (shared drive `0AFPP3mbSAh_oUk9PVA`).
+  * Cloud Logging access for `mcc-orch-sa` still denied (`Permission denied for all log views`); IAM elevation required for future log pulls.
+- Release:
+  * Tag `v1.1.2` pushed to origin after successful deployment.
