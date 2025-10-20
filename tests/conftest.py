@@ -20,9 +20,17 @@ def _base_env(monkeypatch):
     monkeypatch.setenv('OPENAI_API_KEY', os.environ.get('OPENAI_API_KEY', 'dummy'))
     monkeypatch.setenv('DRIVE_INPUT_FOLDER_ID', os.environ.get('DRIVE_INPUT_FOLDER_ID', 'in-folder'))
     monkeypatch.setenv('DRIVE_REPORT_FOLDER_ID', os.environ.get('DRIVE_REPORT_FOLDER_ID', 'out-folder'))
+    monkeypatch.setenv('DRIVE_IMPERSONATION_USER', os.environ.get('DRIVE_IMPERSONATION_USER', 'impersonation@example.com'))
     monkeypatch.setenv('INTAKE_GCS_BUCKET', os.environ.get('INTAKE_GCS_BUCKET', 'intake-bucket'))
     monkeypatch.setenv('OUTPUT_GCS_BUCKET', os.environ.get('OUTPUT_GCS_BUCKET', 'output-bucket'))
     monkeypatch.setenv('SUMMARY_BUCKET', os.environ.get('SUMMARY_BUCKET', 'summary-bucket'))
+    monkeypatch.setenv(
+        'CMEK_KEY_NAME',
+        os.environ.get(
+            'CMEK_KEY_NAME',
+            'projects/test/locations/us/keyRings/test/cryptoKeys/test',
+        ),
+    )
     monkeypatch.setenv('SIMPLECOV_FOCUS', os.environ.get('SIMPLECOV_FOCUS', 'src/services/supervisor.py'))
     yield
 

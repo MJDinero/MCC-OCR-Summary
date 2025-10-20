@@ -9,6 +9,8 @@ import re
 from collections import Counter
 import os
 
+from src.utils.summary_thresholds import compute_summary_min_chars
+
 
 _LOG = logging.getLogger("supervisor")
 
@@ -137,8 +139,7 @@ class CommonSenseSupervisor:
             summary_text = _extract_summary_text(summary_payload).strip()
             summary_chars = len(summary_text)
             ratio = summary_chars / max(1, text_len)
-            min_summary_default = str(max(self.baseline_min_chars, 300))
-            min_summary_chars = int(os.getenv("MIN_SUMMARY_CHARS", min_summary_default))
+            min_summary_chars = compute_summary_min_chars(text_len)
             min_ratio = float(os.getenv("MIN_SUMMARY_RATIO", "0.005"))
             summary_lc = summary_text.lower()
             keyword_hits = sum(summary_lc.count(token) for token in _INVALID_SUMMARY_KEYWORDS)

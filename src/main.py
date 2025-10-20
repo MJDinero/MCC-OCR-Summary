@@ -10,7 +10,6 @@ import socket
 import sys
 import time
 import uuid
-from pathlib import Path
 from typing import Any, Dict, Mapping, MutableMapping
 
 from fastapi import FastAPI, HTTPException, Request, UploadFile
@@ -37,7 +36,9 @@ from src.services.metrics import PrometheusMetrics, NullMetrics
 from src.services.pdf_writer import PDFWriter, MinimalPDFBackend
 from src.services.summariser import OpenAIBackend, StructuredSummariser, Summariser
 from src.services.supervisor import CommonSenseSupervisor
+from src.startup import hydrate_google_credentials_file
 from src.utils.mode_manager import is_mvp
+from src.utils.summary_thresholds import compute_summary_min_chars
 from src.utils.secrets import resolve_secret_env
 
 # Force stdout logging early (before configure_logging)
@@ -49,35 +50,7 @@ logging.basicConfig(
 )
 logging.info("✅ Logging initialised (stdout)")
 
-def _hydrate_google_credentials_file() -> None:
-    """Persist service account JSON from env to a filesystem path."""
-    target_path = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
-    raw_credentials = os.getenv("SERVICE_ACCOUNT_JSON")
-    if not target_path or not raw_credentials:
-        return
-    trimmed = raw_credentials.strip()
-    if not trimmed:
-        return
-    try:
-        json.loads(trimmed)
-    except json.JSONDecodeError:
-        logging.warning("SERVICE_ACCOUNT_JSON is not valid JSON; skipping credential file hydration")
-        return
-
-    path = Path(target_path)
-    try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(trimmed, encoding="utf-8")
-        os.chmod(path, 0o600)
-        os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = str(path)
-    except Exception as exc:  # pragma: no cover - should never happen
-        logging.error("Failed to materialise GOOGLE_APPLICATION_CREDENTIALS file: %s", exc)
-        return
-    finally:
-        os.environ.pop("SERVICE_ACCOUNT_JSON", None)
-
-
-_hydrate_google_credentials_file()
+hydrate_google_credentials_file()
 
 _API_LOG = logging.getLogger("api")
 
@@ -434,8 +407,7 @@ def create_app() -> FastAPI:
         summary_text_fragments = [value for value in summary_dict.values() if isinstance(value, str)]
         summary_text = "\n".join(summary_text_fragments).strip()
         summary_len = len(summary_text)
-        min_summary_default = "0" if stub_mode else "300"
-        min_summary_chars = int(os.getenv("MIN_SUMMARY_CHARS", min_summary_default))
+        min_summary_chars = compute_summary_min_chars(ocr_len, stub_mode=stub_mode)
         if summary_len < min_summary_chars:
             _API_LOG.error(
                 "summary_too_short",

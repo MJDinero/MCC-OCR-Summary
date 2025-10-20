@@ -8,7 +8,14 @@ from src.utils import secrets as secrets_mod
 
 
 REQUIRED_KEYS = [
-    'PROJECT_ID','REGION','DOC_AI_PROCESSOR_ID','OPENAI_API_KEY','DRIVE_INPUT_FOLDER_ID','DRIVE_REPORT_FOLDER_ID'
+    'PROJECT_ID',
+    'REGION',
+    'DOC_AI_PROCESSOR_ID',
+    'OPENAI_API_KEY',
+    'DRIVE_INPUT_FOLDER_ID',
+    'DRIVE_REPORT_FOLDER_ID',
+    'DRIVE_IMPERSONATION_USER',
+    'CMEK_KEY_NAME',
 ]
 
 
@@ -28,8 +35,14 @@ def test_config_missing_required():
 def test_config_success():
     _clear()
     os.environ.update({
-        'PROJECT_ID':'p','REGION':'us','DOC_AI_PROCESSOR_ID':'proc','OPENAI_API_KEY':'k',
-        'DRIVE_INPUT_FOLDER_ID':'in','DRIVE_REPORT_FOLDER_ID':'out'
+        'PROJECT_ID':'p',
+        'REGION':'us',
+        'DOC_AI_PROCESSOR_ID':'proc',
+        'OPENAI_API_KEY':'k',
+        'DRIVE_INPUT_FOLDER_ID':'in',
+        'DRIVE_REPORT_FOLDER_ID':'out',
+        'DRIVE_IMPERSONATION_USER':'impersonation@example.com',
+        'CMEK_KEY_NAME':'projects/p/locations/us/keyRings/k/cryptoKeys/key',
     })
     cfg = AppConfig()
     cfg.validate_required()  # no exception
@@ -48,8 +61,11 @@ def test_config_resolves_secret(monkeypatch):
         'OPENAI_API_KEY': 'sm://openai',
         'DRIVE_INPUT_FOLDER_ID': 'sm://drive-in',
         'DRIVE_REPORT_FOLDER_ID': 'sm://drive-out',
+        'DRIVE_IMPERSONATION_USER': 'sm://impersonate',
+        'CMEK_KEY_NAME': 'sm://cmek',
     })
     cfg = AppConfig()
     assert cfg.doc_ai_processor_id == 'resolved'
     assert cfg.openai_api_key == 'resolved'
+    assert cfg.drive_impersonation_user == 'resolved'
     _clear()

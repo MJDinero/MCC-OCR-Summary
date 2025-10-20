@@ -34,6 +34,51 @@ POLL_INTERVAL_SECONDS = 5
 TIMEOUT_SECONDS = 30 * 60  # 30 minutes
 
 
+def _kms_location_from_name(name: str | None) -> str | None:
+    if not name:
+        return None
+    parts = name.split("/")
+    try:
+        index = parts.index("locations")
+    except ValueError:
+        return None
+    if index + 1 >= len(parts):
+        return None
+    return parts[index + 1].lower()
+
+
+def _bucket_location(bucket: storage.Bucket) -> str | None:
+    try:
+        bucket.reload()
+    except Exception:  # pragma: no cover - best effort
+        return getattr(bucket, "location", None)
+    return getattr(bucket, "location", None)
+
+
+def _resolve_kms_for_bucket(
+    kms_name: str | None,
+    bucket: storage.Bucket,
+    *,
+    context: str,
+) -> str | None:
+    if not kms_name:
+        return None
+    bucket_location = _bucket_location(bucket)
+    kms_location = _kms_location_from_name(kms_name)
+    if bucket_location and kms_location and bucket_location.lower() != kms_location.lower():
+        _LOG.warning(
+            "kms_location_mismatch",
+            extra={
+                "context": context,
+                "bucket": bucket.name,
+                "bucket_location": bucket_location,
+                "kms_location": kms_location,
+            },
+        )
+        return None
+    return kms_name
+
+
 def _gcs_uri(bucket: str, prefix: str) -> str:
     if not prefix.endswith('/'):
         prefix += '/'
@@ -142,6 +187,7 @@ def batch_process_documents_gcs(
     storage_client = clients.storage
     docai_client = clients.docai
     kms_key = getattr(cfg, "cmek_key_name", None)
+    kms_output: str | None = None
 
     # Ensure input is in GCS
     intake_bucket = (cfg.intake_gcs_bucket or "").strip() or "quantify-agent-intake"
@@ -155,13 +201,15 @@ def batch_process_documents_gcs(
             raise ValidationError(f"Input file not found: {local_path}")
         if local_path.suffix.lower() != '.pdf':
             raise ValidationError("Only PDF inputs supported for batch")
+        intake_bucket_ref = storage_client.bucket(intake_bucket)
+        kms_input = _resolve_kms_for_bucket(kms_key, intake_bucket_ref, context="intake_upload")
         target_name = f"uploads/{uuid.uuid4().hex}-{local_path.name}".replace('//', '/')
         gcs_input_uri = _gcs_uri(intake_bucket, target_name)
         # Upload
-        bucket = storage_client.bucket(intake_bucket)
+        bucket = intake_bucket_ref
         blob = bucket.blob(target_name)
-        if kms_key:
-            setattr(blob, "kms_key_name", kms_key)
+        if kms_input:
+            setattr(blob, "kms_key_name", kms_input)
         _LOG.info("batch_upload_start", extra={"gcs_uri": gcs_input_uri, "size_bytes": local_path.stat().st_size})
         blob.upload_from_filename(str(local_path))
         _LOG.info("batch_upload_complete", extra={"gcs_uri": gcs_input_uri})
@@ -169,9 +217,14 @@ def batch_process_documents_gcs(
     # Prepare output prefix
     if output_uri and output_uri.startswith("gs://"):
         output_prefix = output_uri.rstrip('/') + '/'
+        out_bucket_name, _ = _split_gcs_uri(output_uri.rstrip('/'))
+        output_bucket_ref = storage_client.bucket(out_bucket_name)
     else:
         unique_prefix = f"batch/{time.strftime('%Y%m%d')}/{uuid.uuid4().hex}/"
         output_prefix = _gcs_uri(output_bucket, unique_prefix)
+        output_bucket_ref = storage_client.bucket(output_bucket)
+
+    kms_output = _resolve_kms_for_bucket(kms_key, output_bucket_ref, context="batch_output")
 
     name = f"projects/{project_id}/locations/{region}/processors/{processor_id}"
     request = {
@@ -184,11 +237,11 @@ def batch_process_documents_gcs(
             }
         },
         "document_output_config": {
-            "gcs_output_config": {"gcs_uri": output_prefix, **({"kms_key_name": kms_key} if kms_key else {})}
+            "gcs_output_config": {"gcs_uri": output_prefix, **({"kms_key_name": kms_output} if kms_output else {})}
         },
     }
-    if kms_key:
-        request["encryption_spec"] = {"kms_key_name": kms_key}
+    if kms_output:
+        request["encryption_spec"] = {"kms_key_name": kms_output}
 
     _LOG.info(
         "batch_start",
