@@ -9,10 +9,11 @@ import socket
 import sys
 from typing import TYPE_CHECKING, Any
 
-from fastapi import FastAPI, Request
+from fastapi import APIRouter, FastAPI, Request
 from fastapi.responses import JSONResponse
 
-from src.api import build_api_router
+from src.api.ingest import router as ingest_router
+from src.api.process import router as process_router
 from src.errors import ValidationError
 from src.logging_setup import configure_logging
 from src.services import drive_client as drive_client_module
@@ -51,6 +52,14 @@ ENABLE_METRICS = not _MVP_MODE
 
 def _health_payload() -> dict[str, str]:
     return {"status": "ok"}
+
+
+def build_api_router() -> APIRouter:
+    """Assemble API routers for FastAPI inclusion."""
+    router = APIRouter()
+    router.include_router(ingest_router, prefix="/ingest", tags=["ingest"])
+    router.include_router(process_router, prefix="/process", tags=["process"])
+    return router
 
 
 class _DriveClientAdapter:

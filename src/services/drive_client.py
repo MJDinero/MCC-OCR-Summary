@@ -1,11 +1,13 @@
 """Google Drive helper functions (minimal, idempotent).
 
 Provides two primary functions used by the pipeline:
- - download_pdf(file_id) -> bytes
+- download_pdf(file_id, *, mime_type='application/pdf', log_context=None) -> bytes
  - upload_pdf(file_bytes, report_name) -> uploaded file id
 
 Authentication relies on GOOGLE_APPLICATION_CREDENTIALS env or default creds.
 """
+
+# pylint: disable=no-member
 from __future__ import annotations
 
 import io
@@ -166,10 +168,28 @@ def _extract_ids(raw_folder: str, raw_drive: str | None) -> Tuple[str, Optional[
     return folder_id, drive_candidate
 
 
-def download_pdf(file_id: str) -> bytes:
+def download_pdf(
+    file_id: str,
+    *,
+    mime_type: str = "application/pdf",
+    log_context: Optional[Dict[str, Any]] = None,
+) -> bytes:
+    """Download a file from Drive, enforcing PDF payloads and optional structured logging."""
     if not file_id:
         raise ValueError('file_id required')
-    _LOG.info("drive_download_started", extra={"file_id": file_id})
+    if mime_type != "application/pdf":
+        raise ValueError(f"Unsupported mime_type {mime_type!r} for download_pdf")
+
+    extra_context: Dict[str, Any] = {"file_id": file_id}
+    if log_context:
+        extra_context.update(log_context)
+        try:
+            _LOG.info("drive_download_started", extra=extra_context)
+        except Exception:  # pragma: no cover - defensive logging
+            _LOG.info("drive_download_started (context suppressed)", extra={"file_id": file_id})
+    else:
+        _LOG.info("drive_download_started", extra=extra_context)
+
     service = _drive_service()
     # Attempt Shared Drive parameter if supported (mock in tests doesn't accept it)
     try:  # pragma: no cover - thin wrapper
@@ -184,7 +204,10 @@ def download_pdf(file_id: str) -> bytes:
     data = buf.getvalue()
     if not data.startswith(b'%PDF-'):
         raise ValueError('Downloaded file is not a PDF')
-    _LOG.info("drive_download_complete", extra={"file_id": file_id, "bytes": len(data)})
+    extra_complete: Dict[str, Any] = {"file_id": file_id, "bytes": len(data)}
+    if log_context:
+        extra_complete.update(log_context)
+    _LOG.info("drive_download_complete", extra=extra_complete)
     return data
 
 
@@ -282,10 +305,11 @@ def upload_pdf(
         except Exception:  # noqa: BLE001
             error_reason = None
         _LOG.error(
-            (
-                "drive_upload_failed "
-                f"(folder_id={folder_id} drive_id={drive_id} reason={error_reason} message={error_message or err})"
-            )
+            "drive_upload_failed (folder_id=%s drive_id=%s reason=%s message=%s)",
+            folder_id,
+            drive_id,
+            error_reason,
+            error_message or err,
         )
         raise
 
