@@ -57,8 +57,8 @@ def _health_payload() -> dict[str, str]:
 def build_api_router() -> APIRouter:
     """Assemble API routers for FastAPI inclusion."""
     router = APIRouter()
-    router.include_router(ingest_router, prefix="/ingest", tags=["ingest"])
-    router.include_router(process_router, prefix="/process", tags=["process"])
+    router.include_router(ingest_router, tags=["ingest"])
+    router.include_router(process_router, tags=["process"])
     return router
 
 
