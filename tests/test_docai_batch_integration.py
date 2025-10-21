@@ -3,6 +3,8 @@ from types import SimpleNamespace
 
 import pytest
 
+pytestmark = pytest.mark.integration
+
 from src.services.docai_helper import OCRService
 from src.services.docai_batch_helper import _BatchClients
 from src.config import AppConfig

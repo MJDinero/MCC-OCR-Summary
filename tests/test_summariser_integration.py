@@ -1,4 +1,8 @@
+import pytest
+
 from src.services.summariser import StructuredSummariser
+
+pytestmark = pytest.mark.integration
 
 
 class DummyBackend:

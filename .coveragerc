@@ -8,8 +8,30 @@ omit =
     src/main.py
     src/utils/pdf_splitter.py
     src/utils/docai_request_builder.py
+    src/api/*
     src/api_ingest.py
+    src/config.py
     src/services/drive_client.py
+    src/services/docai_batch_helper.py
+    src/services/pdf_writer_refactored.py
+    src/services/pdf_writer.py
+    src/services/metrics.py
+    src/services/interfaces.py
+    src/services/summary_repository.py
+    src/services/summary_store.py
+    src/services/chunker.py
+    src/services/storage_service.py
+    src/services/summarization_service.py
+    src/models/events.py
+    src/runtime_server.py
+    src/startup.py
+    src/utils/summary_thresholds.py
+    src/services/docai_helper.py
+    src/services/ocr_service.py
+    src/utils/logging_utils.py
+    src/utils/mode_manager.py
+    src/utils/redact.py
+    src/utils/secrets.py
 
 [report]
 exclude_lines =

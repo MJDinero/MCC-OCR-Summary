@@ -1,8 +1,11 @@
 import json
-from PyPDF2 import PdfWriter
+
 import pytest
+from PyPDF2 import PdfWriter
 
 from src.services.docai_helper import OCRService
+
+pytestmark = pytest.mark.integration
 
 
 class DummyBatch:
