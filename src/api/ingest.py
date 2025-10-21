@@ -184,7 +184,7 @@ async def _parse_ingest_request(request: Request) -> IngestRequest:
         raise ValidationError(f"Invalid ingest payload: {exc}") from exc
 
 
-@router.post("/ingest", tags=["ingest"])
+@router.post("", tags=["ingest"])
 async def ingest(request: Request):
     payload = await _parse_ingest_request(request)
     state_store: PipelineStateStore = request.app.state.state_store

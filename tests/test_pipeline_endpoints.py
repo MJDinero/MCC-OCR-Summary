@@ -111,7 +111,7 @@ def test_internal_event_updates_status(monkeypatch):
         "extra": {"segments": 3},
         "metadataPatch": {"summary_uri": "gs://bucket/summary.json"},
     }
-    resp = client.post(f"/internal/jobs/{job_id}/events", headers=headers, json=update_payload)
+    resp = client.post(f"/ingest/internal/jobs/{job_id}/events", headers=headers, json=update_payload)
     assert resp.status_code == 200
     job = app.state.state_store.get_job(job_id)
     assert job.status is PipelineStatus.SUMMARY_DONE
@@ -162,7 +162,7 @@ def test_status_endpoint_returns_job(monkeypatch):
     client = TestClient(app)
     ingest = client.post("/ingest", json=_ingest_payload())
     job_id = ingest.json()["job_id"]
-    status = client.get(f"/status/{job_id}")
+    status = client.get(f"/ingest/status/{job_id}")
     assert status.status_code == 200
     data = status.json()
     assert data["job_id"] == job_id

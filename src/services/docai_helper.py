@@ -17,7 +17,7 @@ import random
 import uuid
 from pathlib import Path
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, Iterable, Optional, Protocol, Sequence
+from typing import Any, Callable, Dict, Iterable, Optional, Protocol, Sequence, cast
 
 from tenacity import retry, wait_exponential, stop_after_attempt, retry_if_exception_type
 from google.api_core.client_options import ClientOptions
@@ -69,7 +69,7 @@ def _extract_document_dict(result: Any) -> Dict[str, Any]:
     # Real object path: documentai.Document (protobuf message)
     try:  # pragma: no cover - best effort
         if hasattr(doc, "_pb"):
-            return MessageToDict(doc._pb, preserving_proto_field_name=True)
+            return MessageToDict(doc._pb, preserving_proto_field_name=True)  # pylint: disable=protected-access
     except (AttributeError, TypeError, ValueError):  # pragma: no cover - narrow expected issues
         pass
 
@@ -111,7 +111,8 @@ def _split_pdf_bytes(pdf_bytes: bytes, *, max_pages: int = 25) -> list[bytes]:
             writer.add_page(page)
         buffer = io.BytesIO()
         writer.write(buffer)
-        parts.append(buffer.getvalue())
+        buffer.seek(0)
+        parts.append(buffer.read())
     return parts
 
 
@@ -185,7 +186,8 @@ class OCRService:
         if not callable(close_attr):  # nothing to do
             return
         try:
-            close_attr()  # type: ignore[misc]
+            close_fn = cast(Callable[[], Any], close_attr)
+            close_fn()  # pylint: disable=not-callable
         except (RuntimeError, OSError):  # swallow close errors
             _LOG.debug("Failed to close client", exc_info=True)
 
@@ -306,7 +308,8 @@ class OCRService:
                 )
             total_pages = actual_pages or estimated_pages
             _LOG.warning(
-                "docai_oversized_pdf_split",
+                "Oversized PDF detected (%s pages) - splitting into chunks.",
+                total_pages,
                 extra={
                     "pages": total_pages,
                     "chunk_max_pages": 25,
@@ -322,13 +325,16 @@ class OCRService:
             combined_pages: list[Dict[str, Any]] = []
             combined_texts: list[str] = []
             page_offset = 0
+            chunk_count = len(chunks)
 
             for idx, chunk in enumerate(chunks, start=1):
                 _LOG.info(
-                    "docai_chunk_process_start",
+                    "Processing chunk %s/%s with DocAI.",
+                    idx,
+                    chunk_count,
                     extra={
                         "chunk_index": idx,
-                        "chunk_count": len(chunks),
+                        "chunk_count": chunk_count,
                         "chunk_pages": min(25, total_pages - page_offset),
                     },
                 )
@@ -342,8 +348,11 @@ class OCRService:
                     )
                 except Exception as exc:
                     _LOG.error(
-                        "docai_chunk_process_failed",
-                        extra={"chunk_index": idx, "chunk_count": len(chunks), "error": str(exc)},
+                        "DocAI chunk %s/%s failed: %s",
+                        idx,
+                        chunk_count,
+                        exc,
+                        extra={"chunk_index": idx, "chunk_count": chunk_count, "error": str(exc)},
                     )
                     raise
                 chunk_pages = chunk_result.get("pages", [])
@@ -505,7 +514,7 @@ def _extract_shards(result: Any, output_uri: str) -> list[str]:
     return deduped
 
 
-def _poll_operation(
+def _poll_operation(  # pylint: disable=too-many-arguments
     operation: Any,
     *,
     stage: str,
@@ -551,7 +560,7 @@ def _poll_operation(
             raise OCRServiceError(f"{stage} operation error: {exc}") from exc
 
 
-def run_splitter(
+def run_splitter(  # pylint: disable=too-many-arguments
     gcs_uri: str,
     *,
     processor_id: str | None = None,
@@ -691,7 +700,7 @@ def run_splitter(
     }
 
 
-def run_batch_ocr(
+def run_batch_ocr(  # pylint: disable=too-many-arguments
     shards: Sequence[str],
     *,
     processor_id: str | None = None,

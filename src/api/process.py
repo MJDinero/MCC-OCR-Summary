@@ -181,14 +181,14 @@ async def _execute_pipeline(request: Request, *, pdf_bytes: bytes, source: str) 
     return pdf_payload, validation, drive_file_id
 
 
-@router.post("/process", tags=["process"])
+@router.post("", tags=["process"])
 async def process_pdf(request: Request, file: UploadFile) -> Response:
     pdf_bytes = await file.read()
     payload, _validation, _drive_id = await _execute_pipeline(request, pdf_bytes=pdf_bytes, source="upload")
     return Response(payload, media_type="application/pdf")
 
 
-@router.get("/process_drive", tags=["process"])
+@router.get("/drive", tags=["process"])
 async def process_drive(request: Request, file_id: str = Query(..., min_length=1)) -> JSONResponse:
     trace_id = _extract_trace_id(request)
     try:

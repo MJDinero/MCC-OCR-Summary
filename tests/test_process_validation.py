@@ -39,7 +39,7 @@ def test_internal_event_rejects_missing_token():
     )
     job_id = ingest.json()["job_id"]
     resp = client.post(
-        f"/internal/jobs/{job_id}/events",
+        f"/ingest/internal/jobs/{job_id}/events",
         json={"status": "OCR_DONE"},
     )
     assert resp.status_code == 401

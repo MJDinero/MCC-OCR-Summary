@@ -55,10 +55,10 @@ def _health_payload() -> dict[str, str]:
 
 
 def build_api_router() -> APIRouter:
-    """Assemble API routers for FastAPI inclusion."""
+    """Create the main router with all sub-routers attached."""
     router = APIRouter()
-    router.include_router(ingest_router, tags=["ingest"])
-    router.include_router(process_router, tags=["process"])
+    router.include_router(ingest_router, prefix="/ingest", tags=["ingest"])
+    router.include_router(process_router, prefix="/process", tags=["process"])
     return router
 
 
@@ -141,7 +141,7 @@ def create_app() -> FastAPI:
         pass
 
     cfg = get_config()
-    app = FastAPI(title="MCC-OCR-Summary", version="1.0.0")
+    app = FastAPI(title="MCC-OCR-Summary API", version="1.0.0")
     app.state.config = cfg
 
     current_mvp = is_mvp()

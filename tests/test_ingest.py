@@ -56,7 +56,7 @@ def test_ingest_dedupe_key_contains_hash(monkeypatch):
     assert hash_component == hashlib.md5(b"dedupe-source").hexdigest()[:32]
     assert job.object_hash == hash_component
 
-    status = client.get(f"/status/{job_id}")
+    status = client.get(f"/ingest/status/{job_id}")
     body = status.json()
     assert body["dedupe_key"] == job.dedupe_key
     assert body["object_hash"] == job.object_hash
