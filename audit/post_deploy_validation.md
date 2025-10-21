@@ -20,3 +20,8 @@
 - Cloud Run deployed ✅
 - Ready=True revision confirmed ✅
 - Awaiting live intake PDF validation
+# OCR Failure Investigation (v1.3.1-hotfix-2)
+- Timestamp: Tue Oct 21 16:01:03 PDT 2025
+- Error: Document AI processing failed
+- Root Cause: <to be filled after log inspection>
+
