@@ -21,7 +21,6 @@ import os
 from pathlib import Path
 from functools import lru_cache
 from typing import Any
-import warnings
 
 from pydantic import Field, AliasChoices
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -47,9 +46,6 @@ class AppConfig(BaseSettings):
     doc_ai_splitter_id: str | None = Field(None, validation_alias='DOC_AI_SPLITTER_PROCESSOR_ID')
     openai_api_key: str | None = Field(None, validation_alias='OPENAI_API_KEY')
     openai_model: str | None = Field(None, validation_alias='OPENAI_MODEL')
-    # Feature flag (defaults enabled) to force StructuredSummariser usage.
-    # Raw env capture (still allow pydantic to populate) then we post-process to strict bool via parse_bool
-    use_structured_summariser_raw: str | bool | None = Field(True, validation_alias='USE_STRUCTURED_SUMMARISER')
     use_refactored_summariser_raw: str | bool | None = Field(False, validation_alias='USE_REFACTORED_SUMMARISER')
     drive_input_folder_id: str = Field('', validation_alias='DRIVE_INPUT_FOLDER_ID')
     drive_report_folder_id: str = Field('', validation_alias='DRIVE_REPORT_FOLDER_ID')
@@ -118,18 +114,6 @@ class AppConfig(BaseSettings):
             resolved = resolve_secret(value, project_id=project_hint)
             if resolved is not None:
                 setattr(self, field_name, resolved)
-
-    @property
-    def use_structured_summariser(self) -> bool:  # accessor applying robust parsing
-        warnings.warn(
-            "USE_STRUCTURED_SUMMARISER is deprecated; prefer USE_REFACTORED_SUMMARISER.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        raw = self.use_structured_summariser_raw
-        if isinstance(raw, bool):
-            return raw
-        return parse_bool(str(raw))
 
     @property
     def use_refactored_summariser(self) -> bool:
@@ -223,21 +207,6 @@ class AppConfig(BaseSettings):
                 raise RuntimeError(f"GOOGLE_APPLICATION_CREDENTIALS file not found at {cred_path}")
             if not cred_path.is_file():
                 raise RuntimeError(f"GOOGLE_APPLICATION_CREDENTIALS path is not a file: {cred_path}")
-
-        def _to_bool(raw: str | bool | None) -> bool:
-            if isinstance(raw, bool):
-                return raw
-            if raw is None:
-                return False
-            return parse_bool(str(raw))
-
-        if _to_bool(self.use_structured_summariser_raw) and self.use_refactored_summariser:
-            warnings.warn(
-                "Both USE_STRUCTURED_SUMMARISER and USE_REFACTORED_SUMMARISER are enabled; defaulting to refactored summariser.",
-                RuntimeWarning,
-                stacklevel=2,
-            )
-
 
 @lru_cache
 def get_config() -> AppConfig:

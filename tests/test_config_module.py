@@ -27,12 +27,10 @@ def test_app_config_properties_and_validation(monkeypatch):
     for key, value in required_env.items():
         monkeypatch.setenv(key, value)
 
-    monkeypatch.setenv("USE_STRUCTURED_SUMMARISER", "false")
     monkeypatch.setenv("RUN_PIPELINE_INLINE", "off")
 
     cfg = AppConfig()
 
-    assert cfg.use_structured_summariser is False
     assert cfg.run_pipeline_inline is False
     cfg.validate_required()  # does not raise
 

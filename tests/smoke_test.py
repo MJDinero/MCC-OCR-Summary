@@ -1,21 +1,27 @@
-"""Lightweight smoke test invoking summarise_text wrapper.
+"""Lightweight smoke test for the refactored summariser wrapper."""
 
-This is distinct from scripts/smoke_test.py (which may perform offline manual runs).
-The goal here is to ensure that the StructuredSummariser wrapper path remains functional
-and returns the expected legacy-compatible keys plus side-channel list keys.
-"""
-from src.services.summariser import StructuredSummariser, OpenAIBackend
+from src.services.summariser_refactored import RefactoredSummariser, ChunkSummaryBackend
 
 
-def test_smoke_summarise_text_wrapper():
-    backend = OpenAIBackend(api_key="mock-local", model="mock-model")
-    summariser = StructuredSummariser(backend=backend)
-    sample_text = "Patient John Doe visited clinic for a routine checkup."
-    result = summariser.summarise_text(sample_text)
-    # Legacy keys
+class DummyBackend(ChunkSummaryBackend):
+    def summarise_chunk(self, *, chunk_text, chunk_index, total_chunks, estimated_tokens):
+        return {
+            "overview": "Patient summary",
+            "key_points": ["Key details"],
+            "clinical_details": ["Clinical detail"],
+            "care_plan": ["Care plan"],
+            "diagnoses": ["Dx"],
+            "providers": ["Dr Test"],
+            "medications": ["Med"],
+        }
+
+
+def test_smoke_refactored_summariser_wrapper():
+    summariser = RefactoredSummariser(backend=DummyBackend())
+    sample_text = "Patient John Doe visited clinic for a routine checkup." * 20
+    result = summariser.summarise(sample_text)
     assert "Medical Summary" in result
-    # Side-channel keys
-    assert "_diagnoses_list" in result
-    assert "_providers_list" in result
-    assert "_medications_list" in result
-    assert isinstance(result["Medical Summary"], str)
+    assert len(result["Medical Summary"]) > 0
+    assert result["_diagnoses_list"].strip()
+    assert result["_providers_list"].strip()
+    assert result["_medications_list"].strip()

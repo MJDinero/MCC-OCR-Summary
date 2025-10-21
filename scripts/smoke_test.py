@@ -1,43 +1,45 @@
 #!/usr/bin/env python3
-"""Lightweight smoke test for StructuredSummariser.
+"""Lightweight smoke test for the refactored summariser.
 
-Generates a large synthetic OCR text, runs through StructuredSummariser with a
-dummy backend (no OpenAI call) and asserts expected log markers & output shape.
-Intended for CI/CD gating (fast, offline).
+Generates a synthetic OCR payload, runs through RefactoredSummariser with a
+stub backend (no OpenAI call) and asserts output structure.
 """
 from __future__ import annotations
 
-from src.services.summariser import StructuredSummariser
+from src.services.summariser_refactored import RefactoredSummariser, ChunkSummaryBackend
 
 
-class _DummyBackend:
+class _DummyBackend(ChunkSummaryBackend):
     def __init__(self):
         self.calls = 0
-    def summarise(self, text: str):  # pragma: no cover - trivial
+
+    def summarise_chunk(self, *, chunk_text, chunk_index, total_chunks, estimated_tokens):  # pragma: no cover - deterministic stub
         self.calls += 1
         return {
-            'provider_seen': 'Dr Example',
-            'reason_for_visit': 'Routine',
-            'clinical_findings': f'Findings batch {self.calls}',
-            'treatment_plan': 'Continue monitoring',
-            'diagnoses': ['DXA', 'DXB'],
-            'providers': ['Dr Example'],
-            'medications': ['MedX']
+            "overview": f"Summary chunk {chunk_index + 1}",
+            "key_points": [f"Key point {self.calls}"],
+            "clinical_details": [f"Detail {self.calls}"],
+            "care_plan": [f"Plan {self.calls}"],
+            "diagnoses": ["DXA", "DXB"],
+            "providers": ["Dr Example"],
+            "medications": ["MedX"],
         }
 
 
 def run():
     backend = _DummyBackend()
-    s = StructuredSummariser(backend, chunk_target_chars=500, chunk_hard_max=600, multi_chunk_threshold=600)
-    text = ("lorem ipsum dolor sit amet " * 1200)
-    result = s.summarise(text)
-    assert 'Medical Summary' in result
-    assert result['_diagnoses_list'].startswith('DXA')
-    assert backend.calls >= 2, 'Expected multi-chunk operation'
-    lines = result['Medical Summary'].splitlines()
+    summariser = RefactoredSummariser(backend=backend)
+    summariser.chunk_target_chars = 500
+    summariser.chunk_hard_max = 600
+    text = "lorem ipsum dolor sit amet " * 1200
+    result = summariser.summarise(text)
+    assert "Medical Summary" in result
+    assert result["_diagnoses_list"].startswith("DXA")
+    assert backend.calls >= 2, "Expected multi-chunk operation"
+    lines = result["Medical Summary"].splitlines()
     assert len(lines) > 5
-    print('SMOKE TEST PASS: chunks=', backend.calls, 'lines=', len(lines))
+    print("SMOKE TEST PASS:", "chunks=", backend.calls, "lines=", len(lines))
 
 
-if __name__ == '__main__':  # pragma: no cover
+if __name__ == "__main__":  # pragma: no cover
     run()

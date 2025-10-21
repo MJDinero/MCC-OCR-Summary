@@ -668,19 +668,4 @@ class Summariser:
         return display
 
 
-class StructuredSummariser(Summariser):
-    """Explicit alias for the Bible-compliant structured summariser variant.
-
-    Provided to allow unambiguous selection in application wiring / dependency
-    injection without changing existing test references to `Summariser`.
-    """
-    def summarise_text(self, text: str) -> Dict[str, str]:
-        """Convenience wrapper kept for backwards compatibility with earlier smoke scripts."""
-        _LOG.info("summariser_text_wrapper", extra={"event": "summarise_text_called", "len": len(text) if isinstance(text, str) else None})
-        result = self.summarise(text)
-        _LOG.info("summariser_text_wrapper_complete", extra={"event": "summarise_text_done", "keys": list(result.keys())})
-        return result
-    pass
-
-
-__all__ = ["Summariser", "StructuredSummariser", "SummarizationBackend", "OpenAIBackend"]
+__all__ = ["Summariser", "SummarizationBackend", "OpenAIBackend"]

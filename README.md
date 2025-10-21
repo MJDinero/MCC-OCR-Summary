@@ -61,7 +61,7 @@ make install
 # Run static analysis + type + tests
 make lint            # ruff + pylint (strict)
 make type            # mypy --strict on critical services
-make test            # pytest with coverage ≥90%
+make test            # pytest with coverage >=90%
 
 # Execute targeted tests
 python3 -m pytest tests/test_summarization_service_pipeline.py -q
@@ -176,7 +176,7 @@ Re-run benchmarks after model or configuration updates. Results feed the README 
 
 1. `make lint` (ruff + pylint)  
 2. `make type` (mypy --strict on critical services)  
-3. `make test` (pytest, coverage ≥90%, include new pipeline tests)  
+3. `make test` (pytest, coverage >=90%, include new pipeline tests)  
 4. `make audit-deps` (pip-audit)  
 5. `make sbom` (CycloneDX SBOM)  
 6. Build + deploy Cloud Run images  
@@ -253,3 +253,5 @@ For further details, see `AGENTS.md` and `audit/technical_audit_v11j.md`.
 - [ ] Ensure alert policies deployed (`gcloud monitoring policies create --policy-from-file=infra/monitoring/alert_policies.yaml`).
 - [ ] Validate IAM via `infra/iam.sh` and `gcloud projects get-iam-policy`.
 - [ ] Promote canary only after smoke test success; note rollback command from Cloud Build logs.
+
+Permanent thresholds: chars >= 300, supervisor pass >= 0.995

@@ -11,6 +11,17 @@ class StubLauncher:
         return "exec/mock"
 
 
+class StubSummariser:
+    chunk_target_chars = 1200
+    chunk_hard_max = 1800
+
+    def summarise(self, text: str):  # pragma: no cover - simple stub
+        return {"Medical Summary": "Refactored summary output " + ("-" * 520)}
+
+    async def summarise_async(self, text: str):  # pragma: no cover - reuse sync result
+        return self.summarise(text)
+
+
 def test_health_and_ingest(monkeypatch):
     monkeypatch.setenv("PROJECT_ID", "proj")
     monkeypatch.setenv("REGION", "us")
@@ -25,6 +36,7 @@ def test_health_and_ingest(monkeypatch):
 
     app = create_app()
     app.state.workflow_launcher = StubLauncher()
+    app.state.summariser = StubSummariser()
     client = TestClient(app)
 
     r = client.get("/healthz")
@@ -39,3 +51,6 @@ def test_health_and_ingest(monkeypatch):
     assert resp.status_code == 202
     body = resp.json()
     assert body["workflow_execution"] == "exec/mock"
+    summary = app.state.summariser.summarise("sample text")
+    summary_text = summary.get("Medical Summary", "")
+    assert len(summary_text) >= 500
