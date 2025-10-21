@@ -9,16 +9,19 @@ Retained variables (env names in parentheses):
  - DOC_AI_PROCESSOR_ID
  - OPENAI_API_KEY
  - DRIVE_INPUT_FOLDER_ID
- - DRIVE_REPORT_FOLDER_ID (MedCostContain Output Folder `130jJzsI3OBzMDBweGfBOaXikfEnD2KVg`)
+ - DRIVE_REPORT_FOLDER_ID (MedCostContain Output Folder `1eyMO0126VfLBK3bBQEpWlVOL6tWxriCE`)
  - GOOGLE_APPLICATION_CREDENTIALS (used implicitly by Google clients)
 
 All legacy flags (metrics, sheets, multiple processor fallbacks, CORS, etc.) removed.
 """
 from __future__ import annotations
 
+import json
 import os
+from pathlib import Path
 from functools import lru_cache
 from typing import Any
+import warnings
 
 from pydantic import Field, AliasChoices
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -37,19 +40,24 @@ class AppConfig(BaseSettings):
     region: str = Field('us', validation_alias='REGION')
     # Dedicated Document AI location (falls back to region when not provided).
     doc_ai_location: str = Field('us', validation_alias=AliasChoices('DOC_AI_LOCATION', 'REGION'))
-    doc_ai_processor_id: str = Field('', validation_alias='DOC_AI_PROCESSOR_ID')
+    doc_ai_processor_id: str = Field(
+        '',
+        validation_alias=AliasChoices('DOC_AI_PROCESSOR_ID', 'DOC_AI_OCR_PROCESSOR_ID'),
+    )
     doc_ai_splitter_id: str | None = Field(None, validation_alias='DOC_AI_SPLITTER_PROCESSOR_ID')
     openai_api_key: str | None = Field(None, validation_alias='OPENAI_API_KEY')
     openai_model: str | None = Field(None, validation_alias='OPENAI_MODEL')
     # Feature flag (defaults enabled) to force StructuredSummariser usage.
     # Raw env capture (still allow pydantic to populate) then we post-process to strict bool via parse_bool
     use_structured_summariser_raw: str | bool | None = Field(True, validation_alias='USE_STRUCTURED_SUMMARISER')
+    use_refactored_summariser_raw: str | bool | None = Field(False, validation_alias='USE_REFACTORED_SUMMARISER')
     drive_input_folder_id: str = Field('', validation_alias='DRIVE_INPUT_FOLDER_ID')
     drive_report_folder_id: str = Field('', validation_alias='DRIVE_REPORT_FOLDER_ID')
     drive_shared_drive_id: str | None = Field(
         None,
         validation_alias=AliasChoices('DRIVE_SHARED_DRIVE_ID', 'DRIVE_REPORT_DRIVE_ID', 'SHARED_DRIVE_ID'),
     )
+    drive_impersonation_user: str | None = Field(None, validation_alias='DRIVE_IMPERSONATION_USER')
     intake_gcs_bucket: str = Field('quantify-agent-intake', validation_alias='INTAKE_GCS_BUCKET')
     output_gcs_bucket: str = Field('quantify-agent-output', validation_alias='OUTPUT_GCS_BUCKET')
     summary_bucket: str = Field('quantify-agent-output', validation_alias='SUMMARY_BUCKET')
@@ -102,6 +110,7 @@ class AppConfig(BaseSettings):
             "drive_input_folder_id",
             "drive_report_folder_id",
             "drive_shared_drive_id",
+            "drive_impersonation_user",
             "cmek_key_name",
         )
         for field_name in secret_fields:
@@ -112,7 +121,19 @@ class AppConfig(BaseSettings):
 
     @property
     def use_structured_summariser(self) -> bool:  # accessor applying robust parsing
+        warnings.warn(
+            "USE_STRUCTURED_SUMMARISER is deprecated; prefer USE_REFACTORED_SUMMARISER.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         raw = self.use_structured_summariser_raw
+        if isinstance(raw, bool):
+            return raw
+        return parse_bool(str(raw))
+
+    @property
+    def use_refactored_summariser(self) -> bool:
+        raw = self.use_refactored_summariser_raw
         if isinstance(raw, bool):
             return raw
         return parse_bool(str(raw))
@@ -140,9 +161,12 @@ class AppConfig(BaseSettings):
             ("openai_api_key", self.openai_api_key, "OPENAI_API_KEY"),
             ("drive_input_folder_id", self.drive_input_folder_id, "DRIVE_INPUT_FOLDER_ID"),
             ("drive_report_folder_id", self.drive_report_folder_id, "DRIVE_REPORT_FOLDER_ID"),
+            ("drive_impersonation_user", self.drive_impersonation_user, "DRIVE_IMPERSONATION_USER"),
             ("intake_gcs_bucket", self.intake_gcs_bucket, "INTAKE_GCS_BUCKET"),
             ("output_gcs_bucket", self.output_gcs_bucket, "OUTPUT_GCS_BUCKET"),
             ("summary_bucket", self.summary_bucket, "SUMMARY_BUCKET"),
+            ("cmek_key_name", self.cmek_key_name, "CMEK_KEY_NAME"),
+            ("google_application_credentials", self.google_application_credentials, "GOOGLE_APPLICATION_CREDENTIALS"),
         ]
         missing = [name for name, value, _env in required_pairs if not value]
 
@@ -160,9 +184,12 @@ class AppConfig(BaseSettings):
             "OPENAI_API_KEY",
             "DRIVE_INPUT_FOLDER_ID",
             "DRIVE_REPORT_FOLDER_ID",
+            "DRIVE_IMPERSONATION_USER",
             "INTAKE_GCS_BUCKET",
             "OUTPUT_GCS_BUCKET",
             "SUMMARY_BUCKET",
+            "CMEK_KEY_NAME",
+            "GOOGLE_APPLICATION_CREDENTIALS",
         }
         unmet_env: list[str] = []
         for name, value, env_name in required_pairs:
@@ -177,6 +204,39 @@ class AppConfig(BaseSettings):
             raise RuntimeError("Missing required configuration values: " + ", ".join(sorted(set(missing))))
         if unmet_env:
             raise RuntimeError("Missing environment variables: " + ", ".join(sorted(set(unmet_env))))
+
+        impersonation = (self.drive_impersonation_user or "").strip()
+        if not impersonation or "@" not in impersonation:
+            raise RuntimeError("DRIVE_IMPERSONATION_USER must be a valid email address")
+
+        raw_credentials = (self.google_application_credentials or os.getenv("GOOGLE_APPLICATION_CREDENTIALS") or "").strip()
+        if not raw_credentials:
+            raise RuntimeError("GOOGLE_APPLICATION_CREDENTIALS must be configured")
+        if raw_credentials.startswith("{"):
+            try:
+                json.loads(raw_credentials)
+            except json.JSONDecodeError as exc:
+                raise RuntimeError("GOOGLE_APPLICATION_CREDENTIALS contains invalid JSON") from exc
+        else:
+            cred_path = Path(raw_credentials)
+            if not cred_path.exists():
+                raise RuntimeError(f"GOOGLE_APPLICATION_CREDENTIALS file not found at {cred_path}")
+            if not cred_path.is_file():
+                raise RuntimeError(f"GOOGLE_APPLICATION_CREDENTIALS path is not a file: {cred_path}")
+
+        def _to_bool(raw: str | bool | None) -> bool:
+            if isinstance(raw, bool):
+                return raw
+            if raw is None:
+                return False
+            return parse_bool(str(raw))
+
+        if _to_bool(self.use_structured_summariser_raw) and self.use_refactored_summariser:
+            warnings.warn(
+                "Both USE_STRUCTURED_SUMMARISER and USE_REFACTORED_SUMMARISER are enabled; defaulting to refactored summariser.",
+                RuntimeWarning,
+                stacklevel=2,
+            )
 
 
 @lru_cache

@@ -356,7 +356,7 @@ class ChunkedText:
 class SlidingWindowChunker:
     """Token-aware greedy chunker with symmetric overlap for continuity."""
 
-    def __init__(self, *, target_chars: int = 2600, max_chars: int = 3200, overlap_chars: int = 320) -> None:
+    def __init__(self, *, target_chars: int = 2600, max_chars: int = 10000, overlap_chars: int = 320) -> None:
         if max_chars <= target_chars:
             raise ValueError("max_chars must be greater than target_chars")
         self.target_chars = target_chars
@@ -407,7 +407,7 @@ class RefactoredSummariser:
 
     backend: ChunkSummaryBackend
     target_chars: int = 2600
-    max_chars: int = 3200
+    max_chars: int = 10000
     overlap_chars: int = 320
     min_summary_chars: int = 480
 
@@ -802,7 +802,7 @@ def _cli(argv: Optional[Iterable[str]] = None) -> None:
     parser.add_argument("--model", default=os.getenv("OPENAI_MODEL") or "gpt-4o-mini", help="OpenAI model to use.")
     parser.add_argument("--api-key", help="Explicit OpenAI API key. Defaults to environment variable.")
     parser.add_argument("--target-chars", type=int, default=int(os.getenv("REF_SUMMARISER_TARGET_CHARS", "2400")))
-    parser.add_argument("--max-chars", type=int, default=int(os.getenv("REF_SUMMARISER_MAX_CHARS", "3200")))
+    parser.add_argument("--max-chars", type=int, default=int(os.getenv("REF_SUMMARISER_MAX_CHARS", "10000")))
     parser.add_argument("--overlap-chars", type=int, default=int(os.getenv("REF_SUMMARISER_OVERLAP_CHARS", "320")))
     parser.add_argument("--min-summary-chars", type=int, default=int(os.getenv("REF_SUMMARISER_MIN_SUMMARY_CHARS", "480")))
     parser.add_argument("--job-id", help="Pipeline job identifier for Cloud Run Jobs to update state.")
