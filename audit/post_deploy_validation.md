@@ -13,3 +13,10 @@
 - /process/process_drive returned 502 ⚠️ (Document AI PAGE_LIMIT_EXCEEDED for 263 pages)
 - Supervisor passed ⛔ (request aborted before supervisor step)
 - Summary length ≥ 300 chars ⛔ (no summary generated due to Document AI failure)
+
+# Pre-Validation Sync (v1.3.1-hotfix-2)
+- All tests passed ✅
+- Coverage ≥ 90 % ✅
+- Cloud Run deployed ✅
+- Ready=True revision confirmed ✅
+- Awaiting live intake PDF validation
