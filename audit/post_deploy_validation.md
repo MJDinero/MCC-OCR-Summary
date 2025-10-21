@@ -25,3 +25,9 @@
 - Error: Document AI processing failed
 - Root Cause: <to be filled after log inspection>
 
+
+# Hotfix 3 Deployment (v1.3.1-hotfix-3)
+- Router factory restored ✅
+- Chunked DocAI processing verified ✅
+- Startup Ready=True ✅
+- Awaiting live intake PDF test
