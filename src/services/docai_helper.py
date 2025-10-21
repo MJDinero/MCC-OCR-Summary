@@ -7,6 +7,7 @@ normalisation) and converts errors into internal domain exceptions.
 """
 from __future__ import annotations
 
+import io
 import json
 import logging
 import time
@@ -33,6 +34,12 @@ from src.services.pipeline import (
     PipelineStateStore,
     create_state_store_from_env,
 )
+
+try:  # pragma: no cover - optional dependency fallback
+    from PyPDF2 import PdfReader, PdfWriter  # type: ignore
+except Exception:  # pragma: no cover - allow runtime environments without PyPDF2
+    PdfReader = None  # type: ignore
+    PdfWriter = None  # type: ignore
 
 _LOG = logging.getLogger("ocr_service")
 
@@ -82,6 +89,69 @@ def _normalise(doc: Dict[str, Any]) -> Dict[str, Any]:
         pages_out.append({"page_number": idx, "text": text})
     full_text = doc.get("text") or " ".join(pg["text"] for pg in pages_out)
     return {"text": full_text, "pages": pages_out}
+
+
+def _split_pdf_bytes(pdf_bytes: bytes, *, max_pages: int = 25) -> list[bytes]:
+    """Split PDF bytes into <= max_pages chunks."""
+    if PdfReader is None or PdfWriter is None:
+        raise OCRServiceError("PyPDF2 is required for PDF splitting but is not installed")
+    try:
+        reader = PdfReader(io.BytesIO(pdf_bytes))
+    except Exception as exc:
+        raise OCRServiceError(f"Failed to read PDF for splitting: {exc}") from exc
+
+    if max_pages <= 0:
+        raise ValueError("max_pages must be positive")
+
+    parts: list[bytes] = []
+    total_pages = len(reader.pages)
+    for start in range(0, total_pages, max_pages):
+        writer = PdfWriter()
+        for page in reader.pages[start : start + max_pages]:
+            writer.add_page(page)
+        buffer = io.BytesIO()
+        writer.write(buffer)
+        parts.append(buffer.getvalue())
+    return parts
+
+
+def _process_chunk_with_docai(
+    *,
+    client: _DocAIClientProtocol,
+    pdf_bytes: bytes,
+    project_id: str,
+    location: str,
+    processor_id: str,
+) -> Dict[str, Any]:
+    """Process PDF bytes through Document AI and return a normalised payload."""
+    try:
+        _name, request = build_docai_request(pdf_bytes, project_id, location, processor_id)
+    except ValidationError:
+        raise
+    except Exception as exc:
+        raise OCRServiceError(f"Failed building DocAI request: {exc}") from exc
+
+    request.pop("encryption_spec", None)
+
+    start = time.perf_counter()
+    try:
+        result = client.process_document(request=request)
+    except (gexc.ServiceUnavailable, gexc.DeadlineExceeded):
+        _LOG.warning("DocAI chunk transient failure; retry eligible", exc_info=True)
+        raise
+    except gexc.GoogleAPICallError as exc:
+        raise OCRServiceError(f"DocAI chunk failed: {exc}") from exc
+    except Exception as exc:  # pragma: no cover - defensive catch
+        raise OCRServiceError(f"Unexpected DocAI chunk error: {exc}") from exc
+    finally:
+        elapsed = time.perf_counter() - start
+        _LOG.debug(
+            "docai_chunk_attempt",
+            extra={"elapsed_ms": round(elapsed * 1000, 2), "processor": processor_id},
+        )
+
+    raw_doc = _extract_document_dict(result)
+    return _normalise(raw_doc)
 
 
 @dataclass
@@ -158,26 +228,39 @@ class OCRService:
         size_bytes = len(pdf_bytes)
         # Heuristic page count estimation: count /Type /Page occurrences
         # Heuristic page count (defensive default to 1 if unexpected)
-        page_count = len(re.findall(rb"/Type\s*/Page(?!s)", pdf_bytes)) or 1
+        estimated_pages = len(re.findall(rb"/Type\s*/Page(?!s)", pdf_bytes)) or 1
 
-        use_batch = page_count > PAGES_BATCH_THRESHOLD or size_bytes > SIZE_BATCH_THRESHOLD
+        actual_pages: Optional[int] = None
+        if PdfReader is not None:
+            try:
+                actual_pages = len(PdfReader(io.BytesIO(pdf_bytes)).pages)
+            except Exception:
+                _LOG.warning("pdf_page_count_parse_failed", exc_info=True)
+        page_count_for_logging = actual_pages or estimated_pages
+
+        use_batch = size_bytes > SIZE_BATCH_THRESHOLD
         # Escalation: if heuristic says small but actual PDF may exceed limits, re-parse to get real page count.
         splitter_enabled = bool(self._cfg.doc_ai_splitter_id)
-        if splitter_enabled and page_count >= 199:
+        if splitter_enabled and page_count_for_logging >= 199:
             _LOG.info(
                 "docai_splitter_escalation",
                 extra={
-                    "estimated_pages": page_count,
+                    "estimated_pages": estimated_pages,
+                    "actual_pages": actual_pages,
                     "size_bytes": size_bytes,
                     "splitter_processor": self._cfg.doc_ai_splitter_id,
                 },
             )
             use_batch = True
+        elif actual_pages is None and estimated_pages > PAGES_BATCH_THRESHOLD:
+            use_batch = True
+
         if use_batch:
             _LOG.info(
                 "docai_route_batch",
                 extra={
-                    "estimated_pages": page_count,
+                    "estimated_pages": estimated_pages,
+                    "actual_pages": actual_pages,
                     "size_bytes": size_bytes,
                     "threshold_pages": PAGES_BATCH_THRESHOLD,
                     "threshold_size": SIZE_BATCH_THRESHOLD,
@@ -202,7 +285,7 @@ class OCRService:
                 )
                 meta = batch_result.setdefault("batch_metadata", {})
                 meta.setdefault("batch_mode", "async_auto")
-                meta.setdefault("pages_estimated", page_count)
+                meta.setdefault("pages_estimated", page_count_for_logging)
                 return batch_result
             except ValidationError:
                 raise
@@ -215,40 +298,84 @@ class OCRService:
                     except Exception:  # pragma: no cover - cleanup best effort
                         pass
 
-        # Synchronous path (existing behaviour)
-        try:
-            _name, request = build_docai_request(
-                pdf_bytes, project_id, location, self.processor_id
+        should_split = (actual_pages or estimated_pages) > PAGES_BATCH_THRESHOLD
+        if should_split:
+            if PdfReader is None or PdfWriter is None:
+                raise OCRServiceError(
+                    "PyPDF2 is required to split oversized PDFs but is not available"
+                )
+            total_pages = actual_pages or estimated_pages
+            _LOG.warning(
+                "docai_oversized_pdf_split",
+                extra={
+                    "pages": total_pages,
+                    "chunk_max_pages": 25,
+                    "size_bytes": size_bytes,
+                    "processor": self.processor_id,
+                },
             )
-        except ValidationError:
-            raise  # propagate directly
-        except Exception as exc:  # wrap any other
-            raise OCRServiceError(f"Failed building request: {exc}") from exc
+            try:
+                chunks = _split_pdf_bytes(pdf_bytes, max_pages=25)
+            except Exception as exc:
+                raise OCRServiceError(f"Failed splitting oversized PDF: {exc}") from exc
 
-        # NOTE: The Document AI `ProcessRequest` API does not accept the
-        # `encryption_spec` field used by older batch endpoints. Passing it results
-        # in `Unknown field for ProcessRequest: encryption_spec`. For synchronous
-        # MVP processing we rely on processor-level CMEK configuration instead of
-        # injecting a per-request key here. If an upstream helper injected the
-        # legacy field, strip it to keep the synchronous API compatible.
-        request.pop("encryption_spec", None)
+            combined_pages: list[Dict[str, Any]] = []
+            combined_texts: list[str] = []
+            page_offset = 0
 
-        start = time.perf_counter()
-        try:
-            result = self._client.process_document(request=request)
-        except (gexc.ServiceUnavailable, gexc.DeadlineExceeded):  # will be retried by tenacity
-            _LOG.warning("Transient DocAI failure; will retry", exc_info=True)
-            raise
-        except gexc.GoogleAPICallError as exc:
-            raise OCRServiceError(f"Permanent DocAI failure: {exc}") from exc
-        except Exception as exc:  # pragma: no cover - unexpected library errors
-            raise OCRServiceError(f"Unexpected OCR error: {exc}") from exc
-        finally:
-            elapsed = time.perf_counter() - start
-            _LOG.debug("docai_process_attempt", extra={"elapsed_ms": round(elapsed*1000,2)})
+            for idx, chunk in enumerate(chunks, start=1):
+                _LOG.info(
+                    "docai_chunk_process_start",
+                    extra={
+                        "chunk_index": idx,
+                        "chunk_count": len(chunks),
+                        "chunk_pages": min(25, total_pages - page_offset),
+                    },
+                )
+                try:
+                    chunk_result = _process_chunk_with_docai(
+                        client=self._client,
+                        pdf_bytes=chunk,
+                        project_id=project_id,
+                        location=location,
+                        processor_id=self.processor_id,
+                    )
+                except Exception as exc:
+                    _LOG.error(
+                        "docai_chunk_process_failed",
+                        extra={"chunk_index": idx, "chunk_count": len(chunks), "error": str(exc)},
+                    )
+                    raise
+                chunk_pages = chunk_result.get("pages", [])
+                combined_texts.append(chunk_result.get("text", ""))
+                for page in chunk_pages:
+                    page_number = page.get("page_number", 0) + page_offset
+                    combined_pages.append(
+                        {
+                            "page_number": page_number if page_number > 0 else len(combined_pages) + 1,
+                            "text": page.get("text", ""),
+                        }
+                    )
+                page_offset += len(chunk_pages)
 
-        raw_doc = _extract_document_dict(result)
-        return _normalise(raw_doc)
+            if not combined_pages and combined_texts:
+                fallback_pages = [{"page_number": idx + 1, "text": text} for idx, text in enumerate(combined_texts)]
+                combined_pages = fallback_pages
+
+            full_text = "\n".join(text for text in combined_texts if text)
+            if not full_text and combined_pages:
+                full_text = " ".join(page["text"] for page in combined_pages)
+
+            return {"text": full_text, "pages": combined_pages}
+
+        # Synchronous path (existing behaviour)
+        return _process_chunk_with_docai(
+            client=self._client,
+            pdf_bytes=pdf_bytes,
+            project_id=project_id,
+            location=location,
+            processor_id=self.processor_id,
+        )
 
 
 def _resolve_state_store(job_id: str | None, state_store: PipelineStateStore | None) -> PipelineStateStore | None:
