@@ -1,0 +1,22 @@
+{
+  "displayName": "Supervisor fails detected (6h)",
+  "combiner": "OR",
+  "conditions": [
+    {
+      "displayName": "supervisor fail count",
+      "conditionThreshold": {
+        "filter": "metric.type=\"logging.googleapis.com/user/supervisor_fail_count\" AND resource.type=\"cloud_run_revision\"",
+        "comparison": "COMPARISON_GT",
+        "thresholdValue": 0,
+        "duration": "0s",
+        "aggregations": [
+          {
+            "alignmentPeriod": "21600s",
+            "perSeriesAligner": "ALIGN_SUM"
+          }
+        ]
+      }
+    }
+  ],
+  "notificationChannels": []
+}

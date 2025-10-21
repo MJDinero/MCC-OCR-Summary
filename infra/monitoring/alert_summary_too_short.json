@@ -1,0 +1,22 @@
+{
+  "displayName": "Summary Too Short > 0 per hour",
+  "combiner": "OR",
+  "conditions": [
+    {
+      "displayName": "summary_too_short rate",
+      "conditionThreshold": {
+        "filter": "metric.type=\"logging.googleapis.com/user/summary_too_short_count\" AND resource.type=\"cloud_run_revision\"",
+        "comparison": "COMPARISON_GT",
+        "thresholdValue": 0,
+        "duration": "0s",
+        "aggregations": [
+          {
+            "alignmentPeriod": "3600s",
+            "perSeriesAligner": "ALIGN_RATE"
+          }
+        ]
+      }
+    }
+  ],
+  "notificationChannels": []
+}
