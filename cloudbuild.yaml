@@ -12,9 +12,9 @@ steps:
       - --region=us-central1
       - --platform=managed
       - --quiet
-      - --set-env-vars=MODE=mvp,STUB_MODE=false,USE_STRUCTURED_SUMMARISER=true,SUPERVISOR_MODE=simple,DRIVE_ENABLED=true,WRITE_TO_DRIVE=true,PDF_ENABLED=true,SHEETS_ENABLED=false,ENABLE_METRICS=false,PROJECT_ID=quantify-agent,REGION=us-central1,DOC_AI_LOCATION=us,DOC_AI_OCR_PROCESSOR_ID=21c8becfabc49de6,DRIVE_REPORT_FOLDER_ID=130jJzsI3OBzMDBweGfBOaXikfEnD2KVg,DRIVE_SHARED_DRIVE_ID=0AFPP3mbSAh_oUk9PVA,CMEK_KEY_NAME=$_CMEK_KEY_NAME,INTERNAL_EVENT_TOKEN=dummytoken,INTAKE_GCS_BUCKET=mcc-intake,OUTPUT_GCS_BUCKET=mcc-output,SUMMARY_BUCKET=mcc-output,DRIVE_IMPERSONATION_USER=Matt@moneymediausa.com,GOOGLE_APPLICATION_CREDENTIALS=/tmp/google-application-credentials.json
+      - --set-env-vars=MODE=mvp,STUB_MODE=false,USE_REFACTORED_SUMMARISER=true,SUPERVISOR_MODE=simple,DRIVE_ENABLED=true,WRITE_TO_DRIVE=true,PDF_ENABLED=true,SHEETS_ENABLED=false,ENABLE_METRICS=false,PROJECT_ID=quantify-agent,REGION=us-central1,DOC_AI_LOCATION=us,DOC_AI_OCR_PROCESSOR_ID=21c8becfabc49de6,DRIVE_REPORT_FOLDER_ID=130jJzsI3OBzMDBweGfBOaXikfEnD2KVg,DRIVE_SHARED_DRIVE_ID=0AFPP3mbSAh_oUk9PVA,CMEK_KEY_NAME=$_CMEK_KEY_NAME,INTAKE_GCS_BUCKET=mcc-intake,OUTPUT_GCS_BUCKET=mcc-output,SUMMARY_BUCKET=mcc-output,DRIVE_IMPERSONATION_USER=Matt@moneymediausa.com,GOOGLE_APPLICATION_CREDENTIALS=/tmp/google-application-credentials.json,MIN_SUMMARY_CHARS=300,MIN_SUMMARY_DYNAMIC_RATIO=0.005
       - --remove-secrets=GOOGLE_APPLICATION_CREDENTIALS
-      - --update-secrets=OPENAI_API_KEY=OPENAI_API_KEY:latest,SERVICE_ACCOUNT_JSON=mcc_orch_sa_key:latest
+      - --update-secrets=OPENAI_API_KEY=OPENAI_API_KEY:latest,SERVICE_ACCOUNT_JSON=mcc_orch_sa_key:latest,INTERNAL_EVENT_TOKEN=internal-event-token:latest
 
 substitutions:
   _TAG: v11mvp

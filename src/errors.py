@@ -22,9 +22,14 @@ class PDFGenerationError(Exception):
     """Raised when PDF rendering fails."""
 
 
+class DriveServiceError(Exception):
+    """Raised when Google Drive interactions fail."""
+
+
 __all__ = [
     "ValidationError",
     "OCRServiceError",
     "SummarizationError",
     "PDFGenerationError",
+    "DriveServiceError",
 ]
