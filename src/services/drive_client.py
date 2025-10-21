@@ -6,6 +6,7 @@ Provides two primary functions used by the pipeline:
 
 Authentication relies on GOOGLE_APPLICATION_CREDENTIALS env or default creds.
 """
+# pylint: disable=no-member
 from __future__ import annotations
 
 import io
@@ -14,7 +15,6 @@ import time
 import json
 import re
 import os
-from functools import lru_cache
 from typing import Any, Dict, Optional, Tuple
 from googleapiclient.discovery import build  # type: ignore
 from googleapiclient.errors import HttpError  # type: ignore
@@ -22,13 +22,23 @@ from googleapiclient.http import MediaIoBaseDownload, MediaIoBaseUpload  # type:
 from google.oauth2 import service_account  # type: ignore
 
 from src.config import get_config
+from src.errors import DriveServiceError
+from src.utils.logging_utils import structured_log
 
 _SCOPES = ["https://www.googleapis.com/auth/drive"]
 _LOG = logging.getLogger("drive_client")
 _ID_PATTERN = re.compile(r"[A-Za-z0-9_-]{10,}")
 
+def _merge_context(base: Dict[str, Any] | None, defaults: Dict[str, Any]) -> Dict[str, Any]:
+    merged: Dict[str, Any] = {**defaults}
+    if base:
+        merged.update(base)
+    merged.setdefault("trace_id", None)
+    merged.setdefault("phase", defaults.get("phase"))
+    return merged
 
-def _drive_service():
+
+def _drive_service(log_context: Optional[Dict[str, Any]] = None):
     impersonate_user = os.getenv("DRIVE_IMPERSONATION_USER")
     raw_credentials = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
     if not raw_credentials:
@@ -38,7 +48,7 @@ def _drive_service():
             raw_credentials = None
 
     if not raw_credentials:
-        raise RuntimeError("GOOGLE_APPLICATION_CREDENTIALS is not configured")
+        raise DriveServiceError("GOOGLE_APPLICATION_CREDENTIALS is not configured")
 
     raw_credentials = str(raw_credentials).strip()
     subject = impersonate_user if impersonate_user else None
@@ -47,42 +57,57 @@ def _drive_service():
         try:
             service_account_info = json.loads(raw_credentials)
         except json.JSONDecodeError as exc:  # pragma: no cover - configuration error
-            raise RuntimeError("GOOGLE_APPLICATION_CREDENTIALS contains invalid JSON") from exc
+            raise DriveServiceError("GOOGLE_APPLICATION_CREDENTIALS contains invalid JSON") from exc
         creds = service_account.Credentials.from_service_account_info(
             service_account_info,
             scopes=_SCOPES,
             subject=subject,
         )  # type: ignore[arg-type]
     elif os.path.exists(raw_credentials):
-        creds = service_account.Credentials.from_service_account_file(
-            raw_credentials,
-            scopes=_SCOPES,
-            subject=subject,
-        )  # type: ignore[arg-type]
+        try:
+            creds = service_account.Credentials.from_service_account_file(
+                raw_credentials,
+                scopes=_SCOPES,
+                subject=subject,
+            )  # type: ignore[arg-type]
+        except Exception as exc:  # pragma: no cover - unexpected credential parse failure
+            context = _merge_context(log_context, {"phase": "drive_credentials"})
+            structured_log(_LOG, logging.ERROR, "drive_credentials_invalid", error=str(exc), **context)
+            raise DriveServiceError(f"Failed to parse GOOGLE_APPLICATION_CREDENTIALS: {exc}") from exc
     else:
-        raise RuntimeError(f"Missing GOOGLE_APPLICATION_CREDENTIALS file at {raw_credentials!r}")
+        raise DriveServiceError(f"Missing GOOGLE_APPLICATION_CREDENTIALS file at {raw_credentials!r}")
 
-    service = build("drive", "v3", credentials=creds, cache_discovery=False)
+    try:
+        service = build("drive", "v3", credentials=creds, cache_discovery=False)
+    except Exception as exc:  # pragma: no cover - discovery failures
+        context = _merge_context(log_context, {"phase": "drive_service_create"})
+        structured_log(_LOG, logging.ERROR, "drive_service_initialisation_failed", error=str(exc), **context)
+        raise DriveServiceError(f"Failed to initialise Drive service: {exc}") from exc
     try:
         about_info = (
             service.about()
             .get(fields="user")
             .execute()
         )
-        _LOG.info(
-            "drive_impersonation_user=%s impersonated_as=%s",
-            impersonate_user,
-            about_info.get("user", {}).get("emailAddress"),
+        context = _merge_context(log_context, {"phase": "drive_service_create"})
+        structured_log(
+            _LOG,
+            logging.INFO,
+            "drive_impersonation_check",
+            impersonation_user=impersonate_user,
+            resolved_user=about_info.get("user", {}).get("emailAddress"),
+            **context,
         )
     except Exception as exc:  # pragma: no cover - diagnostics only
-        _LOG.warning("drive_about_check_failed %s", exc)
+        context = _merge_context(log_context, {"phase": "drive_service_create"})
+        structured_log(_LOG, logging.WARNING, "drive_about_check_failed", error=str(exc), **context)
     return service
 
 
-@lru_cache(maxsize=64)
-def _resolve_folder_metadata(folder_id: str) -> Dict[str, Any]:
+def _resolve_folder_metadata(folder_id: str, *, log_context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """Retrieve Drive metadata for the target folder (cached per process)."""
-    service = _drive_service()
+    context = _merge_context(log_context, {"phase": "drive_folder_lookup", "folder_id": folder_id})
+    service = _drive_service(context)
     try:  # pragma: no cover - external API call
         request = service.files().get(
             fileId=folder_id,
@@ -96,6 +121,20 @@ def _resolve_folder_metadata(folder_id: str) -> Dict[str, Any]:
             fields='id,name,driveId,parents,capabilities(canAddChildren),permissionIds',
         )
     metadata = request.execute()
+    structured_log(
+        _LOG,
+        logging.INFO,
+        "drive_folder_metadata",
+        **_merge_context(
+            log_context,
+            {
+                "folder_id": folder_id,
+                "phase": "drive_folder_lookup",
+                "drive_id": metadata.get("driveId"),
+                "can_add_children": metadata.get("capabilities", {}).get("canAddChildren"),
+            },
+        ),
+    )
     return metadata
 
 
@@ -166,11 +205,12 @@ def _extract_ids(raw_folder: str, raw_drive: str | None) -> Tuple[str, Optional[
     return folder_id, drive_candidate
 
 
-def download_pdf(file_id: str) -> bytes:
+def download_pdf(file_id: str, *, log_context: Optional[Dict[str, Any]] = None) -> bytes:
     if not file_id:
-        raise ValueError('file_id required')
-    _LOG.info("drive_download_started", extra={"file_id": file_id})
-    service = _drive_service()
+        raise DriveServiceError('file_id required')
+    context = _merge_context(log_context, {"phase": "drive_download", "file_id": file_id})
+    structured_log(_LOG, logging.INFO, "drive_download_start", **context)
+    service = _drive_service(context)
     # Attempt Shared Drive parameter if supported (mock in tests doesn't accept it)
     try:  # pragma: no cover - thin wrapper
         request = service.files().get_media(fileId=file_id, supportsAllDrives=True)  # type: ignore[attr-defined]
@@ -183,8 +223,10 @@ def download_pdf(file_id: str) -> bytes:
         _status, done = downloader.next_chunk()  # _status unused; progress not logged for minimal impl
     data = buf.getvalue()
     if not data.startswith(b'%PDF-'):
-        raise ValueError('Downloaded file is not a PDF')
-    _LOG.info("drive_download_complete", extra={"file_id": file_id, "bytes": len(data)})
+        context["error"] = "not_pdf"
+        structured_log(_LOG, logging.ERROR, "drive_download_failure", **context)
+        raise DriveServiceError('Downloaded file is not a PDF')
+    structured_log(_LOG, logging.INFO, "drive_download_success", bytes=len(data), **context)
     return data
 
 
@@ -196,57 +238,64 @@ def upload_pdf(
     log_context: Optional[Dict[str, Any]] = None,
 ) -> str:
     if not file_bytes or not file_bytes.startswith(b'%PDF-'):
-        raise ValueError('file_bytes must be a PDF (bytes starting with %PDF-)')
+        raise DriveServiceError('file_bytes must be a PDF (bytes starting with %PDF-)')
     cfg = get_config()
     folder_source = parent_folder_id or cfg.drive_report_folder_id
     shared_drive_source = (
         getattr(cfg, "drive_shared_drive_id", None) or os.getenv("DRIVE_SHARED_DRIVE_ID", None)
     )
     folder_id, drive_id = _extract_ids(folder_source, shared_drive_source)
+    context = _merge_context(
+        log_context,
+        {
+            "phase": "drive_upload",
+            "folder_id": folder_id,
+            "drive_id": drive_id,
+            "report_name": report_name,
+        },
+    )
     try:
-        folder_meta = _resolve_folder_metadata(folder_id)
+        folder_meta = _resolve_folder_metadata(folder_id, log_context=context)
     except HttpError as err:
-        _LOG.error(
+        structured_log(
+            _LOG,
+            logging.ERROR,
             "drive_folder_lookup_failed",
-            extra={"folder_id": folder_id, "drive_id": drive_id, "error": str(err)},
+            error=str(err),
+            status_code=getattr(err, "status_code", None),
+            **context,
         )
-        raise
+        raise DriveServiceError(f"Failed to fetch Drive folder metadata: {err}") from err
 
     capabilities = folder_meta.get("capabilities") or {}
     can_add_children = bool(capabilities.get("canAddChildren"))
-    _LOG.info(
-        "drive_folder_metadata",
-        extra={
-            "folder_id": folder_id,
-            "drive_id": folder_meta.get("driveId") or drive_id,
-            "can_add_children": can_add_children,
-            "permissions": ','.join(folder_meta.get("permissionIds", []) or []),
-        },
-    )
+    context["can_add_children"] = can_add_children
 
     derived_drive_id = folder_meta.get("driveId")
     if derived_drive_id and derived_drive_id.startswith("0A"):
         drive_id = derived_drive_id
     elif not derived_drive_id and not drive_id:
-        _LOG.warning(
+        structured_log(
+            _LOG,
+            logging.WARNING,
             "drive_folder_not_shared",
-            extra={"folder_id": folder_id, "message": "Folder metadata missing driveId; likely My Drive"},
+            message="Folder metadata missing driveId; likely My Drive",
+            **context,
         )
-    service = _drive_service()
+    context["drive_id"] = drive_id or derived_drive_id
+    service = _drive_service(context)
     media = MediaIoBaseUpload(io.BytesIO(file_bytes), mimetype='application/pdf', resumable=True)
     file_metadata: dict[str, Any] = {
         'name': report_name,
         'mimeType': 'application/pdf',
         'parents': [folder_id],
     }
-    _LOG.info(
-        "drive_upload_started",
-        extra={
-            "report_name": report_name,
-            "bytes": len(file_bytes),
-            "parent": folder_id,
-            "drive_id": drive_id,
-        },
+    structured_log(
+        _LOG,
+        logging.INFO,
+        "drive_upload_start",
+        bytes=len(file_bytes),
+        **context,
     )
     started_at = time.perf_counter()
     try:  # pragma: no cover
@@ -281,13 +330,16 @@ def upload_pdf(
                     error_reason = errors[0].get("reason")
         except Exception:  # noqa: BLE001
             error_reason = None
-        _LOG.error(
-            (
-                "drive_upload_failed "
-                f"(folder_id={folder_id} drive_id={drive_id} reason={error_reason} message={error_message or err})"
-            )
+        structured_log(
+            _LOG,
+            logging.ERROR,
+            "drive_upload_failure",
+            error=str(err),
+            error_reason=error_reason,
+            error_message=error_message,
+            **context,
         )
-        raise
+        raise DriveServiceError(f"Drive upload failed: {error_message or err}") from err
 
     duration_ms = int((time.perf_counter() - started_at) * 1000)
     context = dict(log_context or {})
@@ -310,10 +362,7 @@ def upload_pdf(
             "parent": folder_id,
         }
     )
-    _LOG.info(
-        "drive_upload_complete",
-        extra=context,
-    )
+    structured_log(_LOG, logging.INFO, "drive_upload_success", **context)
     return created['id']
 
 __all__ = ['download_pdf', 'upload_pdf']

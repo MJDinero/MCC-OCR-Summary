@@ -1,5 +1,7 @@
+import logging
 import os
 import tempfile
+
 import pytest
 
 from src.services.pdf_writer import PDFWriter, MinimalPDFBackend, write_summary_pdf
@@ -19,6 +21,19 @@ def test_empty_summary_error():
     writer = PDFWriter(backend)
     with pytest.raises(PDFGenerationError):
         writer.build("   ")
+
+
+def test_pdf_writer_logs_failure(caplog):
+    class FailingBackend:
+        def build(self, title, sections):
+            raise PDFGenerationError("boom")
+
+    writer = PDFWriter(FailingBackend())
+    caplog.set_level(logging.ERROR, logger="pdf_writer")
+    with pytest.raises(PDFGenerationError):
+        writer.build({"Medical Summary": "text"})
+    events = {record.event for record in caplog.records if getattr(record, 'event', None)}
+    assert "pdf_writer_failure" in events
 
 
 def test_write_summary_pdf_helper():

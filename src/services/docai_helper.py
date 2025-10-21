@@ -5,6 +5,7 @@ other services. The implementation wraps Google Document AI but shields callers
 from library specific concerns (request construction, transient retries, result
 normalisation) and converts errors into internal domain exceptions.
 """
+# pylint: disable=too-many-arguments,protected-access
 from __future__ import annotations
 
 import io
@@ -24,6 +25,7 @@ from google.api_core.client_options import ClientOptions
 from google.api_core import exceptions as gexc
 from google.cloud import documentai_v1 as documentai
 from google.protobuf.json_format import MessageToDict
+from PyPDF2 import PdfReader, PdfWriter
 
 from src.config import get_config, AppConfig
 from src.utils.docai_request_builder import build_docai_request
@@ -34,7 +36,7 @@ from src.services.pipeline import (
     PipelineStateStore,
     create_state_store_from_env,
 )
-from PyPDF2 import PdfReader, PdfWriter
+from src.utils.logging_utils import structured_log
 
 _LOG = logging.getLogger("ocr_service")
 
@@ -112,6 +114,11 @@ class OCRService:
         self._client = self._client_factory(self._endpoint)
         self._kms_key = getattr(self._cfg, "cmek_key_name", None)
 
+    def _log(self, event: str, *, level: int = logging.INFO, **fields: Any) -> None:
+        payload = {"processor_id": self.processor_id}
+        payload.update(fields)
+        structured_log(_LOG, level, event, **payload)
+
     def close(self) -> None:  # pragma: no cover - underlying client close may not be needed
         close_attr = getattr(self._client, "close", None)
         if not callable(close_attr):  # nothing to do
@@ -128,7 +135,7 @@ class OCRService:
         retry=retry_if_exception_type((gexc.ServiceUnavailable, gexc.DeadlineExceeded)),
         reraise=True,
     )
-    def process(self, file_source: Any) -> Dict[str, Any]:
+    def process(self, file_source: Any, *, trace_id: str | None = None) -> Dict[str, Any]:
         """Run OCR on provided PDF path or bytes.
 
         Returns a normalised dictionary: { text: str, pages: [{page_number, text}, ...] }
@@ -162,6 +169,11 @@ class OCRService:
         # Heuristic page count estimation: count /Type /Page occurrences
         # Heuristic page count (defensive default to 1 if unexpected)
         page_count = len(re.findall(rb"/Type\s*/Page(?!s)", pdf_bytes)) or 1
+        base_context = {
+            "trace_id": trace_id,
+            "size_bytes": size_bytes,
+            "page_estimate": page_count,
+        }
 
         def _process_via_batch(local_source: Optional[Path]) -> Dict[str, Any]:
             temp_path: Optional[Path] = None
@@ -173,6 +185,8 @@ class OCRService:
                     src_for_batch = str(temp_path)
                 else:
                     src_for_batch = str(local_source)
+                start_ts = time.perf_counter()
+                self._log("docai_call_start", phase="docai_batch", **base_context)
                 batch_result = batch_process_documents_gcs(
                     src_for_batch,
                     None,
@@ -180,13 +194,27 @@ class OCRService:
                     location,
                     project_id=project_id,
                 )
+                duration_ms = int((time.perf_counter() - start_ts) * 1000)
                 meta = batch_result.setdefault("batch_metadata", {})
                 meta.setdefault("batch_mode", "async_auto")
                 meta.setdefault("pages_estimated", page_count)
+                self._log(
+                    "docai_call_success",
+                    phase="docai_batch",
+                    duration_ms=duration_ms,
+                    **base_context,
+                )
                 return batch_result
             except ValidationError:
                 raise
             except Exception as exc:
+                self._log(
+                    "docai_call_failure",
+                    level=logging.ERROR,
+                    phase="docai_batch",
+                    error=str(exc),
+                    **base_context,
+                )
                 raise OCRServiceError(f"Batch OCR failed: {exc}") from exc
             finally:
                 if temp_path:
@@ -203,9 +231,12 @@ class OCRService:
             total_pages = len(reader.pages)
             if total_pages <= CHUNK_PAGE_LIMIT:
                 raise OCRServiceError("Chunked fallback requires documents exceeding chunk limit")
-            _LOG.info(
-                "docai_chunked_sync_start",
-                extra={"total_pages": total_pages, "chunk_page_limit": CHUNK_PAGE_LIMIT},
+            self._log(
+                "docai_call_start",
+                phase="docai_chunked_sync",
+                total_pages=total_pages,
+                chunk_page_limit=CHUNK_PAGE_LIMIT,
+                **base_context,
             )
             merged_pages: list[dict[str, Any]] = []
             texts: list[str] = []
@@ -228,6 +259,15 @@ class OCRService:
                 try:
                     chunk_result = self._client.process_document(request=chunk_request)
                 except Exception as exc:
+                    self._log(
+                        "docai_call_failure",
+                        level=logging.ERROR,
+                        phase="docai_chunked_sync",
+                        error=str(exc),
+                        chunk_start=start,
+                        chunk_end=end,
+                        **base_context,
+                    )
                     raise OCRServiceError(f"Chunked DocAI call failed: {exc}") from exc
                 chunk_doc = _extract_document_dict(chunk_result)
                 pages = chunk_doc.get("pages") or []
@@ -248,9 +288,12 @@ class OCRService:
                     "chunk_page_limit": CHUNK_PAGE_LIMIT,
                 },
             }
-            _LOG.info(
-                "docai_chunked_sync_complete",
-                extra={"chunks": chunks_processed, "pages": len(merged_pages)},
+            self._log(
+                "docai_call_success",
+                phase="docai_chunked_sync",
+                chunks=chunks_processed,
+                pages=len(merged_pages),
+                **base_context,
             )
             return combined
 
@@ -258,25 +301,21 @@ class OCRService:
         # Escalation: if heuristic says small but actual PDF may exceed limits, re-parse to get real page count.
         splitter_enabled = bool(self._cfg.doc_ai_splitter_id)
         if splitter_enabled and page_count >= 199:
-            _LOG.info(
+            self._log(
                 "docai_splitter_escalation",
-                extra={
-                    "estimated_pages": page_count,
-                    "size_bytes": size_bytes,
-                    "splitter_processor": self._cfg.doc_ai_splitter_id,
-                },
+                phase="docai_route_decision",
+                splitter_processor=self._cfg.doc_ai_splitter_id,
+                **base_context,
             )
             use_batch = True
         if use_batch:
-            _LOG.info(
+            self._log(
                 "docai_route_batch",
-                extra={
-                    "estimated_pages": page_count,
-                    "size_bytes": size_bytes,
-                    "threshold_pages": PAGES_BATCH_THRESHOLD,
-                    "threshold_size": SIZE_BATCH_THRESHOLD,
-                    "batch_route": True,
-                },
+                phase="docai_route_decision",
+                threshold_pages=PAGES_BATCH_THRESHOLD,
+                threshold_size=SIZE_BATCH_THRESHOLD,
+                batch_route=True,
+                **base_context,
             )
             return _process_via_batch(source_path)
 
@@ -298,41 +337,85 @@ class OCRService:
         # legacy field, strip it to keep the synchronous API compatible.
         request.pop("encryption_spec", None)
 
+        self._log("docai_call_start", phase="docai_sync_primary", **base_context)
         start = time.perf_counter()
         try:
             result = self._client.process_document(request=request)
         except (gexc.ServiceUnavailable, gexc.DeadlineExceeded):  # will be retried by tenacity
-            _LOG.warning("Transient DocAI failure; will retry", exc_info=True)
+            self._log(
+                "docai_call_failure",
+                level=logging.WARNING,
+                phase="docai_sync_primary",
+                error="transient",
+                **base_context,
+            )
             raise
         except gexc.InvalidArgument as exc:
             message = str(exc)
             if "PAGE_LIMIT_EXCEEDED" in message or "Document pages exceed the limit" in message:
-                _LOG.warning(
-                    "docai_page_limit_exceeded_sync_fallback",
-                    extra={
-                        "estimated_pages": page_count,
-                        "size_bytes": size_bytes,
-                        "error": message,
-                    },
+                self._log(
+                    "docai_call_failure",
+                    level=logging.WARNING,
+                    phase="docai_sync_primary",
+                    error=message,
+                    fallback="batch",
+                    **base_context,
                 )
                 try:
                     return _process_via_batch(source_path)
                 except OCRServiceError as batch_exc:
-                    _LOG.warning(
-                        "docai_batch_fallback_failed",
-                        extra={"error": str(batch_exc)},
+                    self._log(
+                        "docai_call_failure",
+                        level=logging.WARNING,
+                        phase="docai_batch",
+                        error=str(batch_exc),
+                        fallback="chunked",
+                        **base_context,
                     )
                     return _process_via_chunked_sync()
+            self._log(
+                "docai_call_failure",
+                level=logging.ERROR,
+                phase="docai_sync_primary",
+                error=message,
+                **base_context,
+            )
             raise OCRServiceError(f"Permanent DocAI failure: {exc}") from exc
         except gexc.GoogleAPICallError as exc:
+            self._log(
+                "docai_call_failure",
+                level=logging.ERROR,
+                phase="docai_sync_primary",
+                error=str(exc),
+                **base_context,
+            )
             raise OCRServiceError(f"Permanent DocAI failure: {exc}") from exc
         except Exception as exc:  # pragma: no cover - unexpected library errors
+            self._log(
+                "docai_call_failure",
+                level=logging.ERROR,
+                phase="docai_sync_primary",
+                error=str(exc),
+                **base_context,
+            )
             raise OCRServiceError(f"Unexpected OCR error: {exc}") from exc
         finally:
             elapsed = time.perf_counter() - start
-            _LOG.debug("docai_process_attempt", extra={"elapsed_ms": round(elapsed*1000,2)})
+            self._log(
+                "docai_call_complete",
+                level=logging.DEBUG,
+                phase="docai_sync_primary",
+                duration_ms=int(elapsed * 1000),
+                **base_context,
+            )
 
         raw_doc = _extract_document_dict(result)
+        self._log(
+            "docai_call_success",
+            phase="docai_sync_primary",
+            duration_ms=int((time.perf_counter() - start) * 1000),
+            **base_context,
+        )
         return _normalise(raw_doc)
 
 

@@ -35,6 +35,9 @@ jobs:
 
       - name: Run tests with coverage
         env:
+          MODE: mvp
+          STUB_MODE: 'true'
+          WRITE_TO_DRIVE: 'false'
           PROJECT_ID: test-project
           REGION: us
           DOC_AI_LOCATION: us
@@ -49,6 +52,8 @@ jobs:
           SUMMARY_BUCKET: summary-bucket
           CMEK_KEY_NAME: projects/test/locations/us/keyRings/test/cryptoKeys/test
           INTERNAL_EVENT_TOKEN: dummy
+          GOOGLE_APPLICATION_CREDENTIALS: /tmp/test-service-account.json
+          SERVICE_ACCOUNT_JSON: '{}'
         run: |
           pytest
 

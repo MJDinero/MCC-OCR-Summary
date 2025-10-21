@@ -10,65 +10,101 @@ from typing import Any, Dict, Tuple
 from fastapi import APIRouter, HTTPException, Query, Request, UploadFile
 from fastapi.responses import JSONResponse, Response
 
-from src.errors import ValidationError
+from src.errors import PDFGenerationError, ValidationError, OCRServiceError, DriveServiceError, SummarizationError
 from src.services.supervisor import CommonSenseSupervisor
 from src.utils.summary_thresholds import compute_summary_min_chars
+from src.utils.logging_utils import structured_log
 
 router = APIRouter()
 
 _API_LOG = logging.getLogger("api")
 
 
+def _extract_trace_id(request: Request) -> str | None:
+    trace_header = request.headers.get("X-Cloud-Trace-Context")
+    if trace_header and "/" in trace_header:
+        return trace_header.split("/", 1)[0]
+    return request.headers.get("X-Request-ID")
+
+
 async def _execute_pipeline(request: Request, *, pdf_bytes: bytes, source: str) -> Tuple[bytes, Dict[str, Any], str | None]:
     app = request.app
     cfg = getattr(app.state, "config")
     stub_mode: bool = getattr(app.state, "stub_mode", False)
+    trace_id = _extract_trace_id(request)
 
     if not pdf_bytes:
         raise HTTPException(status_code=400, detail="Uploaded file empty")
     if not stub_mode and not pdf_bytes.startswith(b"%PDF-"):
         raise HTTPException(status_code=400, detail="File must be a PDF")
 
-    ocr_result = app.state.ocr_service.process(pdf_bytes)
+    try:
+        ocr_result = app.state.ocr_service.process(pdf_bytes, trace_id=trace_id)
+    except ValidationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except OCRServiceError as exc:
+        structured_log(
+            _API_LOG,
+            logging.ERROR,
+            "ocr_failure",
+            trace_id=trace_id,
+            source=source,
+            error=str(exc),
+        )
+        raise HTTPException(status_code=502, detail="Document AI processing failed") from exc
     ocr_text = (ocr_result.get("text") or "").strip()
     ocr_len = len(ocr_text)
     pages = ocr_result.get("pages") or []
-    _API_LOG.info(
-        "ocr_complete",
-        extra={
-            "source": source,
-            "text_length": ocr_len,
-            "pages": len(pages),
-        },
+    structured_log(
+        _API_LOG,
+        logging.INFO,
+        "ocr_success",
+        trace_id=trace_id,
+        source=source,
+        text_length=ocr_len,
+        pages=len(pages),
     )
 
     min_ocr_chars = int(os.getenv("MIN_OCR_CHARS", "50"))
     if ocr_len < min_ocr_chars:
-        _API_LOG.error(
+        structured_log(
+            _API_LOG,
+            logging.ERROR,
             "ocr_too_short",
-            extra={
-                "source": source,
-                "text_length": ocr_len,
-                "min_required": min_ocr_chars,
-            },
+            trace_id=trace_id,
+            source=source,
+            text_length=ocr_len,
+            min_required=min_ocr_chars,
         )
         raise HTTPException(status_code=422, detail="OCR extraction insufficient")
 
-    summary_raw = await app.state.summariser.summarise_async(ocr_text)
+    try:
+        summary_raw = await app.state.summariser.summarise_async(ocr_text)
+    except SummarizationError as exc:
+        structured_log(
+            _API_LOG,
+            logging.ERROR,
+            "summary_failure",
+            trace_id=trace_id,
+            source=source,
+            error=str(exc),
+        )
+        raise HTTPException(status_code=502, detail="Summary generation failed") from exc
     summary_dict = summary_raw if isinstance(summary_raw, dict) else {"Medical Summary": str(summary_raw or "")}
     summary_text_fragments = [value for value in summary_dict.values() if isinstance(value, str)]
     summary_text = "\n".join(summary_text_fragments).strip()
     summary_len = len(summary_text)
     min_summary_chars = compute_summary_min_chars(ocr_len, stub_mode=stub_mode)
     if summary_len < min_summary_chars:
-        _API_LOG.error(
+        structured_log(
+            _API_LOG,
+            logging.ERROR,
             "summary_too_short",
-            extra={
-                "summary_length": summary_len,
-                "min_required": min_summary_chars,
-                "ocr_length": ocr_len,
-                "source": source,
-            },
+            trace_id=trace_id,
+            summary_length=summary_len,
+            min_required=min_summary_chars,
+            ocr_length=ocr_len,
+            source=source,
         )
         raise HTTPException(status_code=502, detail="Summary generation failed")
 
@@ -81,29 +117,59 @@ async def _execute_pipeline(request: Request, *, pdf_bytes: bytes, source: str) 
     }
     validation = supervisor.validate(ocr_text=ocr_text, summary=summary_dict, doc_stats=doc_stats)
     if not validation.get("supervisor_passed"):
-        _API_LOG.warning("supervisor_basic_check_failed", extra={"source": source, **validation})
+        structured_log(
+            _API_LOG,
+            logging.WARNING,
+            "supervisor_basic_check_failed",
+            trace_id=trace_id,
+            source=source,
+            **validation,
+        )
 
-    pdf_payload = app.state.pdf_writer.build(dict(summary_dict))
+    try:
+        pdf_payload = app.state.pdf_writer.build(dict(summary_dict))
+    except PDFGenerationError as exc:
+        structured_log(
+            _API_LOG,
+            logging.ERROR,
+            "pdf_generation_failed",
+            trace_id=trace_id,
+            source=source,
+            error=str(exc),
+        )
+        raise HTTPException(status_code=500, detail="Failed to render PDF") from exc
     write_to_drive = os.getenv("WRITE_TO_DRIVE", "true").strip().lower() == "true"
 
     drive_file_id: str | None = None
     if write_to_drive:
         folder_id = os.getenv("DRIVE_REPORT_FOLDER_ID", cfg.drive_report_folder_id)
         try:
-            drive_file_id = app.state.drive_client.upload_pdf(pdf_payload, folder_id)
-        except Exception as drive_exc:  # pragma: no cover
-            _API_LOG.error("drive_upload_failed", extra={"error": str(drive_exc), "source": source})
+            drive_file_id = app.state.drive_client.upload_pdf(
+                pdf_payload,
+                folder_id,
+                log_context={"trace_id": trace_id, "source": source},
+            )
+        except DriveServiceError as drive_exc:
+            structured_log(
+                _API_LOG,
+                logging.ERROR,
+                "drive_upload_failed",
+                trace_id=trace_id,
+                source=source,
+                error=str(drive_exc),
+            )
             if not stub_mode:
-                raise
+                raise HTTPException(status_code=502, detail="Failed to upload PDF to Drive") from drive_exc
 
-    _API_LOG.info(
+    structured_log(
+        _API_LOG,
+        logging.INFO,
         "process_complete",
-        extra={
-            "source": source,
-            "supervisor_passed": validation.get("supervisor_passed"),
-            "summary_chars": len(summary_text),
-            "pdf_bytes": len(pdf_payload),
-        },
+        trace_id=trace_id,
+        source=source,
+        supervisor_passed=validation.get("supervisor_passed"),
+        summary_chars=len(summary_text),
+        pdf_bytes=len(pdf_payload),
     )
 
     return pdf_payload, validation, drive_file_id
@@ -118,12 +184,23 @@ async def process_pdf(request: Request, file: UploadFile) -> Response:
 
 @router.get("/process_drive", tags=["process"])
 async def process_drive(request: Request, file_id: str = Query(..., min_length=1)) -> JSONResponse:
+    trace_id = _extract_trace_id(request)
     try:
-        pdf_bytes = request.app.state.drive_client.download_pdf(file_id)
+        pdf_bytes = request.app.state.drive_client.download_pdf(
+            file_id,
+            log_context={"trace_id": trace_id, "phase": "drive_download"},
+        )
     except ValidationError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    except Exception as exc:  # pragma: no cover - external service
-        _API_LOG.error("drive_download_failed", extra={"error": str(exc), "file_id": file_id})
+    except DriveServiceError as exc:
+        structured_log(
+            _API_LOG,
+            logging.ERROR,
+            "drive_download_failed",
+            trace_id=trace_id,
+            file_id=file_id,
+            error=str(exc),
+        )
         raise HTTPException(status_code=502, detail="Failed to download file from Drive") from exc
 
     _payload, validation, drive_file_id = await _execute_pipeline(request, pdf_bytes=pdf_bytes, source="drive")

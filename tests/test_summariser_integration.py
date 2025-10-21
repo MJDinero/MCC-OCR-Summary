@@ -36,7 +36,7 @@ def test_short_documents_pass_with_dynamic_floor(monkeypatch):
     monkeypatch.delenv("MIN_SUMMARY_CHARS", raising=False)
     monkeypatch.delenv("MIN_SUMMARY_DYNAMIC_RATIO", raising=False)
 
-    ocr_text = "a" * 200  # yields dynamic threshold of max(120, int(0.35 * 200)) == 120
+    ocr_text = "a" * 200  # yields dynamic threshold of max(120, int(0.005 * 200)) == 120
     required = compute_summary_min_chars(len(ocr_text))
     assert required == 120
 

@@ -20,13 +20,16 @@ def test_app_config_properties_and_validation(monkeypatch):
         "OPENAI_API_KEY": "sk-test",
         "DRIVE_INPUT_FOLDER_ID": "drive-in",
         "DRIVE_REPORT_FOLDER_ID": "drive-out",
+        "DRIVE_IMPERSONATION_USER": "impersonation@example.com",
         "INTAKE_GCS_BUCKET": "bucket-intake",
         "OUTPUT_GCS_BUCKET": "bucket-output",
         "SUMMARY_BUCKET": "bucket-output",
+        "CMEK_KEY_NAME": "projects/proj/locations/us/keyRings/ring/cryptoKeys/key",
     }
     for key, value in required_env.items():
         monkeypatch.setenv(key, value)
 
+    monkeypatch.setenv("GOOGLE_APPLICATION_CREDENTIALS", '{"type":"service_account"}')
     monkeypatch.setenv("USE_STRUCTURED_SUMMARISER", "false")
     monkeypatch.setenv("RUN_PIPELINE_INLINE", "off")
 
@@ -60,9 +63,12 @@ def test_get_config_cache(monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "sk")
     monkeypatch.setenv("DRIVE_INPUT_FOLDER_ID", "drive-in")
     monkeypatch.setenv("DRIVE_REPORT_FOLDER_ID", "drive-out")
+    monkeypatch.setenv("DRIVE_IMPERSONATION_USER", "impersonation@example.com")
     monkeypatch.setenv("INTAKE_GCS_BUCKET", "intake")
     monkeypatch.setenv("OUTPUT_GCS_BUCKET", "output")
     monkeypatch.setenv("SUMMARY_BUCKET", "output")
+    monkeypatch.setenv("CMEK_KEY_NAME", "projects/test/locations/us/keyRings/test/cryptoKeys/test")
+    monkeypatch.setenv("GOOGLE_APPLICATION_CREDENTIALS", '{"type":"service_account"}')
 
     get_config.cache_clear()
     first = get_config()

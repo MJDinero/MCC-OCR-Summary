@@ -35,18 +35,18 @@
 ## Drive Remediation (2025-10-17)
 - Updated Cloud Run env vars to target **MedCostContain – Team Drive** (`DRIVE_SHARED_DRIVE_ID=0AFPP3mbSAh_oUk9PVA`) and the **Output Folder** (`DRIVE_REPORT_FOLDER_ID=1eyMO0126VfLBK3bBQEpWlVOL6tWxriCE`).
 - Enabled domain-wide delegation for `mcc-orch-sa@quantify-agent.iam.gserviceaccount.com` and set `DRIVE_IMPERSONATION_USER=Matt@moneymediausa.com` so uploads run under a user with quota.
-- Service account key stored at `/secrets/mcc-orch-sa-key.json` rotated and protected with CMEK; Cloud Run mount updated accordingly.
+- Service account key stored at `/secrets/mcc_orch_sa_key.json` rotated and protected with CMEK; Cloud Run mount updated accordingly.
 - Outbound command reference:
   ```
   gcloud run services update mcc-ocr-summary \
     --region us-central1 \
-    --set-env-vars "DRIVE_SHARED_DRIVE_ID=0AFPP3mbSAh_oUk9PVA" \
-    --set-env-vars "DRIVE_REPORT_FOLDER_ID=1eyMO0126VfLBK3bBQEpWlVOL6tWxriCE" \
-    --set-env-vars "DRIVE_IMPERSONATION_USER=Matt@moneymediausa.com" \
-    --set-env-vars "PROJECT_ID=quantify-agent" \
-    --set-env-vars "DOC_AI_LOCATION=us" \
-    --set-env-vars "DOC_AI_OCR_PROCESSOR_ID=21c8becfabc49de6" \
-    --set-env-vars "GOOGLE_APPLICATION_CREDENTIALS=/secrets/mcc-orch-sa-key.json"
+    --update-env-vars "DRIVE_SHARED_DRIVE_ID=0AFPP3mbSAh_oUk9PVA" \
+    --update-env-vars "DRIVE_REPORT_FOLDER_ID=1eyMO0126VfLBK3bBQEpWlVOL6tWxriCE" \
+    --update-env-vars "DRIVE_IMPERSONATION_USER=Matt@moneymediausa.com" \
+    --update-env-vars "PROJECT_ID=quantify-agent" \
+    --update-env-vars "DOC_AI_LOCATION=us" \
+    --update-env-vars "DOC_AI_OCR_PROCESSOR_ID=21c8becfabc49de6" \
+    --update-env-vars "GOOGLE_APPLICATION_CREDENTIALS=/secrets/mcc_orch_sa_key.json"
   ```
 - Validation status (2025-10-17 18:44Z):
   * `/process` invocation returns HTTP 500 because Cloud Storage upload fails with `403 Permission denied on Cloud KMS key`
@@ -71,7 +71,20 @@
   * Environment updates include `MIN_SUMMARY_DYNAMIC_RATIO=0.005` to accommodate OpenAI output length.
 - Validation:
   * `curl -X POST "$RUN_URL/process"` with ENTTEC PDF → **HTTP 200** (~150 s end-to-end).
-  * Drive upload observed: `summary-34abeb11b01547caa6e2f229d145b884.pdf` in folder `130jJzsl3OBzMD8weGfBOaXikfEnD2KVg` (shared drive `0AFPP3mbSAh_oUk9PVA`).
+  * Drive upload observed: `summary-34abeb11b01547caa6e2f229d145b884.pdf` in folder `1eyMO0126VfLBK3bBQEpWlVOL6tWxriCE` (shared drive `0AFPP3mbSAh_oUk9PVA`).
   * Cloud Logging access for `mcc-orch-sa` still denied (`Permission denied for all log views`); IAM elevation required for future log pulls.
 - Release:
   * Tag `v1.1.2` pushed to origin after successful deployment.
+
+## Release Readiness (2025-10-21)
+- Completed Phase 4 deployment hardening:
+  * Cloud Build `f9f598e6-1e7e-4243-a4ae-cbc7e5fbf717` produced image `us-central1-docker.pkg.dev/quantify-agent/mcc/mcc-ocr-summary:v1.3.0-20251021071703`.
+  * Cloud Run revision `mcc-ocr-summary-00150-gjt` serving 100% traffic at `https://mcc-ocr-summary-6vupjpy5la-uc.a.run.app`.
+- End-to-end `process_drive` validation (file `1ZFra9EN0jS8wTS4dcW7deypxnVggb8vS`) returned HTTP 200 with Drive upload `1qZRslTJBPKYI-YNotZYMoJcM_8AYQc7e`. Supervisor emitted length warnings only (`supervisor_passed=false`).
+- Structured logging confirmed for Drive/DocAI/OpenAI/PDF events (e.g., `drive_upload_success`, `docai_call_failure`, `docai_call_success`, `pdf_writer_success`, `process_complete`).
+- Documentation refreshed: health checks now recommend hitting `/`, new runbook in `TROUBLESHOOTING.md`, README observability notes include `DEBUG` toggle and log query hints.
+- Regression suite: `python3 -m pytest tests/test_main_integration.py tests/test_pipeline_endpoints.py tests/test_docai_batch_integration.py tests/test_large_pdf_split_integration.py --maxfail=1 --disable-warnings --no-cov` (9 passed).
+- Pending follow-ups:
+  * Tune supervisor thresholds for ultra-large summaries (currently flagged but non-blocking).
+  * Update monitoring dashboards with structured-log widgets (planned in Phase 5).
+  * Tag release as `v1.3.0-stable` once docs are merged.

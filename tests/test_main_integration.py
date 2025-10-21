@@ -57,13 +57,13 @@ def test_process_routes(monkeypatch):
             "Legal / Notes": "N/A",
         }
 
-    app.state.ocr_service.process = lambda __: {  # type: ignore[attr-defined]
+    app.state.ocr_service.process = lambda __, **kwargs: {  # type: ignore[attr-defined]
         "text": "A" * 400,
         "pages": [{"text": "A" * 200}],
     }
     app.state.summariser.summarise_async = _fake_summary  # type: ignore[attr-defined]
-    app.state.drive_client.download_pdf = lambda file_id: SAMPLE_PDF if file_id == "drive-file" else SAMPLE_PDF  # type: ignore[attr-defined]
-    app.state.drive_client.upload_pdf = lambda payload, folder_id=None: "uploaded-id"  # type: ignore[attr-defined]
+    app.state.drive_client.download_pdf = lambda file_id, log_context=None: SAMPLE_PDF if file_id == "drive-file" else SAMPLE_PDF  # type: ignore[attr-defined]
+    app.state.drive_client.upload_pdf = lambda payload, folder_id=None, log_context=None: "uploaded-id"  # type: ignore[attr-defined]
 
     client = TestClient(app)
 

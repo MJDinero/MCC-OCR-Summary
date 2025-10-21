@@ -9,6 +9,7 @@ import secrets
 import time
 import uuid
 from typing import Any, Dict, Mapping, MutableMapping
+import os
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
@@ -261,7 +262,9 @@ async def ingest(request: Request):
         }
         log_extra["duplicate"] = True
         _INGEST_LOG.info("ingest_duplicate", extra=log_extra)
-        return JSONResponse(job_public_view(job), status_code=200)
+        response_payload = job_public_view(job)
+        response_payload["duplicate"] = True
+        return JSONResponse(response_payload, status_code=412)
     else:
         _INGEST_LOG.info("ingest_received", extra=log_extra)
 
@@ -276,15 +279,46 @@ async def ingest(request: Request):
             "object": gcs_obj.name,
             "trace_id": trace_id,
             "job_id": job.job_id,
+            "object_uri": job.object_uri,
+            "object_name": gcs_obj.name,
+            "request_id": job.request_id,
+            "intake_bucket": cfg.intake_gcs_bucket,
+            "output_bucket": cfg.output_gcs_bucket,
+            "summary_bucket": cfg.summary_bucket,
+            "summary_schema_version": cfg.summary_schema_version,
         }
-        if callable(dispatcher):
-            launch_result = dispatcher(
-                request_id=request_id,
-                parameters=workflow_parameters,
-                trace_context=trace_header,
-            )
+        pipeline_base = os.getenv("PIPELINE_SERVICE_BASE_URL")
+        if pipeline_base:
+            workflow_parameters["pipeline_service_base_url"] = pipeline_base
+        dlq_topic = os.getenv("PIPELINE_DLQ_TOPIC")
+        if dlq_topic:
+            workflow_parameters["pipeline_dlq_topic"] = dlq_topic
+        summariser_job = os.getenv("SUMMARISER_JOB_NAME")
+        if summariser_job:
+            workflow_parameters["summariser_job_name"] = summariser_job
+        pdf_job = os.getenv("PDF_JOB_NAME")
+        if pdf_job:
+            workflow_parameters["pdf_job_name"] = pdf_job
+        internal_token = getattr(request.app.state, "internal_event_token", None)
+        if internal_token:
+            workflow_parameters["internal_event_token"] = internal_token
+        if payload.source:
+            workflow_parameters["source"] = payload.source
+        if payload.drive_file_id:
+            workflow_parameters["drive_file_id"] = payload.drive_file_id
+        if cfg.drive_shared_drive_id:
+            workflow_parameters["drive_shared_drive_id"] = cfg.drive_shared_drive_id
+        launch_kwargs = {
+            "job": job,
+            "parameters": workflow_parameters,
+            "trace_context": trace_header,
+        }
+        if hasattr(dispatcher, "launch"):
+            launch_result = dispatcher.launch(**launch_kwargs)
+        elif callable(dispatcher):
+            launch_result = dispatcher(**launch_kwargs)
         else:
-            raise TypeError("workflow_launcher is not callable")
+            raise TypeError("workflow_launcher does not support launch(job=...)")
 
         if launch_result:
             execution_name = launch_result

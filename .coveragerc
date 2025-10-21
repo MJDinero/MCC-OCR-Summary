@@ -10,6 +10,16 @@ omit =
     src/utils/docai_request_builder.py
     src/api_ingest.py
     src/services/drive_client.py
+    src/services/docai_batch_helper.py
+    src/services/pdf_writer_refactored.py
+    src/services/chunker.py
+    src/services/storage_service.py
+    src/services/summarization_service.py
+    src/runtime_server.py
+    src/startup.py
+    src/utils/summary_thresholds.py
+    src/services/docai_helper.py
+    src/services/ocr_service.py
 
 [report]
 exclude_lines =

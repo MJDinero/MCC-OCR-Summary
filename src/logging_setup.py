@@ -15,6 +15,29 @@ from typing import Any, Dict
 
 request_id_var: ContextVar[str | None] = ContextVar("request_id", default=None)
 
+_STANDARD_FIELDS = {
+    "name",
+    "msg",
+    "args",
+    "levelname",
+    "levelno",
+    "pathname",
+    "filename",
+    "module",
+    "exc_info",
+    "exc_text",
+    "stack_info",
+    "lineno",
+    "funcName",
+    "created",
+    "msecs",
+    "relativeCreated",
+    "thread",
+    "threadName",
+    "processName",
+    "process",
+}
+
 
 class JsonFormatter(logging.Formatter):
     def format(self, record: logging.LogRecord) -> str:  # noqa: D401
@@ -29,12 +52,22 @@ class JsonFormatter(logging.Formatter):
             data["request_id"] = rid
         if record.exc_info:
             data["exc_info"] = self.formatException(record.exc_info)
+        for key, value in record.__dict__.items():
+            if key in _STANDARD_FIELDS or key.startswith("_"):
+                continue
+            data[key] = value
         return json.dumps(data, ensure_ascii=False)
 
 
-def configure_logging(level: int = logging.INFO) -> None:
+def configure_logging(level: int = logging.INFO, force: bool = False) -> None:
     root = logging.getLogger()
-    if any(isinstance(h, logging.StreamHandler) for h in root.handlers):  # already configured
+    if force:
+        for handler in list(root.handlers):
+            root.removeHandler(handler)
+    elif any(isinstance(h, logging.StreamHandler) for h in root.handlers):  # already configured
+        root.setLevel(level)
+        for handler in root.handlers:
+            handler.setLevel(level)
         return
     handler = logging.StreamHandler(sys.stdout)
     handler.setFormatter(JsonFormatter())

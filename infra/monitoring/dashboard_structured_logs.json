@@ -1,0 +1,45 @@
+{
+  "displayName": "MCC OCR Structured Logs",
+  "dashboardFilters": [],
+  "gridLayout": {
+    "columns": 2,
+    "widgets": [
+      {
+        "title": "Drive Upload Success (60m)",
+        "logsPanel": {
+          "filter": "resource.type=\"cloud_run_revision\" AND resource.labels.service_name=\"mcc-ocr-summary\" AND jsonPayload.event=\"drive_upload_success\"",
+          "resourceNames": [
+            "projects/quantify-agent"
+          ]
+        }
+      },
+      {
+        "title": "Drive / DocAI Failures (60m)",
+        "logsPanel": {
+          "filter": "resource.type=\"cloud_run_revision\" AND resource.labels.service_name=\"mcc-ocr-summary\" AND (jsonPayload.event=\"drive_upload_failure\" OR jsonPayload.event=\"docai_call_failure\" OR severity=\"ERROR\")",
+          "resourceNames": [
+            "projects/quantify-agent"
+          ]
+        }
+      },
+      {
+        "title": "End-to-End Process Complete (trace drilldown)",
+        "logsPanel": {
+          "filter": "resource.type=\"cloud_run_revision\" AND resource.labels.service_name=\"mcc-ocr-summary\" AND jsonPayload.event=\"process_complete\"",
+          "resourceNames": [
+            "projects/quantify-agent"
+          ]
+        }
+      },
+      {
+        "title": "Supervisor Warnings",
+        "logsPanel": {
+          "filter": "resource.type=\"cloud_run_revision\" AND resource.labels.service_name=\"mcc-ocr-summary\" AND jsonPayload.event=\"supervisor_basic_check_failed\"",
+          "resourceNames": [
+            "projects/quantify-agent"
+          ]
+        }
+      }
+    ]
+  }
+}

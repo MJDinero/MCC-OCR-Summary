@@ -4,6 +4,7 @@ from types import SimpleNamespace
 import pytest
 
 from src.services import drive_client
+from src.errors import DriveServiceError
 from src.services.metrics import NullMetrics, PrometheusMetrics
 from src.services import metrics as metrics_module
 
@@ -62,7 +63,7 @@ class _DriveUploadService:
 def test_download_pdf_stubs(monkeypatch, fail_shared_drive):
     pdf_bytes = b"%PDF-1.4\n..."
     service = _DriveDownloadService(pdf_bytes, fail_shared_drive=fail_shared_drive)
-    monkeypatch.setattr(drive_client, '_drive_service', lambda: service)
+    monkeypatch.setattr(drive_client, '_drive_service', lambda log_context=None: service)
     monkeypatch.setattr(drive_client, 'MediaIoBaseDownload', _DownloadStub)
     result = drive_client.download_pdf('file-123')
     assert result == pdf_bytes
@@ -71,11 +72,11 @@ def test_download_pdf_stubs(monkeypatch, fail_shared_drive):
 @pytest.mark.parametrize('fail_shared_drive', [False, True])
 def test_upload_pdf_stubs(monkeypatch, fail_shared_drive):
     service = _DriveUploadService(fail_shared_drive=fail_shared_drive)
-    monkeypatch.setattr(drive_client, '_drive_service', lambda: service)
+    monkeypatch.setattr(drive_client, '_drive_service', lambda log_context=None: service)
     monkeypatch.setattr(
         drive_client,
         '_resolve_folder_metadata',
-        lambda fid: {"id": fid, "driveId": "0AFPP3mbSAh_oUk9PVA"},
+        lambda fid, log_context=None: {"id": fid, "driveId": "0AFPP3mbSAh_oUk9PVA"},
     )
 
     class _UploadStub:
@@ -103,11 +104,11 @@ def test_upload_pdf_stubs(monkeypatch, fail_shared_drive):
 
 def test_upload_pdf_normalises_folder_id(monkeypatch):
     service = _DriveUploadService(fail_shared_drive=False)
-    monkeypatch.setattr(drive_client, '_drive_service', lambda: service)
+    monkeypatch.setattr(drive_client, '_drive_service', lambda log_context=None: service)
     monkeypatch.setattr(
         drive_client,
         '_resolve_folder_metadata',
-        lambda fid: {"id": fid, "driveId": "0AFPP3mbSAh_oUk9PVA"},
+        lambda fid, log_context=None: {"id": fid, "driveId": "0AFPP3mbSAh_oUk9PVA"},
     )
 
     class _Cfg:
@@ -134,11 +135,11 @@ def test_upload_pdf_normalises_folder_id(monkeypatch):
 
 def test_upload_pdf_supports_json_secret(monkeypatch):
     service = _DriveUploadService(fail_shared_drive=False)
-    monkeypatch.setattr(drive_client, '_drive_service', lambda: service)
+    monkeypatch.setattr(drive_client, '_drive_service', lambda log_context=None: service)
     monkeypatch.setattr(
         drive_client,
         '_resolve_folder_metadata',
-        lambda fid: {"id": fid, "driveId": "0AFPP3mbSAh_oUk9PVA"},
+        lambda fid, log_context=None: {"id": fid, "driveId": "0AFPP3mbSAh_oUk9PVA"},
     )
 
     class _Cfg:
@@ -164,7 +165,7 @@ def test_upload_pdf_supports_json_secret(monkeypatch):
 
 
 def test_download_pdf_validations(monkeypatch):
-    with pytest.raises(ValueError):
+    with pytest.raises(DriveServiceError):
         drive_client.download_pdf('')
 
     class _BadService:
@@ -174,14 +175,14 @@ def test_download_pdf_validations(monkeypatch):
         def get_media(self, fileId: str, supportsAllDrives: bool = False):
             return SimpleNamespace(payload=b'invalid')
 
-    monkeypatch.setattr(drive_client, '_drive_service', lambda: _BadService())
+    monkeypatch.setattr(drive_client, '_drive_service', lambda log_context=None: _BadService())
     monkeypatch.setattr(drive_client, 'MediaIoBaseDownload', _DownloadStub)
-    with pytest.raises(ValueError):
+    with pytest.raises(DriveServiceError):
         drive_client.download_pdf('file-abc')
 
 
 def test_upload_pdf_validations(monkeypatch):
-    with pytest.raises(ValueError):
+    with pytest.raises(DriveServiceError):
         drive_client.upload_pdf(b'not-pdf', 'name.pdf')
 
     class _Cfg:
@@ -194,7 +195,7 @@ def test_upload_pdf_validations(monkeypatch):
     monkeypatch.setattr(
         drive_client,
         '_resolve_folder_metadata',
-        lambda fid: {"id": fid, "driveId": "0AFPP3mbSAh_oUk9PVA"},
+        lambda fid, log_context=None: {"id": fid, "driveId": "0AFPP3mbSAh_oUk9PVA"},
     )
     with pytest.raises(RuntimeError):
         drive_client.upload_pdf(b"%PDF-1.4\n...", 'name.pdf')

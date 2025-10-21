@@ -93,7 +93,8 @@ The FastAPI application (see `src/main.py` and `src/api/`) exposes the following
 
 - `POST /process` – Accepts a multipart form upload named `file`, performs OCR + summarisation, returns the generated PDF bytes.
 - `GET /process_drive?file_id=<id>` – Downloads the specified Drive file, runs the same summarisation pipeline, and responds with JSON containing the Drive report ID.
-- `GET /healthz`, `/readyz`, `/health`, `/` – Lightweight health checks used by Cloud Run and load balancers.
+- `GET /` – Primary liveness endpoint (returns `{"status":"ok"}`).
+- `GET /health`, `/readyz`, `/healthz` – Legacy health aliases. When accessed through the public Cloud Run domain they surface the GFE 404 page; internal probes should continue to target `/healthz`.
 
 All routes are registered unconditionally during startup; `src/runtime_server.py` honours the optional `FASTAPI_APP` environment variable when launching Uvicorn (defaults to `src.main:create_app`).
 
@@ -126,7 +127,7 @@ All services consume the same config module, enabling override via `ConfigMap` o
 1. Grant `mcc-orch-sa@quantify-agent.iam.gserviceaccount.com` **Content manager** access to the shared drive.
 2. In Google Workspace Admin Console → Security → API controls → Domain-wide delegation, authorise the service account client ID with scope `https://www.googleapis.com/auth/drive`.
 3. Set `DRIVE_IMPERSONATION_USER=Matt@moneymediausa.com` for Cloud Run, ensuring the runtime impersonates a user with quota.
-4. Rotate the service-account key stored at `/secrets/mcc-orch-sa-key.json`; protect it with CMEK (Secret Manager supports CMEK on create/update).
+4. Rotate the service-account key stored at `/secrets/mcc_orch_sa_key.json`; protect it with CMEK (Secret Manager supports CMEK on create/update).
 
 ### Cloud Run Environment Mapping
 
@@ -141,9 +142,9 @@ Provision the service with:
 - `REGION=us-central1`
 - `DOC_AI_LOCATION=us`
 - `CMEK_KEY_NAME=projects/quantify-agent/locations/us/keyRings/mcc-keyring/cryptoKeys/mcc-ocr-summary`
-- `GOOGLE_APPLICATION_CREDENTIALS=/tmp/google-application-credentials.json`
+- `GOOGLE_APPLICATION_CREDENTIALS=/secrets/mcc_orch_sa_key.json`
 
-Apply these with `gcloud run services update mcc-ocr-summary --region us-central1 --set-env-vars ...` before triggering deployments.
+Apply these with `gcloud run services update mcc-ocr-summary --region us-central1 --update-env-vars ...` before triggering deployments.
 
 ---
 
@@ -160,16 +161,16 @@ Apply these with `gcloud run services update mcc-ocr-summary --region us-central
 ## Observability
 
 - **Metrics**: Prometheus instrumentation is enabled by default (`/metrics` endpoint attached via `PrometheusMetrics.instrument_app`). Latency, throughput, DLQ counters, and job completions are emitted per stage.
-- **Logs**: Structured JSON logs now include `stage`, `service`, `latency_ms`, `error_type`, and `redaction_applied` to streamline SRE triage.
+- **Logs**: Structured JSON logs are emitted via `structured_log(...)`, adding `event`, `trace_id`, `phase`, `job_id`, and component-specific metadata for Drive, DocAI, OpenAI, PDF, and Supervisor flows. Set `DEBUG=true` (or launch with `--debug`) to increase verbosity during incident response.
 - **Monitoring Assets**: Dashboards in `infra/monitoring/dashboard_pipeline_latency.json` and `infra/monitoring/dashboard_throughput_cpu_mem.json` visualise latency distributions and Cloud Run CPU/memory. Alert policies (`alert_dlq_backlog.json`, `alert_5xx_rate.json`, `alert_slo_breach.json`) enforce DLQ backlog, 5xx error rate, and pipeline SLOs.
-- **Verification**: After deployment, run `gcloud monitoring dashboards create` / `alert-policies create` with the JSON manifests and confirm `/metrics` exposes Prometheus samples.
+- **Verification**: After deployment, run `gcloud monitoring dashboards create` / `alert-policies create` with the JSON manifests and confirm `/metrics` exposes Prometheus samples. Cloud Logging queries can filter on `jsonPayload.event` (e.g. `drive_upload_success`, `docai_call_failure`) to trace a request end-to-end.
 
 ## Runtime Tuning
 
 - **Worker Auto-sizing**: `src/runtime_server.py` computes `UVICORN_WORKERS` from available CPU cores (overridable via env) before starting Uvicorn.
 - **Cloud Run Scaling**: `cloudbuild.yaml` deploys each revision with explicit concurrency & max instance caps (`_OCR_CONCURRENCY`, `_SUMMARY_CONCURRENCY`, `_STORAGE_CONCURRENCY`).
 - **Temp Cleanup**: Batch OCR helper reuses CMEK-backed buckets and cleans transient uploads after completion.
-- **Summary Floor**: `src/utils/summary_thresholds.py` enforces `max(120, int(0.35 * ocr_len))`; adjust `MIN_SUMMARY_DYNAMIC_RATIO` for ratio tuning. The base floor clamps to `120` even if `MIN_SUMMARY_CHARS` is higher, preventing short-doc rejections.
+- **Summary Floor**: `src/utils/summary_thresholds.py` enforces `max(120, int(0.005 * ocr_len))`; adjust `MIN_SUMMARY_DYNAMIC_RATIO` for ratio tuning. The base floor clamps to `120` even if `MIN_SUMMARY_CHARS` is higher, preventing short-doc rejections.
 
 ---
 
@@ -204,10 +205,7 @@ Re-run benchmarks after model or configuration updates. Results feed the README 
 
 ## Troubleshooting
 
-- **DLQ Growth** – Inspect the relevant DLQ subscription (`ocr_dlq`, `summary_dlq`, `storage_dlq`). Replay by re-publishing the original message with a new `trace_id`.
-- **Context Budget Exceeded** – Lower `MAX_WORDS` or reduce `CHUNK_SIZE`; the chunker is configurable without redeployment.
-- **Document AI Throttling** – Increase exponential backoff parameters in `OCRService._process_with_retry` or scale concurrency via Pub/Sub subscription settings.
-- **LLM Timeouts** – Adjust `MAX_OUTPUT_TOKENS` and `TEMPERATURE`, or switch the `LanguageModelClient` implementation to Vertex AI streaming.
+Common production runbooks (health checks, IAM access, structured log search patterns, and supervisor tuning) are documented in [TROUBLESHOOTING.md](TROUBLESHOOTING.md). Refer there for curl snippets, gcloud commands, and remediation tips observed during the v1.3.0 release hardening.
 
 For further details, see `AGENTS.md` and `audit/technical_audit_v11j.md`.
 

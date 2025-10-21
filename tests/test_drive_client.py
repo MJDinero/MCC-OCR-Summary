@@ -1,9 +1,13 @@
-from typing import Any
 import json
+import logging
+from typing import Any
 
 import pytest
 
 from src.services import drive_client as dc
+from src.errors import DriveServiceError
+
+# pylint: disable=protected-access,unused-argument
 
 
 class _DummyDownloader:
@@ -82,7 +86,7 @@ class _FakeMediaUpload:
 
 
 @pytest.fixture(autouse=True)
-def patch_google(monkeypatch, tmp_path):
+def patch_google(monkeypatch):
     # patch builder
     monkeypatch.setenv('DRIVE_REPORT_FOLDER_ID', 'out-folder')
     monkeypatch.setenv('DRIVE_SHARED_DRIVE_ID', '0AFPP3mbSAh_oUk9PVA')
@@ -122,7 +126,7 @@ def patch_google(monkeypatch, tmp_path):
     monkeypatch.setattr(dc, 'build', fake_build)
     monkeypatch.setattr(dc, 'MediaIoBaseDownload', _FakeMediaDownload)
     monkeypatch.setattr(dc, 'MediaIoBaseUpload', _FakeMediaUpload)
-    monkeypatch.setattr(dc, '_resolve_folder_metadata', lambda fid: {"id": fid, "driveId": "0AFPP3mbSAh_oUk9PVA"})
+    monkeypatch.setattr(dc, '_resolve_folder_metadata', lambda fid, log_context=None: {"id": fid, "driveId": "0AFPP3mbSAh_oUk9PVA"})
     yield
 
 
@@ -137,7 +141,7 @@ def test_download_pdf_not_pdf(monkeypatch):
     def fake_build(serviceName, version, credentials=None, cache_discovery=False):  # noqa: N802
         return _Service(pdf_bytes)
     monkeypatch.setattr(dc, 'build', fake_build)
-    with pytest.raises(ValueError):
+    with pytest.raises(DriveServiceError):
         dc.download_pdf('file123')
 
 
@@ -154,5 +158,20 @@ def test_upload_pdf_success():
 
 
 def test_upload_pdf_reject_non_pdf():
-    with pytest.raises(ValueError):
+    with pytest.raises(DriveServiceError):
         dc.upload_pdf(b'notpdf', 'report.pdf')
+
+
+def test_download_pdf_logs_failure(monkeypatch, caplog):
+    pdf_bytes = b"NOTPDF"
+
+    def fake_build(serviceName, version, credentials=None, cache_discovery=False):  # noqa: N802
+        return _Service(pdf_bytes)
+
+    monkeypatch.setattr(dc, 'build', fake_build)
+    caplog.set_level(logging.ERROR, logger='drive_client')
+    with pytest.raises(DriveServiceError):
+        dc.download_pdf('file123', log_context={'trace_id': 'trace-1'})
+    events = [record for record in caplog.records if getattr(record, 'event', '') == 'drive_download_failure']
+    assert events
+    assert getattr(events[0], 'trace_id', None) == 'trace-1'

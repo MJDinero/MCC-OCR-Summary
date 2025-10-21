@@ -1,11 +1,15 @@
-import pytest
+import logging
 from types import SimpleNamespace
+
+import pytest
 from google.api_core import exceptions as gexc
 
 from src.services.docai_helper import OCRService, run_splitter, run_batch_ocr
 from src.errors import OCRServiceError, ValidationError
 from src.config import AppConfig, get_config
 from src.services.pipeline import InMemoryStateStore, PipelineJobCreate, PipelineStatus
+
+# pylint: disable=unused-argument,protected-access
 
 VALID_PDF = b"%PDF-1.4\n1 0 obj<<>>endobj\ntrailer<<>>\n%%EOF"
 
@@ -59,6 +63,16 @@ def test_validation_error_propagates():
     svc = OCRService("pid", config=make_cfg(), client_factory=lambda _ep: client)
     with pytest.raises(ValidationError):
         svc.process(b"not a pdf")
+
+
+def test_docai_logs_success(caplog):
+    client = DummyClient([{"text": "Hello", "pages": [{"text": "Hello"}]}])
+    svc = OCRService("pid", config=make_cfg(), client_factory=lambda _ep: client)
+    caplog.set_level(logging.INFO, logger="ocr_service")
+    result = svc.process(VALID_PDF, trace_id="trace-xyz")
+    assert result["text"] == "Hello"
+    events = {record.event for record in caplog.records if getattr(record, 'event', None)}
+    assert {"docai_call_start", "docai_call_success"}.issubset(events)
 
 
 def test_run_splitter_updates_state_and_manifest(monkeypatch):

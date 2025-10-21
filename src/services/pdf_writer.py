@@ -12,6 +12,7 @@ from io import BytesIO
 import logging
 
 from src.errors import PDFGenerationError
+from src.utils.logging_utils import structured_log
 
 _LOG = logging.getLogger("pdf_writer")
 
@@ -30,8 +31,8 @@ class PDFBackend(Protocol):  # pragma: no cover - interface only
 class ReportLabBackend:
     def build(self, title: str, sections: Sequence[tuple[str, str]]) -> bytes:  # pragma: no cover - depends on external lib
         try:  # noqa: WPS501
-            from reportlab.lib.pagesizes import LETTER  # type: ignore
-            from reportlab.pdfgen import canvas  # type: ignore
+            from reportlab.lib.pagesizes import LETTER  # type: ignore  # pylint: disable=import-error
+            from reportlab.pdfgen import canvas  # type: ignore  # pylint: disable=import-error
         except Exception as exc:  # pragma: no cover
             raise PDFGenerationError(f"reportlab not installed: {exc}") from exc
         buf = BytesIO()
@@ -167,7 +168,7 @@ class PDFWriter:
             med_list = [s for s in (summary.get("_medications_list", "").splitlines()) if s.strip()]
             any_lists = any([diag_list, prov_list, med_list])
             if any_lists:
-                divider = ("\n" + ("=" * 38) + "\nStructured Indices\n" + ("=" * 38) + "\n")
+                divider = "\n" + ("=" * 38) + "\nStructured Indices\n" + ("=" * 38) + "\n"
                 sections_seq.append(("—", divider.strip()))
                 def _fmt_block(title: str, items: list[str]) -> str:
                     if not items:
@@ -176,32 +177,50 @@ class PDFWriter:
                 sections_seq.append(("Diagnoses", _fmt_block("Diagnoses", diag_list)))
                 sections_seq.append(("Providers", _fmt_block("Providers", prov_list)))
                 sections_seq.append(("Medications", _fmt_block("Medications / Prescriptions", med_list)))
-        _LOG.info(
-            "pdf_writer_started",
-            extra={
-                "sections": len(sections_seq),
-                "structured_indices": bool(sum(1 for heading, _ in sections_seq if heading in {"Diagnoses", "Providers", "Medications"})),
-            },
+        structured_log(
+            _LOG,
+            logging.INFO,
+            "pdf_writer_start",
+            sections=len(sections_seq),
+            structured_indices=bool(
+                sum(1 for heading, _ in sections_seq if heading in {"Diagnoses", "Providers", "Medications"})
+            ),
+            title=self.title,
         )
         try:
-            result = self.backend.build(self.title, sections_seq)
+            result = self.backend.build(self.title, sections_seq)  # pylint: disable=assignment-from-no-return
             if _PDF_CALLS:
                 _PDF_CALLS.labels(status="success").inc()
-            _LOG.info(
-                "pdf_writer_complete",
-                extra={
-                    "bytes": len(result),
-                    "sections": len(sections_seq),
-                },
+            structured_log(
+                _LOG,
+                logging.INFO,
+                "pdf_writer_success",
+                bytes=len(result),
+                sections=len(sections_seq),
+                title=self.title,
             )
             return result
         except PDFGenerationError:
             if _PDF_CALLS:
                 _PDF_CALLS.labels(status="error").inc()
+            structured_log(
+                _LOG,
+                logging.ERROR,
+                "pdf_writer_failure",
+                error="known_pdf_generation_error",
+                title=self.title,
+            )
             raise
         except Exception as exc:
             if _PDF_CALLS:
                 _PDF_CALLS.labels(status="unexpected").inc()
+            structured_log(
+                _LOG,
+                logging.ERROR,
+                "pdf_writer_failure",
+                error=str(exc),
+                title=self.title,
+            )
             raise PDFGenerationError(f"Failed generating PDF: {exc}") from exc
 
 

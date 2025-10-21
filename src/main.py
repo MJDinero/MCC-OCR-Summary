@@ -20,23 +20,23 @@ from src.services.docai_helper import OCRService
 from src.services.metrics import PrometheusMetrics, NullMetrics
 from src.services.pdf_writer import MinimalPDFBackend, PDFWriter
 from src.services.pipeline import create_state_store_from_env, create_workflow_launcher_from_env
-
-if TYPE_CHECKING:  # pragma: no cover - type checking only
-    from src.services.pipeline import PipelineStateStore, WorkflowLauncher
 from src.services.summariser import OpenAIBackend, StructuredSummariser, Summariser
 from src.startup import hydrate_google_credentials_file
 from src.utils.mode_manager import is_mvp
 from src.utils.secrets import resolve_secret_env
 from src.config import get_config
+from src.utils.logging_utils import structured_log
 
-# Force stdout logging early (before configure_logging)
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s %(levelname)s %(name)s %(message)s",
-    stream=sys.stdout,
-    force=True,
+if TYPE_CHECKING:  # pragma: no cover - type checking only
+    from src.services.pipeline import PipelineStateStore, WorkflowLauncher
+
+DEBUG_ENABLED = (
+    any(arg == "--debug" for arg in sys.argv)
+    or os.getenv("DEBUG", "false").strip().lower() in {"1", "true", "yes", "on"}
 )
-logging.info("✅ Logging initialised (stdout)")
+LOG_LEVEL = logging.DEBUG if DEBUG_ENABLED else logging.INFO
+configure_logging(level=LOG_LEVEL, force=True)
+structured_log(logging.getLogger("startup"), logging.INFO, "service_bootstrap", debug_enabled=DEBUG_ENABLED)
 
 hydrate_google_credentials_file()
 
@@ -57,12 +57,22 @@ class _DriveClientAdapter:
         self._stub = stub
         self._config = config
 
-    def upload_pdf(self, file_bytes: bytes, folder_id: str | None = None) -> str:
-        report_name = f"summary-{os.getenv('REPORT_PREFIX', '')}{secrets.token_hex(8)}.pdf"
+    def upload_pdf(
+        self,
+        file_bytes: bytes,
+        folder_id: str | None = None,
+        *,
+        log_context: dict[str, Any] | None = None,
+    ) -> str:
+        report_name = f"summary-{os.getenv('REPORT_PREFIX', '')}{secrets.token_hex(8)}.pdf"  # pylint: disable=no-member
         if self._stub:
-            _API_LOG.info(
+            structured_log(
+                _API_LOG,
+                logging.INFO,
                 "drive_upload_stub",
-                extra={"report_name": report_name, "folder_id": folder_id, "bytes": len(file_bytes)},
+                report_name=report_name,
+                folder_id=folder_id,
+                bytes=len(file_bytes),
             )
             return f"stub-{report_name}"
         parent_folder = folder_id or self._config.drive_report_folder_id
@@ -70,7 +80,7 @@ class _DriveClientAdapter:
             file_bytes,
             report_name,
             parent_folder_id=parent_folder,
-            log_context={"component": "process_api"},
+            log_context=(log_context or {}) | {"component": "process_api"},
         )
 
     def __getattr__(self, item: str) -> Any:  # pragma: no cover - passthrough to legacy helpers
@@ -78,7 +88,6 @@ class _DriveClientAdapter:
 
 
 def _build_summariser(stub_mode: bool, *, cfg) -> Any:
-    ocr_service: Any
     if stub_mode:
 
         class _StubSummariser:
@@ -143,16 +152,15 @@ def create_app() -> FastAPI:
     if stub_mode:
 
         class _StubOCRService:
-            def process(self, _file_bytes: bytes) -> dict[str, Any]:
+            def process(self, _file_bytes: bytes, **_kwargs: Any) -> dict[str, Any]:
                 return {"text": "", "pages": []}
 
             def close(self) -> None:
                 return None
 
-        ocr_service = _StubOCRService()
+        app.state.ocr_service = _StubOCRService()
     else:
-        ocr_service = OCRService(processor_id=cfg.doc_ai_processor_id, config=cfg)  # type: ignore[assignment]
-    app.state.ocr_service = ocr_service
+        app.state.ocr_service = OCRService(processor_id=cfg.doc_ai_processor_id, config=cfg)  # type: ignore[assignment]
 
     app.state.summariser = _build_summariser(stub_mode, cfg=cfg)
     app.state.pdf_writer = PDFWriter(MinimalPDFBackend())

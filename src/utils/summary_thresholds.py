@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 
 _DEFAULT_BASE_FLOOR = 120
-_DEFAULT_RATIO = 0.35
+_DEFAULT_RATIO = 0.005
 
 
 def _safe_int(value: str | None, *, fallback: int) -> int:

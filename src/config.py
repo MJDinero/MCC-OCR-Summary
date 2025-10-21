@@ -16,7 +16,9 @@ All legacy flags (metrics, sheets, multiple processor fallbacks, CORS, etc.) rem
 """
 from __future__ import annotations
 
+import json
 import os
+from pathlib import Path
 from functools import lru_cache
 from typing import Any
 
@@ -150,6 +152,7 @@ class AppConfig(BaseSettings):
             ("output_gcs_bucket", self.output_gcs_bucket, "OUTPUT_GCS_BUCKET"),
             ("summary_bucket", self.summary_bucket, "SUMMARY_BUCKET"),
             ("cmek_key_name", self.cmek_key_name, "CMEK_KEY_NAME"),
+            ("google_application_credentials", self.google_application_credentials, "GOOGLE_APPLICATION_CREDENTIALS"),
         ]
         missing = [name for name, value, _env in required_pairs if not value]
 
@@ -172,6 +175,7 @@ class AppConfig(BaseSettings):
             "OUTPUT_GCS_BUCKET",
             "SUMMARY_BUCKET",
             "CMEK_KEY_NAME",
+            "GOOGLE_APPLICATION_CREDENTIALS",
         }
         unmet_env: list[str] = []
         for name, value, env_name in required_pairs:
@@ -186,6 +190,25 @@ class AppConfig(BaseSettings):
             raise RuntimeError("Missing required configuration values: " + ", ".join(sorted(set(missing))))
         if unmet_env:
             raise RuntimeError("Missing environment variables: " + ", ".join(sorted(set(unmet_env))))
+
+        impersonation = (self.drive_impersonation_user or "").strip()
+        if not impersonation or "@" not in impersonation:
+            raise RuntimeError("DRIVE_IMPERSONATION_USER must be a valid email address")
+
+        raw_credentials = (self.google_application_credentials or os.getenv("GOOGLE_APPLICATION_CREDENTIALS") or "").strip()
+        if not raw_credentials:
+            raise RuntimeError("GOOGLE_APPLICATION_CREDENTIALS must be configured")
+        if raw_credentials.startswith("{"):
+            try:
+                json.loads(raw_credentials)
+            except json.JSONDecodeError as exc:
+                raise RuntimeError("GOOGLE_APPLICATION_CREDENTIALS contains invalid JSON") from exc
+        else:
+            cred_path = Path(raw_credentials)
+            if not cred_path.exists():
+                raise RuntimeError(f"GOOGLE_APPLICATION_CREDENTIALS file not found at {cred_path}")
+            if not cred_path.is_file():
+                raise RuntimeError(f"GOOGLE_APPLICATION_CREDENTIALS path is not a file: {cred_path}")
 
 
 @lru_cache
