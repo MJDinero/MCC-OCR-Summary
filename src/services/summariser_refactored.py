@@ -15,6 +15,7 @@ backend implementing :class:`ChunkSummaryBackend`.
 from __future__ import annotations
 
 import argparse
+import asyncio
 import json
 import logging
 import math
@@ -517,6 +518,15 @@ class RefactoredSummariser:
             },
         )
         return display
+
+    async def summarise_async(
+        self,
+        text: str,
+        *,
+        doc_metadata: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, str]:
+        """Async compatibility wrapper used by API workflow."""
+        return await asyncio.to_thread(self.summarise, text, doc_metadata=doc_metadata)
 
     # ------------------------------------------------------------------
     # Internal helpers
