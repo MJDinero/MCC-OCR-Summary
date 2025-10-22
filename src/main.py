@@ -9,7 +9,7 @@ import socket
 import sys
 from typing import TYPE_CHECKING, Any
 
-from fastapi import APIRouter, FastAPI, Request
+from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
 from src.api.ingest import router as ingest_router
@@ -52,14 +52,6 @@ ENABLE_METRICS = not _MVP_MODE
 
 def _health_payload() -> dict[str, str]:
     return {"status": "ok"}
-
-
-def build_api_router() -> APIRouter:
-    """Create the main router with all sub-routers attached."""
-    router = APIRouter()
-    router.include_router(ingest_router, prefix="/ingest", tags=["ingest"])
-    router.include_router(process_router, prefix="/process", tags=["process"])
-    return router
 
 
 class _DriveClientAdapter:
@@ -203,7 +195,8 @@ def create_app() -> FastAPI:
         return _health_payload()
 
     # Include API routes
-    app.include_router(build_api_router())
+    app.include_router(ingest_router, prefix="/ingest", tags=["ingest"])
+    app.include_router(process_router, prefix="/process", tags=["process"])
 
     @app.on_event("startup")
     async def _startup_diag():  # pragma: no cover
