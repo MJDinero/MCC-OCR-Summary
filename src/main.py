@@ -21,8 +21,7 @@ from src.services.docai_helper import OCRService
 from src.services.metrics import PrometheusMetrics, NullMetrics
 from src.services.pdf_writer import MinimalPDFBackend, PDFWriter
 from src.services.pipeline import create_state_store_from_env, create_workflow_launcher_from_env
-from src.services.summariser import OpenAIBackend
-from src.services.summariser_refactored import RefactoredSummariser
+from src.services.summariser_refactored import OpenAIResponsesBackend, RefactoredSummariser
 from src.startup import hydrate_google_credentials_file
 from src.utils.mode_manager import is_mvp
 from src.utils.secrets import resolve_secret_env
@@ -111,7 +110,7 @@ def _build_summariser(stub_mode: bool, *, cfg) -> Any:
 
         return _StubSummariser()
 
-    backend = OpenAIBackend(
+    backend = OpenAIResponsesBackend(
         model=cfg.openai_model or "gpt-4o-mini",
         api_key=cfg.openai_api_key,
     )
