@@ -265,8 +265,8 @@ async def ingest(request: Request):
         response_payload = job_public_view(job)
         response_payload["duplicate"] = True
         return JSONResponse(response_payload, status_code=412)
-    else:
-        _INGEST_LOG.info("ingest_received", extra=log_extra)
+
+    _INGEST_LOG.info("ingest_received", extra=log_extra)
 
     execution_name: str | None = None
     try:

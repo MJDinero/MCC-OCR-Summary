@@ -10,13 +10,14 @@ from __future__ import annotations
 import io
 import json
 import logging
-import time
+import random
 import re
 import tempfile
-import random
+import time
 import uuid
-from pathlib import Path
+from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, Optional, Protocol, Sequence, cast
 
 from tenacity import retry, wait_exponential, stop_after_attempt, retry_if_exception_type
@@ -29,11 +30,7 @@ from src.config import get_config, AppConfig
 from src.utils.docai_request_builder import build_docai_request
 from src.errors import OCRServiceError, ValidationError
 from src.services.docai_batch_helper import batch_process_documents_gcs
-from src.services.pipeline import (
-    PipelineStatus,
-    PipelineStateStore,
-    create_state_store_from_env,
-)
+from src.services.pipeline import PipelineStatus, PipelineStateStore, create_state_store_from_env
 
 try:  # pragma: no cover - optional dependency fallback
     from PyPDF2 import PdfReader, PdfWriter  # type: ignore
@@ -42,7 +39,43 @@ except Exception:  # pragma: no cover - allow runtime environments without PyPDF
     PdfWriter = None  # type: ignore
 
 _LOG = logging.getLogger("ocr_service")
-DEFAULT_CHUNK_MAX_PAGES = 15
+DEFAULT_CHUNK_MAX_PAGES = 25
+FALLBACK_CHUNK_MAX_PAGES = 20
+MIN_CHUNK_MAX_PAGES = 15
+MAX_CHUNK_CONCURRENCY = 2
+MAX_CHUNK_RETRIES = 5
+_RETRYABLE_STATUS_NAMES = {
+    "STATUSCODE.RESOURCE_EXHAUSTED",
+    "STATUSCODE.UNAVAILABLE",
+    "STATUSCODE.DEADLINE_EXCEEDED",
+    "STATUSCODE.ABORTED",
+    "STATUSCODE.INTERNAL",
+}
+_RETRYABLE_HTTP_STATUSES = {429, 500, 502, 503, 504}
+
+_NOISE_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"(?im)^\s*(fax|facsimile)[: ].*$"),
+    re.compile(r"(?im)\bpage\s+\d+\b.*$"),
+    re.compile(r"(?im)\b(cpt|icd[- ]?\d*)\b.*$"),
+    re.compile(r"(?im)\bprocedure\s+code[: ]?\d+.*$"),
+    re.compile(r"(?im)\b(billed|billing|charges?)\b.*$"),
+    re.compile(r"(?im)\b(timestamps?|generated on|scanned on)\b.*$"),
+    re.compile(r"(?im)\b(npi|mrn|acct#?)\b.*$"),
+)
+_NOISE_TABLE_CHARS_RE = re.compile(r"[│║╚═╦╩╣╠┼┤├┐└┘┌─]+")
+
+
+def clean_ocr_output(raw_text: str) -> str:
+    """Strip headers, fax artifacts, billing codes, page marks, and table debris from OCR output."""
+
+    if not raw_text:
+        return ""
+    cleaned = raw_text
+    for pattern in _NOISE_PATTERNS:
+        cleaned = pattern.sub("", cleaned)
+    cleaned = _NOISE_TABLE_CHARS_RE.sub(" ", cleaned)
+    cleaned = re.sub(r"\s+", " ", cleaned)
+    return cleaned.strip()
 
 
 class _DocAIClientProtocol(Protocol):  # pragma: no cover - structural typing aid
@@ -117,6 +150,84 @@ def _split_pdf_bytes(pdf_bytes: bytes, *, max_pages: int = DEFAULT_CHUNK_MAX_PAG
     return parts
 
 
+class _ChunkPageLimitExceeded(Exception):
+    """Raised when DocAI reports PAGE_LIMIT_EXCEEDED for a chunk."""
+
+
+def _is_page_limit_error(exc: Exception) -> bool:
+    message = str(getattr(exc, "message", None) or exc)
+    return "PAGE_LIMIT_EXCEEDED" in message or "page limit" in message.lower()
+
+
+def _normalise_status_code(exc: Exception) -> tuple[str | None, int | None]:
+    """Extract textual and numeric status codes from DocAI exceptions."""
+    code = getattr(exc, "code", None)
+    code_text = str(code).upper() if code is not None else None
+    http_status: int | None = None
+    if hasattr(exc, "response") and getattr(exc, "response", None) is not None:
+        http_status = getattr(getattr(exc, "response", None), "status_code", None)
+    if http_status is None and hasattr(exc, "status_code"):
+        try:
+            http_status = int(getattr(exc, "status_code"))
+        except Exception:  # pragma: no cover - best effort
+            http_status = None
+    if http_status is None and hasattr(exc, "errors"):
+        try:
+            first_error = exc.errors[0]
+            http_status = int(first_error.get("reason"))  # pragma: no cover - defensive
+        except Exception:
+            http_status = None
+    return code_text, http_status
+
+
+def _is_retryable_error(exc: Exception) -> bool:
+    if isinstance(exc, (gexc.ServiceUnavailable, gexc.DeadlineExceeded, gexc.Aborted)):
+        return True
+    if isinstance(exc, gexc.ResourceExhausted):
+        if _is_page_limit_error(exc):
+            return False
+        return True
+    if isinstance(exc, gexc.GoogleAPICallError):
+        code_text, http_status = _normalise_status_code(exc)
+        if code_text and code_text in _RETRYABLE_STATUS_NAMES:
+            return True
+        if http_status and http_status in _RETRYABLE_HTTP_STATUSES:
+            return True
+        message = str(exc).lower()
+        if any(token in message for token in ("429", "unavailable", "resource_exhausted", "internal")):
+            return True
+    return False
+
+
+def _call_docai_with_backoff(
+    *,
+    client: _DocAIClientProtocol,
+    request: Dict[str, Any],
+) -> Any:
+    attempt = 1
+    backoff = 1.0
+    while True:
+        try:
+            return client.process_document(request=request)
+        except Exception as exc:  # pylint: disable=broad-except
+            if _is_page_limit_error(exc):
+                raise _ChunkPageLimitExceeded(str(exc)) from exc
+            should_retry = _is_retryable_error(exc)
+            if not should_retry or attempt >= MAX_CHUNK_RETRIES:
+                raise
+            sleep_for = min(backoff * (2 ** (attempt - 1)), 16.0) + random.uniform(0.1, 0.6)
+            _LOG.warning(
+                "docai_chunk_retry",
+                extra={
+                    "attempt": attempt,
+                    "sleep_seconds": round(sleep_for, 2),
+                    "error": type(exc).__name__,
+                },
+            )
+            time.sleep(sleep_for)
+            attempt += 1
+
+
 def _process_chunk_with_docai(
     *,
     client: _DocAIClientProtocol,
@@ -137,9 +248,8 @@ def _process_chunk_with_docai(
 
     start = time.perf_counter()
     try:
-        result = client.process_document(request=request)
-    except (gexc.ServiceUnavailable, gexc.DeadlineExceeded):
-        _LOG.warning("DocAI chunk transient failure; retry eligible", exc_info=True)
+        result = _call_docai_with_backoff(client=client, request=request)
+    except _ChunkPageLimitExceeded:
         raise
     except gexc.GoogleAPICallError as exc:
         raise OCRServiceError(f"DocAI chunk failed: {exc}") from exc
@@ -308,8 +418,8 @@ class OCRService:
                     "PyPDF2 is required to split oversized PDFs but is not available"
                 )
             total_pages = actual_pages or estimated_pages
-            _LOG.warning(
-                "Oversized PDF detected (%s pages) - splitting into chunks.",
+            _LOG.info(
+                "Oversized PDF detected: %s pages",
                 total_pages,
                 extra={
                     "pages": total_pages,
@@ -318,65 +428,54 @@ class OCRService:
                     "processor": self.processor_id,
                 },
             )
-            try:
-                chunks = _split_pdf_bytes(pdf_bytes, max_pages=DEFAULT_CHUNK_MAX_PAGES)
-            except Exception as exc:
-                raise OCRServiceError(f"Failed splitting oversized PDF: {exc}") from exc
-
-            combined_pages: list[Dict[str, Any]] = []
-            combined_texts: list[str] = []
-            page_offset = 0
-            chunk_count = len(chunks)
-
-            for idx, chunk in enumerate(chunks, start=1):
-                _LOG.info(
-                    "Processing chunk %s/%s with DocAI.",
-                    idx,
-                    chunk_count,
-                    extra={
-                        "chunk_index": idx,
-                        "chunk_count": chunk_count,
-                        "chunk_pages": min(DEFAULT_CHUNK_MAX_PAGES, total_pages - page_offset),
-                    },
-                )
+            chunk_limits = [DEFAULT_CHUNK_MAX_PAGES, FALLBACK_CHUNK_MAX_PAGES, MIN_CHUNK_MAX_PAGES]
+            last_exc: Exception | None = None
+            for attempt, chunk_limit in enumerate(chunk_limits, start=1):
                 try:
-                    chunk_result = _process_chunk_with_docai(
-                        client=self._client,
-                        pdf_bytes=chunk,
+                    return self._process_large_pdf(
+                        pdf_bytes=pdf_bytes,
+                        total_pages=total_pages,
+                        size_bytes=size_bytes,
                         project_id=project_id,
                         location=location,
-                        processor_id=self.processor_id,
+                        chunk_page_limit=chunk_limit,
                     )
-                except Exception as exc:
-                    _LOG.error(
-                        "DocAI chunk %s/%s failed: %s",
-                        idx,
-                        chunk_count,
-                        exc,
-                        extra={"chunk_index": idx, "chunk_count": chunk_count, "error": str(exc)},
+                except _ChunkPageLimitExceeded as chunk_exc:
+                    last_exc = chunk_exc
+                    next_limit = chunk_limits[attempt] if attempt < len(chunk_limits) else None
+                    _LOG.warning(
+                        "docai_chunk_page_limit_exceeded",
+                        extra={
+                            "attempt": attempt,
+                            "failed_limit": chunk_limit,
+                            "next_limit": next_limit,
+                            "total_pages": total_pages,
+                            "size_bytes": size_bytes,
+                            "error": str(chunk_exc),
+                        },
                     )
+                    continue
+                except OCRServiceError as ocr_exc:
+                    message = str(ocr_exc)
+                    if "PAGE_LIMIT_EXCEEDED" in message or "page limit" in message.lower():
+                        last_exc = ocr_exc
+                        next_limit = chunk_limits[attempt] if attempt < len(chunk_limits) else None
+                        _LOG.warning(
+                            "docai_chunk_page_limit_exceeded",
+                            extra={
+                                "attempt": attempt,
+                                "failed_limit": chunk_limit,
+                                "next_limit": next_limit,
+                                "total_pages": total_pages,
+                                "size_bytes": size_bytes,
+                                "error": message,
+                            },
+                        )
+                        continue
                     raise
-                chunk_pages = chunk_result.get("pages", [])
-                combined_texts.append(chunk_result.get("text", ""))
-                for page in chunk_pages:
-                    page_number = page.get("page_number", 0) + page_offset
-                    combined_pages.append(
-                        {
-                            "page_number": page_number if page_number > 0 else len(combined_pages) + 1,
-                            "text": page.get("text", ""),
-                        }
-                    )
-                page_offset += len(chunk_pages)
-
-            if not combined_pages and combined_texts:
-                fallback_pages = [{"page_number": idx + 1, "text": text} for idx, text in enumerate(combined_texts)]
-                combined_pages = fallback_pages
-
-            full_text = "\n".join(text for text in combined_texts if text)
-            if not full_text and combined_pages:
-                full_text = " ".join(page["text"] for page in combined_pages)
-
-            return {"text": full_text, "pages": combined_pages}
+            raise OCRServiceError(
+                "DocAI chunking failed after exhausting page limit fallbacks"
+            ) from last_exc
 
         # Synchronous path (existing behaviour)
         return _process_chunk_with_docai(
@@ -386,6 +485,115 @@ class OCRService:
             location=location,
             processor_id=self.processor_id,
         )
+
+    def _process_large_pdf(
+        self,
+        *,
+        pdf_bytes: bytes,
+        total_pages: int,
+        size_bytes: int,
+        project_id: str,
+        location: str,
+        chunk_page_limit: int,
+    ) -> Dict[str, Any]:
+        try:
+            chunks = _split_pdf_bytes(pdf_bytes, max_pages=chunk_page_limit)
+        except Exception as exc:
+            raise OCRServiceError(f"Failed splitting oversized PDF: {exc}") from exc
+
+        if not chunks:
+            raise OCRServiceError("PDF splitting produced no chunks")
+
+        chunk_infos: list[dict[str, Any]] = []
+        for idx, chunk in enumerate(chunks, start=1):
+            start_page = (idx - 1) * chunk_page_limit + 1
+            end_page = min(start_page + chunk_page_limit - 1, total_pages)
+            chunk_infos.append(
+                {
+                    "index": idx,
+                    "bytes": chunk,
+                    "start_page": start_page,
+                    "end_page": end_page,
+                }
+            )
+
+        chunk_count = len(chunk_infos)
+        results_by_index: dict[int, Dict[str, Any]] = {}
+        with ThreadPoolExecutor(max_workers=min(MAX_CHUNK_CONCURRENCY, chunk_count)) as executor:
+            futures: list[tuple[Future[Dict[str, Any]], dict[str, Any]]] = []
+            for info in chunk_infos:
+                _LOG.info(
+                    "Processing chunk %s/%s: pages %s-%s",
+                    info["index"],
+                    chunk_count,
+                    info["start_page"],
+                    info["end_page"],
+                    extra={
+                        "chunk_index": info["index"],
+                        "chunk_total": chunk_count,
+                        "chunk_start": info["start_page"],
+                        "chunk_end": info["end_page"],
+                        "chunk_page_limit": chunk_page_limit,
+                        "size_bytes": size_bytes,
+                    },
+                )
+                future = executor.submit(
+                    _process_chunk_with_docai,
+                    client=self._client,
+                    pdf_bytes=info["bytes"],
+                    project_id=project_id,
+                    location=location,
+                    processor_id=self.processor_id,
+                )
+                futures.append((future, info))
+
+            for future, info in futures:
+                try:
+                    chunk_result = future.result()
+                except _ChunkPageLimitExceeded:
+                    raise
+                except Exception as exc:
+                    raise OCRServiceError(f"DocAI chunk {info['index']} failed: {exc}") from exc
+                results_by_index[info["index"]] = chunk_result or {}
+
+        combined_pages: list[Dict[str, Any]] = []
+        combined_texts: list[str] = []
+        page_offset = 0
+
+        for idx in sorted(results_by_index.keys()):
+            chunk_result = results_by_index[idx]
+            chunk_pages = chunk_result.get("pages", [])
+            chunk_text = chunk_result.get("text", "")
+            if chunk_text:
+                combined_texts.append(chunk_text)
+
+            if chunk_pages:
+                for page in chunk_pages:
+                    page_number = page.get("page_number", 0)
+                    absolute_page = page_number + page_offset if page_number > 0 else len(combined_pages) + 1
+                    combined_pages.append(
+                        {
+                            "page_number": absolute_page,
+                            "text": page.get("text", ""),
+                        }
+                    )
+                page_offset += len(chunk_pages)
+            elif chunk_text:
+                fallback_page = {
+                    "page_number": page_offset + 1,
+                    "text": chunk_text,
+                }
+                combined_pages.append(fallback_page)
+                page_offset += 1
+
+        if not combined_pages and combined_texts:
+            combined_pages = [{"page_number": idx + 1, "text": text} for idx, text in enumerate(combined_texts)]
+
+        full_text = "\n".join(text for text in combined_texts if text)
+        if not full_text and combined_pages:
+            full_text = " ".join(page.get("text", "") for page in combined_pages)
+
+        return {"text": full_text, "pages": combined_pages}
 
 
 def _resolve_state_store(job_id: str | None, state_store: PipelineStateStore | None) -> PipelineStateStore | None:
@@ -880,4 +1088,4 @@ def run_batch_ocr(  # pylint: disable=too-many-arguments
     return {"outputs": outputs}
 
 
-__all__ = ["OCRService", "run_splitter", "run_batch_ocr"]
+__all__ = ["OCRService", "run_splitter", "run_batch_ocr", "clean_ocr_output"]

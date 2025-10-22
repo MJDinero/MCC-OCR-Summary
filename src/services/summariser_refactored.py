@@ -34,6 +34,7 @@ from src.services.pipeline import (
     PipelineStatus,
     create_state_store_from_env,
 )
+from src.services.docai_helper import clean_ocr_output
 from src.services.supervisor import CommonSenseSupervisor
 from src.utils.secrets import SecretResolutionError, resolve_secret_env
 
@@ -434,7 +435,7 @@ class RefactoredSummariser:
     target_chars: int = 2600
     max_chars: int = 10000
     overlap_chars: int = 320
-    min_summary_chars: int = 480
+    min_summary_chars: int = 500
 
     # Compatibility shims so supervisor retry variants can tune chunk sizes.
     @property
@@ -456,7 +457,10 @@ class RefactoredSummariser:
     def summarise(self, text: str, *, doc_metadata: Optional[Dict[str, Any]] = None) -> Dict[str, str]:
         if text is None or not str(text).strip():
             raise SummarizationError("Input text empty")
-        normalised = _clean_text(str(text))
+        raw_text = str(text)
+        cleaned_input = clean_ocr_output(raw_text)
+        normalised_source = cleaned_input if cleaned_input else raw_text
+        normalised = _clean_text(normalised_source)
         if not normalised:
             raise SummarizationError("Input text empty")
 
@@ -503,6 +507,19 @@ class RefactoredSummariser:
         providers = self._dedupe_ordered(aggregated["providers"])
         medications = self._dedupe_ordered(aggregated["medications"])
 
+        summary_text = _sanitise_keywords(summary_text)
+        summary_text = re.sub(
+            r"(?im)\b(fax|page\s+\d+|cpt|icd[- ]?\d*|procedure\s+code)\b.*$",
+            "",
+            summary_text,
+        )
+        summary_text = re.sub(r"[ \t]{2,}", " ", summary_text)
+        summary_text = re.sub(r"\n{3,}", "\n\n", summary_text).strip()
+
+        min_chars = getattr(self, "min_summary_chars", 500)
+        if len(summary_text) < min_chars or not re.search(r"\b(Intro Overview|Key Points)\b", summary_text, re.IGNORECASE):
+            raise SummarizationError("Summary too short or missing structure")
+
         summary_chars = len(summary_text)
         avg_chunk_chars = round(sum(len(ch.text) for ch in chunked) / max(1, len(chunked)), 2)
         _LOG.info(
@@ -516,8 +533,6 @@ class RefactoredSummariser:
                 "medications": len(medications),
             },
         )
-
-        summary_text = _sanitise_keywords(summary_text)
 
         display: Dict[str, str] = {
             "Patient Information": doc_metadata.get("patient_info", "Not provided") if doc_metadata else "Not provided",

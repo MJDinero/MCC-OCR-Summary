@@ -9,6 +9,8 @@ import re
 from collections import Counter
 import os
 
+from src.services.docai_helper import clean_ocr_output
+
 
 _LOG = logging.getLogger("supervisor")
 
@@ -220,7 +222,8 @@ class CommonSenseSupervisor:
         paragraph_count = self._count_paragraphs(summary_text)
         header_count = self._count_headers(summary_text)
         has_list = self._has_structured_list(summary_text, summary)
-        alignment = self._content_alignment(ocr_text, alignment_focus_text)
+        alignment_source = clean_ocr_output(ocr_text) or ocr_text
+        alignment = self._content_alignment(alignment_source, alignment_focus_text)
 
         # Runtime tunable thresholds (env overrides) for adaptive strictness
         alignment_threshold = float(os.getenv('SUPERVISOR_ALIGNMENT_THRESHOLD', '0.80'))
@@ -356,7 +359,8 @@ class CommonSenseSupervisor:
                 setattr(summariser, "chunk_target_chars", variant["chunk_target"])
             if chunk_max_attr is not None and variant.get("chunk_max"):
                 setattr(summariser, "chunk_hard_max", variant["chunk_max"])
-            return summariser.summarise(text)
+            summary_input = clean_ocr_output(text) or text
+            return summariser.summarise(summary_input)
         finally:
             if restore_target is not None:
                 setattr(summariser, "chunk_target_chars", restore_target)

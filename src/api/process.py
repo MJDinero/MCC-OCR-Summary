@@ -12,6 +12,7 @@ from fastapi import APIRouter, HTTPException, Query, Request, UploadFile
 from fastapi.responses import JSONResponse, Response
 
 from src.errors import PDFGenerationError, ValidationError, OCRServiceError, DriveServiceError, SummarizationError
+from src.services.docai_helper import clean_ocr_output
 from src.services.supervisor import CommonSenseSupervisor
 from src.utils.summary_thresholds import compute_summary_min_chars
 from src.utils.logging_utils import structured_log
@@ -84,8 +85,10 @@ async def _execute_pipeline(request: Request, *, pdf_bytes: bytes, source: str) 
         )
         raise HTTPException(status_code=422, detail="OCR extraction insufficient")
 
+    cleaned_ocr_text = clean_ocr_output(ocr_text)
+    summary_source_text = cleaned_ocr_text or ocr_text
     try:
-        summary_raw = await app.state.summariser.summarise_async(ocr_text)
+        summary_raw = await app.state.summariser.summarise_async(summary_source_text)
     except SummarizationError as exc:
         structured_log(
             _API_LOG,

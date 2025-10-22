@@ -17,9 +17,10 @@ All legacy flags (metrics, sheets, multiple processor fallbacks, CORS, etc.) rem
 from __future__ import annotations
 
 import json
+import logging
 import os
-from pathlib import Path
 from functools import lru_cache
+from pathlib import Path
 from typing import Any
 
 from pydantic import Field, AliasChoices
@@ -32,6 +33,9 @@ def parse_bool(value: str | None) -> bool:
     if value is None:
         return False
     return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+
+_CONFIG_LOG = logging.getLogger("config")
 
 
 class AppConfig(BaseSettings):
@@ -145,12 +149,9 @@ class AppConfig(BaseSettings):
             ("openai_api_key", self.openai_api_key, "OPENAI_API_KEY"),
             ("drive_input_folder_id", self.drive_input_folder_id, "DRIVE_INPUT_FOLDER_ID"),
             ("drive_report_folder_id", self.drive_report_folder_id, "DRIVE_REPORT_FOLDER_ID"),
-            ("drive_impersonation_user", self.drive_impersonation_user, "DRIVE_IMPERSONATION_USER"),
             ("intake_gcs_bucket", self.intake_gcs_bucket, "INTAKE_GCS_BUCKET"),
             ("output_gcs_bucket", self.output_gcs_bucket, "OUTPUT_GCS_BUCKET"),
             ("summary_bucket", self.summary_bucket, "SUMMARY_BUCKET"),
-            ("cmek_key_name", self.cmek_key_name, "CMEK_KEY_NAME"),
-            ("google_application_credentials", self.google_application_credentials, "GOOGLE_APPLICATION_CREDENTIALS"),
         ]
         missing = [name for name, value, _env in required_pairs if not value]
 
@@ -168,12 +169,9 @@ class AppConfig(BaseSettings):
             "OPENAI_API_KEY",
             "DRIVE_INPUT_FOLDER_ID",
             "DRIVE_REPORT_FOLDER_ID",
-            "DRIVE_IMPERSONATION_USER",
             "INTAKE_GCS_BUCKET",
             "OUTPUT_GCS_BUCKET",
             "SUMMARY_BUCKET",
-            "CMEK_KEY_NAME",
-            "GOOGLE_APPLICATION_CREDENTIALS",
         }
         unmet_env: list[str] = []
         for name, value, env_name in required_pairs:
@@ -189,12 +187,45 @@ class AppConfig(BaseSettings):
         if unmet_env:
             raise RuntimeError("Missing environment variables: " + ", ".join(sorted(set(unmet_env))))
 
+        def _is_local_or_test() -> bool:
+            env_name = os.getenv("ENVIRONMENT", "").strip().lower()
+            if env_name in {"local", "test", "unit"}:
+                return True
+            if os.getenv("PYTEST_CURRENT_TEST"):
+                return True
+            testing_flag = os.getenv("UNIT_TESTING", "")
+            if isinstance(testing_flag, str) and testing_flag.lower() in {"1", "true", "yes", "on"}:
+                return True
+            return False
+
+        optional_pairs = [
+            ("drive_impersonation_user", self.drive_impersonation_user, "DRIVE_IMPERSONATION_USER"),
+            ("cmek_key_name", self.cmek_key_name, "CMEK_KEY_NAME"),
+            (
+                "google_application_credentials",
+                self.google_application_credentials or os.getenv("GOOGLE_APPLICATION_CREDENTIALS"),
+                "GOOGLE_APPLICATION_CREDENTIALS",
+            ),
+        ]
+        for field_name, value, env_name in optional_pairs:
+            if not value:
+                _CONFIG_LOG.warning(
+                    "optional_config_missing",
+                    extra={"field": field_name, "env": env_name, "context": "startup_validation"},
+                )
+
         impersonation = (self.drive_impersonation_user or "").strip()
-        if not impersonation or "@" not in impersonation:
+        if impersonation and "@" not in impersonation:
             raise RuntimeError("DRIVE_IMPERSONATION_USER must be a valid email address")
 
         raw_credentials = (self.google_application_credentials or os.getenv("GOOGLE_APPLICATION_CREDENTIALS") or "").strip()
         if not raw_credentials:
+            if _is_local_or_test():
+                _CONFIG_LOG.warning(
+                    "optional_config_missing",
+                    extra={"field": "google_application_credentials", "env": "GOOGLE_APPLICATION_CREDENTIALS"},
+                )
+                return
             raise RuntimeError("GOOGLE_APPLICATION_CREDENTIALS must be configured")
         if raw_credentials.startswith("{"):
             try:

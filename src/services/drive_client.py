@@ -30,6 +30,15 @@ _LOG = logging.getLogger("drive_client")
 _ID_PATTERN = re.compile(r"[A-Za-z0-9_-]{10,}")
 
 
+def _mask_drive_id(file_id: str | None) -> str | None:
+    if not file_id:
+        return None
+    token = file_id.strip()
+    if len(token) <= 8:
+        return token[:2] + "***"
+    return f"{token[:4]}***{token[-4:]}"
+
+
 def _drive_service():
     impersonate_user = os.getenv("DRIVE_IMPERSONATION_USER")
     raw_credentials = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
@@ -221,7 +230,19 @@ def upload_pdf(
     if not file_bytes or not file_bytes.startswith(b'%PDF-'):
         raise ValueError('file_bytes must be a PDF (bytes starting with %PDF-)')
     cfg = get_config()
-    folder_source = parent_folder_id or cfg.drive_report_folder_id
+    config_folder = (cfg.drive_report_folder_id or "").strip()
+    env_output = (os.getenv("DRIVE_OUTPUT_FOLDER_ID") or "").strip()
+    env_report = (os.getenv("DRIVE_REPORT_FOLDER_ID") or "").strip()
+    canonical_folder = (config_folder or env_output or env_report).strip()
+    if not canonical_folder:
+        raise RuntimeError("DRIVE_OUTPUT_FOLDER_ID must be configured")
+    folder_source = (parent_folder_id or canonical_folder).strip()
+    if folder_source != canonical_folder:
+        _LOG.warning(
+            "drive_parent_override_ignored",
+            extra={"requested_parent": folder_source, "canonical_parent": canonical_folder},
+        )
+        folder_source = canonical_folder
     shared_drive_source = (
         getattr(cfg, "drive_shared_drive_id", None) or os.getenv("DRIVE_SHARED_DRIVE_ID", None)
     )
@@ -328,7 +349,7 @@ def upload_pdf(
     context.update(
         {
             "duration_ms": duration_ms,
-            "drive_file_id": created.get('id'),
+            "drive_file_id": _mask_drive_id(created.get('id')),
             "bytes": len(file_bytes),
             "drive_id": created.get('driveId') or drive_id,
             "parent": folder_id,
@@ -337,6 +358,15 @@ def upload_pdf(
     _LOG.info(
         "drive_upload_complete",
         extra=context,
+    )
+    masked_id = _mask_drive_id(created.get('id'))
+    _LOG.info(
+        "drive_upload_success",
+        extra={
+            "drive_file_id": masked_id,
+            "parent": folder_id,
+            "bytes": len(file_bytes),
+        },
     )
     return created['id']
 
