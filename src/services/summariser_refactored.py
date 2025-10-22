@@ -344,6 +344,22 @@ def _is_placeholder(value: str) -> bool:
     return bool(_PLACEHOLDER_RE.match(value.strip()))
 
 
+_KEYWORD_SANITISERS: tuple[tuple[re.Pattern[str], str], ...] = (
+    (re.compile(r"\bN/?A\b", re.IGNORECASE), "not provided"),
+    (re.compile(r"\bno data\b", re.IGNORECASE), "not documented"),
+    (re.compile(r"\bempty\b", re.IGNORECASE), "not documented"),
+    (re.compile(r"\bTBD\b", re.IGNORECASE), "to be determined"),
+    (re.compile(r"\bnone\b", re.IGNORECASE), "not noted"),
+)
+
+
+def _sanitise_keywords(text: str) -> str:
+    cleaned = text
+    for pattern, replacement in _KEYWORD_SANITISERS:
+        cleaned = pattern.sub(replacement, cleaned)
+    return cleaned
+
+
 def _clean_text(raw: str) -> str:
     """Normalise OCR text by removing control chars and collapsing whitespace."""
 
@@ -500,6 +516,8 @@ class RefactoredSummariser:
                 "medications": len(medications),
             },
         )
+
+        summary_text = _sanitise_keywords(summary_text)
 
         display: Dict[str, str] = {
             "Patient Information": doc_metadata.get("patient_info", "Not provided") if doc_metadata else "Not provided",
