@@ -31,3 +31,11 @@
 - Chunked DocAI processing verified ✅
 - Startup Ready=True ✅
 - Awaiting live intake PDF test
+
+# Refactored Summariser Self-Heal (v1.3.1-autoheal)
+- Build Tag: v1.3.1-autoheal-20251021182911
+- Cloud Run Revision: mcc-ocr-summary-00171-6zm (Ready=True)
+- /process/drive → file_id=1ZFra9EN0jS8wTS4dcW7deypxnVggb8vS, report_id=1a9XcjtJYetRKgojxN0reqFija35RuV1T ✅
+- Supervisor passed ✅ (simple mode)
+- Summary length 503007 chars (log: summariser_generation_complete)
+- Output uploaded to Drive folder 1eyMO0126VfLBK3bBQEpWlVOL6tWxriCE ✅
