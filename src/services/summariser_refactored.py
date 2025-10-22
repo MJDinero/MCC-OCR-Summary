@@ -334,6 +334,14 @@ class HeuristicChunkBackend(ChunkSummaryBackend):
 _CONTROL_CHARS_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
 _WHITESPACE_RE = re.compile(r"[\s\u00a0]+")
 _SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+")
+_PLACEHOLDER_RE = re.compile(
+    r"^(?:n/?a|none(?:\s+(?:noted|reported|recorded))?|no data|empty|tbd|not (?:applicable|documented|provided)|nil)$",
+    re.IGNORECASE,
+)
+
+
+def _is_placeholder(value: str) -> bool:
+    return bool(_PLACEHOLDER_RE.match(value.strip()))
 
 
 def _clean_text(raw: str) -> str:
@@ -494,10 +502,10 @@ class RefactoredSummariser:
         )
 
         display: Dict[str, str] = {
-            "Patient Information": doc_metadata.get("patient_info", "N/A") if doc_metadata else "N/A",
+            "Patient Information": doc_metadata.get("patient_info", "Not provided") if doc_metadata else "Not provided",
             "Medical Summary": summary_text,
-            "Billing Highlights": doc_metadata.get("billing", "N/A") if doc_metadata else "N/A",
-            "Legal / Notes": doc_metadata.get("legal_notes", "N/A") if doc_metadata else "N/A",
+            "Billing Highlights": doc_metadata.get("billing", "Not provided") if doc_metadata else "Not provided",
+            "Legal / Notes": doc_metadata.get("legal_notes", "Not provided") if doc_metadata else "Not provided",
             "_diagnoses_list": "\n".join(diagnoses),
             "_providers_list": "\n".join(providers),
             "_medications_list": "\n".join(medications),
@@ -537,22 +545,24 @@ class RefactoredSummariser:
             if value is None:
                 return []
             if isinstance(value, list):
-                return [str(v).strip() for v in value if str(v).strip()]
-            if isinstance(value, (tuple, set)):
-                return [str(v).strip() for v in value if str(v).strip()]
-            if isinstance(value, str):
-                items = [part.strip() for part in value.split("\n") if part.strip()]
-                if len(items) > 1:
-                    return items
-                return [value.strip()]
-            if isinstance(value, dict):
-                return [str(v).strip() for v in value.values() if str(v).strip()]
-            coerced = str(value).strip()
-            return [coerced] if coerced else []
+                items = [str(v).strip() for v in value if str(v).strip()]
+            elif isinstance(value, (tuple, set)):
+                items = [str(v).strip() for v in value if str(v).strip()]
+            elif isinstance(value, str):
+                parts = [part.strip() for part in value.split("\n") if part.strip()]
+                items = parts if len(parts) > 1 else [value.strip()]
+            elif isinstance(value, dict):
+                items = [str(v).strip() for v in value.values() if str(v).strip()]
+            else:
+                coerced = str(value).strip()
+                items = [coerced] if coerced else []
+            return [item for item in items if item and not _is_placeholder(item)]
 
         overview = payload.get("overview")
-        if isinstance(overview, str) and overview.strip():
-            into["overview"].append(overview.strip())
+        if isinstance(overview, str):
+            overview_clean = overview.strip()
+            if overview_clean and not _is_placeholder(overview_clean):
+                into["overview"].append(overview_clean)
 
         for key in ("key_points", "clinical_details", "care_plan", "diagnoses", "providers", "medications"):
             values = _coerce_list(payload.get(key))
@@ -608,7 +618,7 @@ class RefactoredSummariser:
             "\n".join(f"- {line}" for line in providers) if providers else "- Not listed."
         )
         medications_section = "Medications / Prescriptions:\n" + (
-            "\n".join(f"- {line}" for line in medications) if medications else "- None recorded in extracted text."
+            "\n".join(f"- {line}" for line in medications) if medications else "- No medications recorded in extracted text."
         )
 
         sections = [
