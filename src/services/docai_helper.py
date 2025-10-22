@@ -42,6 +42,7 @@ except Exception:  # pragma: no cover - allow runtime environments without PyPDF
     PdfWriter = None  # type: ignore
 
 _LOG = logging.getLogger("ocr_service")
+DEFAULT_CHUNK_MAX_PAGES = 15
 
 
 class _DocAIClientProtocol(Protocol):  # pragma: no cover - structural typing aid
@@ -91,7 +92,7 @@ def _normalise(doc: Dict[str, Any]) -> Dict[str, Any]:
     return {"text": full_text, "pages": pages_out}
 
 
-def _split_pdf_bytes(pdf_bytes: bytes, *, max_pages: int = 25) -> list[bytes]:
+def _split_pdf_bytes(pdf_bytes: bytes, *, max_pages: int = DEFAULT_CHUNK_MAX_PAGES) -> list[bytes]:
     """Split PDF bytes into <= max_pages chunks."""
     if PdfReader is None or PdfWriter is None:
         raise OCRServiceError("PyPDF2 is required for PDF splitting but is not installed")
@@ -312,13 +313,13 @@ class OCRService:
                 total_pages,
                 extra={
                     "pages": total_pages,
-                    "chunk_max_pages": 25,
+                    "chunk_max_pages": DEFAULT_CHUNK_MAX_PAGES,
                     "size_bytes": size_bytes,
                     "processor": self.processor_id,
                 },
             )
             try:
-                chunks = _split_pdf_bytes(pdf_bytes, max_pages=25)
+                chunks = _split_pdf_bytes(pdf_bytes, max_pages=DEFAULT_CHUNK_MAX_PAGES)
             except Exception as exc:
                 raise OCRServiceError(f"Failed splitting oversized PDF: {exc}") from exc
 
@@ -335,7 +336,7 @@ class OCRService:
                     extra={
                         "chunk_index": idx,
                         "chunk_count": chunk_count,
-                        "chunk_pages": min(25, total_pages - page_offset),
+                        "chunk_pages": min(DEFAULT_CHUNK_MAX_PAGES, total_pages - page_offset),
                     },
                 )
                 try:
