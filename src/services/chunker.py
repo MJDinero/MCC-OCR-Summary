@@ -19,7 +19,7 @@ except Exception:  # pragma: no cover - allow unit tests without GCS libs
     storage = None  # type: ignore
 
 try:  # pragma: no cover - optional dependency
-    from PyPDF2 import PdfReader, PdfWriter  # type: ignore
+    from pypdf import PdfReader, PdfWriter  # type: ignore
 except Exception:  # pragma: no cover - allow offline tests to inject stubs
     PdfReader = None  # type: ignore
     PdfWriter = None  # type: ignore
@@ -178,7 +178,7 @@ class PDFChunker:
         tmp_dir: str | None = None,
     ) -> None:
         if PdfReader is None or PdfWriter is None:  # pragma: no cover - dependency validated in tests
-            raise RuntimeError("PyPDF2 must be installed to use PDFChunker")
+            raise RuntimeError("pypdf must be installed to use PDFChunker")
         if max_pages <= 0:
             raise ValueError("max_pages must be positive")
         self.max_pages = max_pages

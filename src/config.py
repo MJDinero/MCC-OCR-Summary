@@ -49,7 +49,7 @@ class AppConfig(BaseSettings):
     )
     doc_ai_splitter_id: str | None = Field(None, validation_alias='DOC_AI_SPLITTER_PROCESSOR_ID')
     doc_ai_legacy_layout: bool = Field(False, validation_alias='DOC_AI_LEGACY_LAYOUT')
-    doc_ai_enable_image_quality_scores: bool = Field(True, validation_alias='DOC_AI_ENABLE_IMAGE_QUALITY_SCORES')
+    doc_ai_enable_image_quality_scores: bool = Field(False, validation_alias='DOC_AI_ENABLE_IMAGE_QUALITY_SCORES')
     openai_api_key: str | None = Field(None, validation_alias='OPENAI_API_KEY')
     openai_model: str | None = Field(None, validation_alias='OPENAI_MODEL')
     internal_event_token: str = Field('', validation_alias='INTERNAL_EVENT_TOKEN')

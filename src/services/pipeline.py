@@ -33,7 +33,7 @@ from dataclasses import dataclass, field, asdict
 from enum import Enum
 from typing import Any, Dict, MutableMapping, Protocol, TypedDict
 
-from src.utils.secrets import resolve_secret_env
+from src.config import AppConfig, get_config
 
 try:  # pragma: no cover - optional dependency for GCS persistence
     from google.cloud import storage  # type: ignore
@@ -708,19 +708,17 @@ class CloudWorkflowsLauncher(WorkflowLauncher):  # pragma: no cover - depends on
         return execution_name
 
 
-def create_state_store_from_env() -> PipelineStateStore:
+def create_state_store_from_env(config: AppConfig | None = None) -> PipelineStateStore:
     """Instantiate an appropriate state store based on configuration."""
 
+    cfg = config or get_config()
     backend = os.getenv("PIPELINE_STATE_BACKEND", "memory").lower()
     if backend == "gcs":
         bucket = os.getenv("PIPELINE_STATE_BUCKET")
         if not bucket:
             raise RuntimeError("PIPELINE_STATE_BUCKET required when PIPELINE_STATE_BACKEND=gcs")
         prefix = os.getenv("PIPELINE_STATE_PREFIX", "pipeline-state")
-        project_id = os.getenv("PROJECT_ID")
-        kms_key = resolve_secret_env("PIPELINE_STATE_KMS_KEY", project_id=project_id)
-        if not kms_key:
-            kms_key = resolve_secret_env("CMEK_KEY_NAME", project_id=project_id)
+        kms_key = cfg.pipeline_state_kms_key or cfg.cmek_key_name
         print(f"STATE_STORE_BACKEND=gcs bucket={bucket} prefix={prefix}", flush=True)
         return GCSStateStore(bucket=bucket, prefix=prefix, kms_key_name=kms_key)
     print("STATE_STORE_BACKEND=memory", flush=True)

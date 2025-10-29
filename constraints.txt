@@ -5,3 +5,15 @@
 # Adjust cautiously; upgrade only after validating compatibility.
 ###############################################
 protobuf<5.0.0
+
+# Guardrails for fast-moving frameworks (see README "Dependency Management Policy")
+fastapi<0.120.0
+uvicorn<0.38.0
+openai<2.0.0
+google-cloud-bigquery<4.0.0
+google-cloud-core<3.0.0
+google-cloud-documentai<3.0.0
+google-cloud-pubsub<3.0.0
+google-cloud-secret-manager<3.0.0
+google-cloud-storage<4.0.0
+google-cloud-workflows<2.0.0

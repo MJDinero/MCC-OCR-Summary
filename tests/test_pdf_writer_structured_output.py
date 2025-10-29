@@ -17,3 +17,7 @@ def test_pdf_writer_renders_structured_indices():
     text = pdf_bytes.decode('utf-8', errors='ignore')
     assert 'Structured Indices' in text
     assert 'Dx1' in text and 'MedB' in text
+    assert '•' not in text
+    assert '—' not in text
+    assert 'Diagnoses:' in text
+    assert '(- Dx1)' in text

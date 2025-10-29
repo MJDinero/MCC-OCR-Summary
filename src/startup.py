@@ -7,13 +7,24 @@ import logging
 import os
 from pathlib import Path
 
+from src.config import get_config
+from src.utils.secrets import resolve_secret_env
+
 _LOG = logging.getLogger(__name__)
 
 
 def hydrate_google_credentials_file() -> None:
     """Persist service account JSON from env to a filesystem path."""
     target_path = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
-    raw_credentials = os.getenv("SERVICE_ACCOUNT_JSON")
+    project_id = os.getenv("PROJECT_ID")
+    cfg = None
+    try:
+        cfg = get_config()
+    except Exception:  # pragma: no cover - config may not be initialised yet
+        cfg = None
+    raw_credentials = (cfg.service_account_json if cfg else None) or resolve_secret_env(
+        "SERVICE_ACCOUNT_JSON", project_id=project_id
+    )
 
     if not target_path or not raw_credentials:
         return

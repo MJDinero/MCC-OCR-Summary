@@ -1,7 +1,7 @@
 import json
 
 import pytest
-from PyPDF2 import PdfWriter
+from pypdf import PdfWriter
 
 from src.services.docai_helper import OCRService
 

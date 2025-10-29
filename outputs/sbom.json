@@ -47,18 +47,18 @@
     },
     {
       "bom-ref": "requirements-L97",
-      "description": "requirements line 97: PyPDF2==3.0.1",
+      "description": "requirements line 97: pypdf==6.1.3",
       "externalReferences": [
         {
           "comment": "implicit dist url",
           "type": "distribution",
-          "url": "https://pypi.org/simple/PyPDF2/"
+          "url": "https://pypi.org/simple/pypdf/"
         }
       ],
-      "name": "PyPDF2",
-      "purl": "pkg:pypi/pypdf2@3.0.1",
+      "name": "pypdf",
+      "purl": "pkg:pypi/pypdf@6.1.3",
       "type": "library",
-      "version": "3.0.1"
+      "version": "6.1.3"
     },
     {
       "bom-ref": "requirements-L104",

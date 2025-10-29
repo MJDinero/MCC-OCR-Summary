@@ -190,6 +190,9 @@ def test_upload_pdf_validations(monkeypatch):
         summary_schema_version = '2025-10-01'
         project_id = 'test-project'
 
+    monkeypatch.setenv("DRIVE_REPORT_FOLDER_ID", "")
+    monkeypatch.delenv("OUTPUT_FOLDER_ID", raising=False)
+    monkeypatch.delenv("DRIVE_OUTPUT_FOLDER_ID", raising=False)
     monkeypatch.setattr(drive_client, 'get_config', lambda: _Cfg())
     monkeypatch.setattr(
         drive_client,

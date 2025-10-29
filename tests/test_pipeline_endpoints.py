@@ -10,9 +10,11 @@ from src.services.pipeline import PipelineStatus
 class StubWorkflowLauncher:
     def __init__(self):
         self.calls: list[dict] = []
+        self.concurrent_runs: list[str] = []
 
     def launch(self, *, job, parameters=None, trace_context=None):
         self.calls.append({"job_id": job.job_id, "parameters": parameters, "trace": trace_context})
+        self.concurrent_runs.append(job.job_id)
         return "executions/mock"
 
 
@@ -167,3 +169,36 @@ def test_status_endpoint_returns_job(monkeypatch):
     data = status.json()
     assert data["job_id"] == job_id
     assert data["status"] == PipelineStatus.WORKFLOW_DISPATCHED.value
+
+
+def test_exception_middleware_returns_json(monkeypatch):
+    app, _ = _build_app(monkeypatch)
+
+    @app.get("/boom")
+    async def boom():  # pragma: no cover - executed via client
+        raise ValueError("boom")
+
+    client = TestClient(app)
+    resp = client.get("/boom")
+    assert resp.status_code == 500
+    assert resp.json() == {"detail": "Internal Server Error"}
+
+
+def test_ingest_handles_concurrent_requests(monkeypatch):
+    app, launcher = _build_app(monkeypatch)
+    client = TestClient(app)
+    base_payload = _ingest_payload()
+
+    responses = [
+        client.post("/ingest", json={**base_payload, "trace_id": f"trace-{i}", "object": {**base_payload["object"], "name": f"drive/file{i}.pdf"}})
+        for i in range(2)
+    ]
+    assert all(resp.status_code == 202 for resp in responses)
+
+
+def test_ingest_failure_sets_state_failed(monkeypatch):
+    app, launcher = _build_app(monkeypatch)
+    launcher.launch = lambda **_: (_ for _ in ()).throw(RuntimeError("workflow failure"))
+    client = TestClient(app)
+    resp = client.post("/ingest", json=_ingest_payload())
+    assert resp.status_code == 502

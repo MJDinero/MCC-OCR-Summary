@@ -8,6 +8,7 @@ from typing import Iterable
 import pytest
 
 os.environ.setdefault('SIMPLECOV_FOCUS', 'src/services/supervisor.py,src/services/drive_client.py')
+USE_SERVICE_STUBS = os.getenv("PYTEST_USE_STUBS", "").strip().lower() in {"1", "true", "yes", "on"}
 
 
 @pytest.fixture(autouse=True)
@@ -18,12 +19,25 @@ def _base_env(monkeypatch):
     monkeypatch.setenv('DOC_AI_PROCESSOR_ID', os.environ.get('DOC_AI_PROCESSOR_ID', 'pid'))
     monkeypatch.setenv('DOC_AI_SPLITTER_PROCESSOR_ID', os.environ.get('DOC_AI_SPLITTER_PROCESSOR_ID', 'splitter'))
     monkeypatch.setenv('OPENAI_API_KEY', os.environ.get('OPENAI_API_KEY', 'dummy'))
+    monkeypatch.setenv('INTERNAL_EVENT_TOKEN', os.environ.get('INTERNAL_EVENT_TOKEN', 'internal-token'))
     monkeypatch.setenv('DRIVE_INPUT_FOLDER_ID', os.environ.get('DRIVE_INPUT_FOLDER_ID', 'in-folder'))
     monkeypatch.setenv('DRIVE_REPORT_FOLDER_ID', os.environ.get('DRIVE_REPORT_FOLDER_ID', 'out-folder'))
     monkeypatch.setenv('INTAKE_GCS_BUCKET', os.environ.get('INTAKE_GCS_BUCKET', 'intake-bucket'))
     monkeypatch.setenv('OUTPUT_GCS_BUCKET', os.environ.get('OUTPUT_GCS_BUCKET', 'output-bucket'))
     monkeypatch.setenv('SUMMARY_BUCKET', os.environ.get('SUMMARY_BUCKET', 'summary-bucket'))
     monkeypatch.setenv('SIMPLECOV_FOCUS', os.environ.get('SIMPLECOV_FOCUS', 'src/services/supervisor.py'))
+    yield
+
+
+@pytest.fixture(autouse=True)
+def _install_service_stubs(monkeypatch):
+    if not USE_SERVICE_STUBS:
+        yield
+        return
+    from tests.stubs import docai_stub, drive_stub
+
+    docai_stub.install_docai_stub(monkeypatch)
+    drive_stub.install_drive_stub(monkeypatch)
     yield
 
 

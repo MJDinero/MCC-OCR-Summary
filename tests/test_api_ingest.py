@@ -7,6 +7,7 @@ from typing import Any, Dict, List
 from fastapi.testclient import TestClient
 
 from src import api_ingest
+from src.config import get_config
 
 
 class _StubExecutionsClient:
@@ -27,6 +28,10 @@ def _setup_env(monkeypatch):
     monkeypatch.delenv("OUTPUT_GCS_BUCKET", raising=False)
     monkeypatch.delenv("OUTPUT_BUCKET", raising=False)
     monkeypatch.delenv("SUMMARY_BUCKET", raising=False)
+    try:
+        get_config.cache_clear()
+    except Exception:  # pragma: no cover - defensive
+        pass
 
 
 def test_ingest_builds_argument_and_launches_workflow(monkeypatch):

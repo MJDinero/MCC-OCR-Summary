@@ -9,7 +9,7 @@ import socket
 import sys
 from typing import TYPE_CHECKING, Any
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import JSONResponse
 
 from src.api.ingest import router as ingest_router
@@ -24,7 +24,6 @@ from src.services.pipeline import create_state_store_from_env, create_workflow_l
 from src.services.summariser_refactored import OpenAIResponsesBackend, RefactoredSummariser
 from src.startup import hydrate_google_credentials_file
 from src.utils.mode_manager import is_mvp
-from src.utils.secrets import resolve_secret_env
 from src.config import get_config
 from src.utils.logging_utils import structured_log
 
@@ -135,6 +134,26 @@ def create_app() -> FastAPI:
     app = FastAPI(title="MCC-OCR-Summary API", version="1.0.0")
     app.state.config = cfg
 
+    @app.middleware("http")
+    async def _exception_middleware(request: Request, call_next):  # pragma: no cover - exercised via integration tests
+        try:
+            return await call_next(request)
+        except HTTPException:
+            raise
+        except Exception as exc:
+            trace_header = request.headers.get("X-Cloud-Trace-Context") or ""
+            trace_id = trace_header.split("/", 1)[0] if "/" in trace_header else request.headers.get("X-Request-ID")
+            structured_log(
+                _API_LOG,
+                logging.ERROR,
+                "unhandled_http_exception",
+                path=str(request.url.path),
+                method=request.method,
+                trace_id=trace_id,
+                error=str(exc),
+            )
+            return JSONResponse({"detail": "Internal Server Error"}, status_code=500)
+
     current_mvp = is_mvp()
     stub_mode = os.getenv("STUB_MODE", "false").strip().lower() == "true"
     supervisor_simple = current_mvp or os.getenv("SUPERVISOR_MODE", "").strip().lower() == "simple"
@@ -167,7 +186,7 @@ def create_app() -> FastAPI:
     app.state.pdf_writer = PDFWriter(MinimalPDFBackend())
     app.state.drive_client = _DriveClientAdapter(stub=stub_mode, config=cfg)
 
-    internal_token = resolve_secret_env("INTERNAL_EVENT_TOKEN", project_id=cfg.project_id)
+    internal_token = (cfg.internal_event_token or "").strip()
     if not internal_token:
         raise RuntimeError("INTERNAL_EVENT_TOKEN must be configured via Secret Manager or environment variable")
     app.state.internal_event_token = internal_token

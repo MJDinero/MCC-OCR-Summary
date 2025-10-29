@@ -36,7 +36,7 @@ ENV_ARGS := $(if $(wildcard $(ENV_FILE)),--env-file $(ENV_FILE),)
 PYTEST ?= pytest
 COMMON_PYTEST_FLAGS ?= -q --disable-warnings --maxfail=1
 
-.PHONY: install lint type test test-integration test-e2e docker-build docker-run deploy smoke
+.PHONY: install lint type test test-integration test-e2e docker-build docker-run deploy smoke build run-local ci-local test-local
 
 install:
 	$(PYTHON) -m pip install --upgrade pip
@@ -72,6 +72,16 @@ docker-build:
 
 docker-run:
 	docker run --rm -p 8080:8080 $(ENV_ARGS) $(IMAGE)
+
+build: docker-build
+
+run-local:
+	PYTHONPATH=$(PWD)/src $(PYTHON) -m src.runtime_server
+
+ci-local: lint type test
+
+test-local:
+	PYTEST_USE_STUBS=1 $(PYTEST) $(COMMON_PYTEST_FLAGS) -k 'not integration'
 
 deploy:
 	gcloud run deploy $(SERVICE) \

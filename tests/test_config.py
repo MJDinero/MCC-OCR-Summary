@@ -8,7 +8,8 @@ from src.utils import secrets as secrets_mod
 
 
 REQUIRED_KEYS = [
-    'PROJECT_ID','REGION','DOC_AI_PROCESSOR_ID','OPENAI_API_KEY','DRIVE_INPUT_FOLDER_ID','DRIVE_REPORT_FOLDER_ID'
+    'PROJECT_ID','REGION','DOC_AI_PROCESSOR_ID','OPENAI_API_KEY','DRIVE_INPUT_FOLDER_ID',
+    'DRIVE_REPORT_FOLDER_ID','INTERNAL_EVENT_TOKEN'
 ]
 
 
@@ -29,7 +30,7 @@ def test_config_success():
     _clear()
     os.environ.update({
         'PROJECT_ID':'p','REGION':'us','DOC_AI_PROCESSOR_ID':'proc','OPENAI_API_KEY':'k',
-        'DRIVE_INPUT_FOLDER_ID':'in','DRIVE_REPORT_FOLDER_ID':'out'
+        'DRIVE_INPUT_FOLDER_ID':'in','DRIVE_REPORT_FOLDER_ID':'out','INTERNAL_EVENT_TOKEN':'token'
     })
     cfg = AppConfig()
     cfg.validate_required()  # no exception
@@ -48,6 +49,7 @@ def test_config_resolves_secret(monkeypatch):
         'OPENAI_API_KEY': 'sm://openai',
         'DRIVE_INPUT_FOLDER_ID': 'sm://drive-in',
         'DRIVE_REPORT_FOLDER_ID': 'sm://drive-out',
+        'INTERNAL_EVENT_TOKEN': 'sm://internal-token',
     })
     cfg = AppConfig()
     assert cfg.doc_ai_processor_id == 'resolved'

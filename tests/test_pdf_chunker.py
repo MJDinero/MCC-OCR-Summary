@@ -3,7 +3,7 @@ from datetime import datetime, timedelta
 from io import BytesIO
 from pathlib import Path
 
-from PyPDF2 import PdfWriter
+from pypdf import PdfWriter
 
 from src.services.chunker import PDFChunker
 

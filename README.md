@@ -43,6 +43,8 @@ Modular, event-driven pipeline that converts medical PDF intake documents into r
 
 ## Quick Start
 
+Need a guided setup (diagram, secrets, deployment)? See `docs/QUICK_START.md`.
+
 ### Prerequisites
 
 - Python 3.11+
@@ -58,16 +60,31 @@ Modular, event-driven pipeline that converts medical PDF intake documents into r
 # Install dependencies
 make install
 
-# Run static analysis + type + tests
+# Run static analysis + type + tests (or `make ci-local` for all)
 make lint            # ruff + pylint (strict)
 make type            # mypy --strict on critical services
 make test            # pytest with coverage >=90%
+make ci-local        # convenience target: lint + type + test
 
 # Execute targeted tests
 python3 -m pytest tests/test_summarization_service_pipeline.py -q
 ```
 
+Run the API locally with `make run-local` (honours `.env.mcc` when present) or build a reproducible image via `make build` followed by `docker run ...`.
+For offline testing (DocAI/Drive stubs), run `make test-local` which sets `PYTEST_USE_STUBS=1` and executes `pytest -k 'not integration'`.
+
 Environment variables can be set via `.env` (see `.env.template`). Core configuration lives in `src/config.py`; overrides can come from env or YAML.
+
+### Performance Benchmarks
+
+- Run `python3 bench/run_bench.py --runs 5` to capture chunking + summariser latency using the heuristic backend (no external APIs needed).
+- Tuned defaults (`target_chars=6500`, `max_chars=8500`, `overlap=900`) cut average summariser latency ~25% compared to the previous 10k/12.5k/1.2k window while keeping guardrails intact. See `bench/bench_plan.md` for methodology and `PERF.md` for the latest results.
+
+## Dependency Management Policy
+
+- **Dependabot cadence**: Automated weekly PRs for both `pip` (respecting `constraints.txt`) and GitHub Actions keep dev/test toolchains current while surfacing CVEs quickly.
+- **Validated version window**: Install application dependencies with `pip install -r requirements.txt -c constraints.txt` (or run `make install`). The constraints enforce audit-approved upper bounds for `fastapi` `<0.120`, `uvicorn` `<0.38`, `openai` `<2.0`, and the `google-cloud-*` SDKs (`<3` or `<4` depending on the service).
+- **Update protocol**: When Dependabot proposes upgrades, run CI + targeted integration tests, then relax the matching constraint (e.g., move `fastapi<0.121`) only after verifying API compatibility. Document decisions in `docs/audit/HARDENING_LOG.md`.
 
 ### Cloud Run Deployment
 
@@ -138,6 +155,9 @@ Apply these with `gcloud run services update mcc-ocr-summary --region us-central
 - **Encryption**: Intake, summary, output, and state buckets plus the BigQuery dataset all enforce CMEK (`CMEK_KEY_NAME`).
 - **Redaction**: All logs pass through `utils/redact.py` before emitting messages that contain user-provided text.
 - **IAM**: Stage-scoped identities (`mcc-ocr-sa`, `mcc-summariser-sa`, `mcc-storage-sa`) are created via `infra/iam.sh` with least-privilege, and Cloud Build impersonates them only via `roles/iam.serviceAccountUser`.
+- **IAM bootstrap**: Run `REGION=... PROJECT_ID=... ./infra/iam.sh` after setting bucket/dataset env vars to grant only bucket-scoped viewer/creator roles plus dataset-level BigQuery access, matching the `iam` mapping in `pipeline.yaml`.
+- **Continuous monitoring**: GitHub Actions runs a weekly `Weekly Security Scan` workflow (pip-audit, detect-secrets, TruffleHog) that opens security issues automatically when findings occur.
+- **Compliance & cost planning**: See `docs/COMPLIANCE_COST.md` for retention, BAA, and cost-tuning guidance (DocAI/OpenAI knobs, Cloud Run scaling).
 - **Diagnostics**: `ENABLE_DIAG_ENDPOINTS=false` by default; enable only for controlled debugging sessions.
 
 ---

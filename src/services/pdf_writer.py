@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from typing import Protocol, Sequence, Dict
 from io import BytesIO
 import logging
+import re
 
 from src.errors import PDFGenerationError
 
@@ -20,6 +21,43 @@ try:  # pragma: no cover - optional metrics
     _PDF_CALLS = Counter("pdf_writer_calls_total", "Total PDF generation calls", ["status"])
 except Exception:  # pragma: no cover
     _PDF_CALLS = None  # type: ignore
+
+
+_ASCII_BULLET_TRANSLATION = str.maketrans({
+    "•": "-",
+    "‣": "-",
+    "▪": "-",
+    "◦": "-",
+    "●": "-",
+    "○": "-",
+    "∙": "-",
+    "‒": "-",
+    "–": "-",
+    "—": "-",
+    "―": "-",
+    "−": "-",
+})
+
+
+_PAGE_WIDTH = 612
+_PAGE_HEIGHT = 792
+_LEFT_MARGIN = 72
+_RIGHT_MARGIN = 72
+_TOP_MARGIN = 72
+_BOTTOM_MARGIN = 72
+_TEXT_LEADING = 14
+_LINES_PER_PAGE = max(1, (_PAGE_HEIGHT - _TOP_MARGIN - _BOTTOM_MARGIN) // _TEXT_LEADING)
+
+
+def _normalise_ascii(text: str) -> str:
+    """Coerce Unicode bullets/dashes to ASCII hyphen bullets for predictable extraction."""
+
+    if not text:
+        return ""
+    normalised = text.translate(_ASCII_BULLET_TRANSLATION)
+    normalised = re.sub(r"(?m)^\s*-\s*", "- ", normalised)
+    normalised = re.sub(r"[ \t]{2,}", " ", normalised)
+    return normalised
 
 
 class PDFBackend(Protocol):  # pragma: no cover - interface only
@@ -65,20 +103,34 @@ class ReportLabBackend:
 
 
 def _wrap_text(txt: str, width: int) -> list[str]:
-    words = txt.split()
+    if not txt:
+        return [""]
+    paragraphs = txt.splitlines() or [txt]
     lines: list[str] = []
-    line: list[str] = []
-    ln_len = 0
-    for w in words:
-        if ln_len + len(w) + (1 if line else 0) > width:
-            lines.append(" ".join(line))
-            line = [w]
-            ln_len = len(w)
-        else:
-            line.append(w)
-            ln_len += len(w) + (1 if line[:-1] else 0)
-    if line:
-        lines.append(" ".join(line))
+    for paragraph in paragraphs:
+        normalised = _normalise_ascii(paragraph).strip()
+        if not normalised:
+            lines.append("")
+            continue
+        words = normalised.split()
+        current: list[str] = []
+        line_len = 0
+        for word in words:
+            projected_len = line_len + len(word) + (1 if current else 0)
+            if projected_len > width and current:
+                lines.append(" ".join(current))
+                current = [word]
+                line_len = len(word)
+            else:
+                current.append(word)
+                line_len = projected_len
+        if current:
+            lines.append(" ".join(current))
+    # Trim leading/trailing empty lines introduced by formatting
+    while lines and lines[0] == "":
+        lines.pop(0)
+    while lines and lines[-1] == "":
+        lines.pop()
     return lines or [""]
 
 
@@ -90,51 +142,95 @@ class MinimalPDFBackend:
     """
     def build(self, title: str, sections: Sequence[tuple[str, str]]) -> bytes:
         try:
-            lines = [title]
+            lines = [_normalise_ascii(title)]
             for heading, body in sections:
-                lines.append(heading)
-                lines.extend(_wrap_text(body, 100))
-            # Minimalistic PDF creation
-            content_stream = "\n".join(lines)
-            pdf_bytes = _simple_pdf(content_stream)
+                lines.append(_normalise_ascii(heading))
+                wrapped = _wrap_text(body, 100)
+                if not wrapped:
+                    wrapped = [""]
+                lines.extend(wrapped)
+            if not lines:
+                lines = [""]
+            pdf_bytes = _simple_pdf(lines)
             return pdf_bytes
         except Exception as exc:  # pragma: no cover
             raise PDFGenerationError(f"Failed to build minimal PDF: {exc}") from exc
 
 
-def _simple_pdf(text: str) -> bytes:
+def _simple_pdf(lines: Sequence[str]) -> bytes:
     # This is a very naive PDF writer for testing; ensures %PDF header
     # Reference: simplest possible PDF with one page & one text object.
-    escaped = text.replace("(", "\\(").replace(")", "\\)")
-    objects = []
-    # 1: Catalog
-    objects.append("1 0 obj<< /Type /Catalog /Pages 2 0 R >>endobj")
-    # 2: Pages
-    objects.append("2 0 obj<< /Type /Pages /Kids [3 0 R] /Count 1 >>endobj")
-    # 3: Page
-    objects.append("3 0 obj<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources<< /Font<< /F1 5 0 R >> >> >>endobj")
-    # 4: Content
-    stream = f"BT /F1 12 Tf 72 720 Td ({escaped}) Tj ET"
-    objects.append(f"4 0 obj<< /Length {len(stream)} >>stream\n{stream}\nendstream endobj")
-    # 5: Font
-    objects.append("5 0 obj<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>endobj")
-    xref_positions = []
-    pdf = ["%PDF-1.4"]
-    for obj in objects:
-        xref_positions.append(sum(len(p) + 1 for p in pdf))
-        pdf.append(obj)
-    xref_start = sum(len(p) + 1 for p in pdf)
-    pdf.append("xref")
-    pdf.append(f"0 {len(objects)+1}")
-    pdf.append("0000000000 65535 f ")
-    for pos in xref_positions:
-        pdf.append(f"{pos:010d} 00000 n ")
-    pdf.append("trailer<< /Size 6 /Root 1 0 R >>")
-    pdf.append("startxref")
-    pdf.append(str(xref_start))
-    pdf.append("%%EOF")
-    return ("\n".join(pdf)).encode("utf-8")
+    def _escape(segment: str) -> str:
+        return segment.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
 
+    if not lines:
+        lines = [""]
+
+    line_chunks: list[list[str]] = []
+    for start in range(0, len(lines), _LINES_PER_PAGE):
+        chunk = list(lines[start : start + _LINES_PER_PAGE])
+        if not chunk:
+            chunk = [""]
+        line_chunks.append(chunk)
+    if not line_chunks:
+        line_chunks = [[lines[0]]]
+
+    objects: list[str] = []
+    page_count = len(line_chunks)
+    page_object_numbers = [3 + idx * 2 for idx in range(page_count)]
+    content_object_numbers = [num + 1 for num in page_object_numbers]
+    font_object_number = 3 + 2 * page_count
+
+    objects.append("1 0 obj<< /Type /Catalog /Pages 2 0 R >>endobj")
+
+    kids = " ".join(f"{num} 0 R" for num in page_object_numbers)
+    objects.append(f"2 0 obj<< /Type /Pages /Kids [{kids}] /Count {page_count} >>endobj")
+
+    for idx, chunk in enumerate(line_chunks):
+        page_obj_num = page_object_numbers[idx]
+        content_obj_num = content_object_numbers[idx]
+        content_ops = [
+            f"BT /F1 12 Tf {_LEFT_MARGIN} {_PAGE_HEIGHT - _TOP_MARGIN} Td",
+            f"{_TEXT_LEADING} TL",
+        ]
+        for line_idx, line in enumerate(chunk):
+            escaped = _escape(line or "")
+            if line_idx == 0:
+                content_ops.append(f"({escaped}) Tj")
+            else:
+                content_ops.append(f"T* ({escaped}) Tj")
+        content_ops.append("ET")
+        stream = "\n".join(content_ops)
+        stream_bytes = stream.encode("utf-8")
+
+        objects.append(
+            f"{page_obj_num} 0 obj<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {_PAGE_WIDTH} {_PAGE_HEIGHT}] "
+            f"/Contents {content_obj_num} 0 R /Resources<< /Font<< /F1 {font_object_number} 0 R >> >> >>endobj"
+        )
+        objects.append(
+            f"{content_obj_num} 0 obj<< /Length {len(stream_bytes)} >>stream\n{stream}\nendstream endobj"
+        )
+
+    objects.append(
+        f"{font_object_number} 0 obj<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>endobj"
+    )
+
+    xref_positions = []
+    pdf_parts = ["%PDF-1.4"]
+    for obj in objects:
+        xref_positions.append(sum(len(part) + 1 for part in pdf_parts))
+        pdf_parts.append(obj)
+    xref_start = sum(len(part) + 1 for part in pdf_parts)
+    pdf_parts.append("xref")
+    pdf_parts.append(f"0 {len(objects) + 1}")
+    pdf_parts.append("0000000000 65535 f ")
+    for pos in xref_positions:
+        pdf_parts.append(f"{pos:010d} 00000 n ")
+    pdf_parts.append(f"trailer<< /Size {len(objects) + 1} /Root 1 0 R >>")
+    pdf_parts.append("startxref")
+    pdf_parts.append(str(xref_start))
+    pdf_parts.append("%%EOF")
+    return "\n".join(pdf_parts).encode("utf-8")
 
 @dataclass
 class PDFWriter:
@@ -153,12 +249,18 @@ class PDFWriter:
             # Preserve deterministic ordering
             order = ["Patient Information", "Medical Summary", "Billing Highlights", "Legal / Notes"]
             sections_seq = []
+            used_keys = set()
             for key in order:
                 if key in summary:
                     val = (summary[key] or '').strip() or 'N/A'
                     sections_seq.append((key, val))
+                    used_keys.add(key)
             # Add any extra keys deterministically
-            for k in sorted(k for k in summary.keys() if k not in {o for o,_ in sections_seq}):
+            extra_keys = sorted(
+                k for k in summary.keys()
+                if k not in used_keys and not k.startswith("_")
+            )
+            for k in extra_keys:
                 sections_seq.append((k, (summary[k] or '').strip()))
         # Detect structured lists via side-channel keys injected by Summariser
         if isinstance(summary, dict):
@@ -167,15 +269,29 @@ class PDFWriter:
             med_list = [s for s in (summary.get("_medications_list", "").splitlines()) if s.strip()]
             any_lists = any([diag_list, prov_list, med_list])
             if any_lists:
-                divider = ("\n" + ("=" * 38) + "\nStructured Indices\n" + ("=" * 38) + "\n")
-                sections_seq.append(("—", divider.strip()))
+                structured_intro = "\n".join(
+                    [
+                        "-" * 38,
+                        "Diagnoses, Providers, and Medications captured below.",
+                        "-" * 38,
+                    ]
+                )
+                sections_seq.append(("Structured Indices", structured_intro))
+
                 def _fmt_block(title: str, items: list[str]) -> str:
-                    if not items:
+                    normalised_items = [_normalise_ascii(item.strip()) for item in items if item.strip()]
+                    if not normalised_items:
                         return f"{title}:\nN/A"
-                    return f"{title}:\n" + "\n".join(f"• {i}" for i in items)
+                    return f"{title}:\n" + "\n".join(f"- {i}" for i in normalised_items)
+
                 sections_seq.append(("Diagnoses", _fmt_block("Diagnoses", diag_list)))
                 sections_seq.append(("Providers", _fmt_block("Providers", prov_list)))
                 sections_seq.append(("Medications", _fmt_block("Medications / Prescriptions", med_list)))
+        sections_seq = [
+            (_normalise_ascii(heading), _normalise_ascii(body if body else ""))
+            for heading, body in sections_seq
+        ]
+        title = _normalise_ascii(self.title)
         _LOG.info(
             "pdf_writer_started",
             extra={
@@ -184,7 +300,7 @@ class PDFWriter:
             },
         )
         try:
-            result = self.backend.build(self.title, sections_seq)
+            result = self.backend.build(title, sections_seq)
             if _PDF_CALLS:
                 _PDF_CALLS.labels(status="success").inc()
             _LOG.info(

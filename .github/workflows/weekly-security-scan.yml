@@ -1,0 +1,74 @@
+name: Weekly Security Scan
+
+on:
+  schedule:
+    - cron: '0 6 * * 1'
+  workflow_dispatch:
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install tooling
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt -c constraints.txt
+          pip install -r requirements-dev.txt -c constraints.txt
+          pip install pip-audit==2.9.0 detect-secrets==1.5.0 trufflehog==3.79.0
+
+      - name: Prepare output directory
+        run: mkdir -p outputs
+
+      - name: Pip Audit
+        id: pip_audit
+        continue-on-error: true
+        run: |
+          python -m pip_audit -r requirements.txt --format json > outputs/pip-audit-weekly.json
+
+      - name: Detect Secrets
+        id: detect_secrets
+        continue-on-error: true
+        run: |
+          detect-secrets scan --all-files > outputs/detect-secrets-weekly.json
+
+      - name: TruffleHog
+        id: trufflehog
+        continue-on-error: true
+        run: |
+          trufflehog filesystem --no-update --fail --json . > outputs/trufflehog-weekly.json
+
+      - name: Collect status
+        run: |
+          failed_steps=()
+          if [ "${{ steps.pip_audit.outcome }}" != "success" ]; then failed_steps+=("pip-audit"); fi
+          if [ "${{ steps.detect_secrets.outcome }}" != "success" ]; then failed_steps+=("detect-secrets"); fi
+          if [ "${{ steps.trufflehog.outcome }}" != "success" ]; then failed_steps+=("trufflehog"); fi
+          if [ ${#failed_steps[@]} -gt 0 ]; then
+            echo "scan_failed=true" >> "$GITHUB_ENV"
+            {
+              echo "Weekly security scan detected issues in: ${failed_steps[*]}"
+              echo
+              echo "Refer to workflow run $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+            } > security_issue.md
+          fi
+
+      - name: Create GitHub issue
+        if: env.scan_failed == 'true'
+        uses: peter-evans/create-issue-from-file@v5
+        with:
+          title: "Weekly security scan detected issues"
+          content-filepath: security_issue.md
+          labels: security, automated

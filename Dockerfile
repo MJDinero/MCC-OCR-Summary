@@ -1,4 +1,4 @@
-FROM python:3.11-slim AS base
+FROM python:3.11.7-slim AS base
 
 # commit: use python:3.11-slim base and minimize layers for faster builds
 

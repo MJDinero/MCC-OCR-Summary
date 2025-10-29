@@ -102,6 +102,7 @@ grant_project_role "${OCR_SA}" "roles/logging.logWriter"
 grant_project_role "${OCR_SA}" "roles/monitoring.metricWriter"
 grant_bucket_role "${INTAKE_BUCKET}" "${OCR_SA}" "roles/storage.objectViewer"
 grant_bucket_role "${OUTPUT_BUCKET}" "${OCR_SA}" "roles/storage.objectCreator"
+grant_bucket_role "${OUTPUT_BUCKET}" "${OCR_SA}" "roles/storage.objectViewer"
 grant_state_bucket_role "${OCR_SA}" "roles/storage.objectAdmin"
 
 # Summariser service account -------------------------------------------------
@@ -110,12 +111,14 @@ grant_project_role "${SUMMARISER_SA}" "roles/logging.logWriter"
 grant_project_role "${SUMMARISER_SA}" "roles/monitoring.metricWriter"
 grant_bucket_role "${OUTPUT_BUCKET}" "${SUMMARISER_SA}" "roles/storage.objectViewer"
 grant_bucket_role "${SUMMARY_BUCKET}" "${SUMMARISER_SA}" "roles/storage.objectCreator"
+grant_bucket_role "${SUMMARY_BUCKET}" "${SUMMARISER_SA}" "roles/storage.objectViewer"
 grant_state_bucket_role "${SUMMARISER_SA}" "roles/storage.objectAdmin"
 
 # Storage service account ----------------------------------------------------
 grant_project_role "${STORAGE_SA}" "roles/logging.logWriter"
 grant_project_role "${STORAGE_SA}" "roles/monitoring.metricWriter"
-grant_bucket_role "${SUMMARY_BUCKET}" "${STORAGE_SA}" "roles/storage.objectAdmin"
+grant_bucket_role "${SUMMARY_BUCKET}" "${STORAGE_SA}" "roles/storage.objectCreator"
+grant_bucket_role "${SUMMARY_BUCKET}" "${STORAGE_SA}" "roles/storage.objectViewer"
 grant_dataset_role "${SUMMARY_BIGQUERY_DATASET}" "${STORAGE_SA}" "roles/bigquery.dataEditor"
 
 # Workflow orchestrator ------------------------------------------------------

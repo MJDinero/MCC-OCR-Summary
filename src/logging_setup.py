@@ -13,6 +13,8 @@ from contextvars import ContextVar
 from datetime import datetime, timezone
 from typing import Any, Dict
 
+from src.utils.logging_filter import PHIRedactFilter
+
 request_id_var: ContextVar[str | None] = ContextVar("request_id", default=None)
 
 _STANDARD_FIELDS = {
@@ -59,6 +61,12 @@ class JsonFormatter(logging.Formatter):
         return json.dumps(data, ensure_ascii=False)
 
 
+def _ensure_phi_filter(handler: logging.Handler) -> None:
+    if any(isinstance(flt, PHIRedactFilter) for flt in handler.filters):
+        return
+    handler.addFilter(PHIRedactFilter())
+
+
 def configure_logging(level: int = logging.INFO, force: bool = False) -> None:
     root = logging.getLogger()
     if force:
@@ -68,9 +76,11 @@ def configure_logging(level: int = logging.INFO, force: bool = False) -> None:
         root.setLevel(level)
         for handler in root.handlers:
             handler.setLevel(level)
+            _ensure_phi_filter(handler)
         return
     handler = logging.StreamHandler(sys.stdout)
     handler.setFormatter(JsonFormatter())
+    _ensure_phi_filter(handler)
     root.setLevel(level)
     root.addHandler(handler)
 

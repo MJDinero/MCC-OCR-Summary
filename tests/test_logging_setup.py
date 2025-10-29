@@ -5,6 +5,7 @@ import logging
 from typing import List
 
 from src.logging_setup import configure_logging, set_request_id
+from src.utils.logging_filter import PHIRedactFilter
 
 
 def test_configure_logging_installs_json_formatter():
@@ -14,9 +15,10 @@ def test_configure_logging_installs_json_formatter():
         root.removeHandler(handler)
 
     try:
-        configure_logging()
+        configure_logging(force=True)
         assert root.handlers, "configure_logging should attach a stream handler"
         handler = root.handlers[0]
+        assert any(isinstance(flt, PHIRedactFilter) for flt in handler.filters)
         formatter = handler.formatter
         set_request_id("req-123")
         record = logging.LogRecord(

@@ -11,7 +11,9 @@ from dataclasses import dataclass, field
 from datetime import timedelta
 from io import BytesIO
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
+
+from tenacity import Retrying, retry_if_exception_type, stop_after_attempt, wait_exponential
 
 from src.config import get_config
 from src.services.pipeline import (
@@ -26,8 +28,22 @@ from src.services.pdf_writer import (
     PDFBackend,
     _wrap_text as _legacy_wrap_text,  # reuse the proven text wrapper
 )
+from src.utils.pipeline_failures import publish_pipeline_failure
 
 _LOG = logging.getLogger("pdf_writer.refactored")
+
+
+def _call_with_retry(func: Callable[[], Any], retry_exceptions: tuple[type[BaseException], ...]) -> Any:
+    retryer = Retrying(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=0.5, max=6),
+        retry=retry_if_exception_type(retry_exceptions),
+        reraise=True,
+    )
+    for attempt in retryer:
+        with attempt:
+            return func()
+    return func()
 
 
 def _wrap_text(block: str, width: int) -> List[str]:
@@ -382,7 +398,10 @@ def _cli(argv: Optional[Iterable[str]] = None) -> None:
         }
         if trace_id:
             pdf_log_context["logging.googleapis.com/trace"] = f"projects/{cfg.project_id}/traces/{trace_id}"
-        pdf_bytes = writer.build(summary_payload, log_context=pdf_log_context)
+        pdf_bytes = _call_with_retry(
+            lambda: writer.build(summary_payload, log_context=pdf_log_context),
+            (PDFGenerationError,),
+        )
     except Exception as exc:
         if state_store and args.job_id:
             try:
@@ -396,6 +415,13 @@ def _cli(argv: Optional[Iterable[str]] = None) -> None:
                 )
             except Exception:  # pragma: no cover - best effort
                 _LOG.exception("pdf_job_state_mark_failed", extra={"job_id": args.job_id})
+        publish_pipeline_failure(
+            stage="PDF_JOB",
+            job_id=args.job_id,
+            trace_id=trace_id,
+            error=exc,
+            metadata={"input": str(summary_path)},
+        )
         raise
 
     if pdf_path:
@@ -408,7 +434,10 @@ def _cli(argv: Optional[Iterable[str]] = None) -> None:
     signed_url: Optional[str] = None
     if args.upload_gcs:
         try:
-            blob = _upload_pdf_to_gcs(pdf_bytes, args.upload_gcs, if_generation_match=args.if_generation_match)
+            blob = _call_with_retry(
+                lambda: _upload_pdf_to_gcs(pdf_bytes, args.upload_gcs, if_generation_match=args.if_generation_match),
+                (Exception,),
+            )
             pdf_uri = f"gs://{blob.bucket.name}/{blob.name}"
             if not args.skip_signed_url:
                 signed_url = _generate_signed_url(blob, args.sign_url_ttl, kms_key=args.kms_key)
@@ -425,6 +454,13 @@ def _cli(argv: Optional[Iterable[str]] = None) -> None:
                     )
                 except Exception:  # pragma: no cover - best effort
                     _LOG.exception("pdf_job_state_upload_failed", extra={"job_id": args.job_id})
+            publish_pipeline_failure(
+                stage="PDF_JOB_UPLOAD",
+                job_id=args.job_id,
+                trace_id=trace_id,
+                error=exc,
+                metadata={"upload_gcs": args.upload_gcs},
+            )
             raise
 
     if state_store and args.job_id:

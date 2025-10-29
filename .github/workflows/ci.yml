@@ -7,39 +7,59 @@ on:
     branches: [ main ]
 
 jobs:
-  build-test:
+  quality-security:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: "3.11"
 
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
-          pip install pylint
+          pip install -r requirements.txt -c constraints.txt
+          pip install -r requirements-dev.txt -c constraints.txt
+          pip install ruff==0.7.1 black==24.10.0 mypy==1.12.0 bandit==1.7.10 detect-secrets==1.5.0 trufflehog==3.79.0 pip-audit==2.9.0
 
-      - name: Lint
-        run: |
-          pylint $(git ls-files '*.py') || (echo 'Pylint completed with warnings/errors'; exit 1)
+      - name: Ruff lint
+        run: ruff check src tests
 
-      - name: Run tests with coverage
+      - name: Black formatting (diff only)
+        run: black --check src tests
+
+      - name: Mypy static type checking
+        run: mypy --strict src
+
+      - name: Pytest with coverage
         env:
           PROJECT_ID: test-project
+          REGION: us
           DOC_AI_LOCATION: us
-          DOC_AI_OCR_PROCESSOR_ID: dummy
+          DOC_AI_PROCESSOR_ID: processor
+          DOC_AI_OCR_PROCESSOR_ID: processor
+          DOC_AI_SPLITTER_PROCESSOR_ID: processor
           OPENAI_API_KEY: dummy
-          STUB_MODE: 'true'
-          USE_STRUCTURED_SUMMARISER: 'true'
-        run: |
-          pytest
+          STUB_MODE: "true"
+          SUPERVISOR_MODE: "simple"
+        run: pytest -q --maxfail=1 --cov=src --cov-report=term-missing
 
-      - name: Upload coverage (summary)
-        if: always()
-        run: |
-            echo 'Coverage complete.'
+      - name: Bandit (security lint)
+        run: bandit -q -r src
+
+      - name: pip-audit
+        run: pip-audit -r requirements.txt --format json
+
+      - name: detect-secrets
+        run: detect-secrets scan --all-files
+
+      - name: TruffleHog filesystem scan
+        run: trufflehog filesystem --no-update --fail .
