@@ -35,6 +35,7 @@ from src.services.pipeline import (
     create_state_store_from_env,
 )
 from src.services.docai_helper import clean_ocr_output
+from src.services.openai_backend import call_llm
 from src.services.supervisor import CommonSenseSupervisor
 from src.utils.secrets import SecretResolutionError, resolve_secret_env
 
@@ -113,9 +114,18 @@ class OpenAIResponsesBackend:  # pragma: no cover - network heavy, validated by 
         },
     }
 
-    def __init__(self, model: str = "gpt-4.1-mini", api_key: Optional[str] = None) -> None:
+    def __init__(
+        self,
+        model: str = "gpt-4.1-mini",
+        api_key: Optional[str] = None,
+        *,
+        use_responses: bool = False,
+        json_mode: bool = True,
+    ) -> None:
         self.model = model
         self.api_key = api_key
+        self.use_responses = use_responses
+        self.json_mode = json_mode
 
     def summarise_chunk(
         self,
@@ -125,44 +135,34 @@ class OpenAIResponsesBackend:  # pragma: no cover - network heavy, validated by 
         total_chunks: int,
         estimated_tokens: int,
     ) -> Dict[str, Any]:  # pragma: no cover - network path exercised in integration tests
-        try:
-            from openai import OpenAI  # type: ignore
-        except Exception as exc:  # pragma: no cover - dependency resolution
-            raise SummarizationError(f"OpenAI SDK unavailable: {exc}") from exc
-
         self._fallback_used = False
-        client = OpenAI(api_key=self.api_key)
-        messages = [
-            {"role": "system", "content": self.CHUNK_SYSTEM_PROMPT},
-            {
-                "role": "user",
-                "content": textwrap.dedent(
+        prompt = "\n\n".join(
+            [
+                self.CHUNK_SYSTEM_PROMPT,
+                textwrap.dedent(
                     f"""
                     You are processing chunk {chunk_index} of {total_chunks} from a medical record.
                     The chunk contains approximately {estimated_tokens} tokens of OCR text.
-                    Return the structured JSON payload exactly as specified.
+                    Return the structured JSON payload exactly as specified above.
                     ---
                     OCR_CHUNK_START
                     {chunk_text}
                     OCR_CHUNK_END
                     """
                 ).strip(),
-            },
-        ]
+            ]
+        )
         try:
-            response = client.responses.create(  # type: ignore[call-overload]
+            content = call_llm(
+                prompt=prompt,
+                use_responses=self.use_responses,
                 model=self.model,
-                input=messages,
-                temperature=0,
-                max_output_tokens=900,
-                response_format={
-                    "type": "json_schema",
-                    "json_schema": self.CHUNK_JSON_SCHEMA,
-                },
+                json_mode=self.json_mode,
+                api_key=self.api_key,
             )
-        except (AttributeError, TypeError) as exc:
+        except Exception as exc:
             _LOG.warning(
-                "openai_responses_fallback",
+                "openai_chunk_fallback",
                 extra={"error": str(exc), "model": self.model, "chunk_index": chunk_index},
             )
             fallback_backend = HeuristicChunkBackend()
@@ -173,29 +173,6 @@ class OpenAIResponsesBackend:  # pragma: no cover - network heavy, validated by 
                 total_chunks=total_chunks,
                 estimated_tokens=estimated_tokens,
             )
-
-        def _collect_output_text(resp: Any) -> str:
-            segments: List[str] = []
-            output_items = getattr(resp, "output", None)
-            if output_items:
-                for item in output_items:
-                    contents = getattr(item, "content", []) or []
-                    for content in contents:
-                        content_type = getattr(content, "type", "")
-                        if content_type in {"output_text", "text"}:
-                            text_block = getattr(content, "text", "")
-                            if isinstance(text_block, str):
-                                segments.append(text_block)
-                            elif isinstance(text_block, list):
-                                segments.extend(str(part) for part in text_block)
-                        elif content_type == "tool_call":
-                            continue
-            if segments:
-                return "".join(segments)
-            fallback = getattr(resp, "output_text", "")
-            return str(fallback or "")
-
-        content = _collect_output_text(response)
 
         try:
             parsed = json.loads(content)
@@ -882,7 +859,12 @@ def _cli(argv: Optional[Iterable[str]] = None) -> None:
                 api_key = os.getenv("OPENAI_API_KEY")
         if not api_key:
             parser.error("OPENAI_API_KEY must be set (or --api-key provided) when not using --dry-run.")
-        backend = OpenAIResponsesBackend(model=args.model, api_key=api_key)
+        backend = OpenAIResponsesBackend(
+            model=args.model,
+            api_key=api_key,
+            use_responses=False,
+            json_mode=True,
+        )
         _LOG.info("openai_backend_active", extra={"model": args.model})
 
     def _build_summariser(active_backend: ChunkSummaryBackend) -> RefactoredSummariser:
