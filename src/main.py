@@ -111,8 +111,10 @@ def _build_summariser(stub_mode: bool, *, cfg) -> Any:
         return _StubSummariser()
 
     backend = OpenAIResponsesBackend(
-        model=cfg.openai_model or "gpt-4o-mini",
+        model=cfg.openai_model,
         api_key=cfg.openai_api_key,
+        use_responses=cfg.openai_use_responses,
+        json_mode=cfg.openai_json_mode,
     )
     # Always rely on the refactored hierarchical summariser for production workloads.
     return RefactoredSummariser(backend=backend)

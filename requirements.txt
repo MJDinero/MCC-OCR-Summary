@@ -49,7 +49,7 @@ mccabe==0.7.0
 mdurl==0.1.2
 mypy==1.10.0
 mypy_extensions==1.1.0
-openai==1.93.3
+openai>=1.40,<2
 opentelemetry-api==1.37.0
 opentelemetry-sdk==1.37.0
 opentelemetry-semantic-conventions==0.58b0
