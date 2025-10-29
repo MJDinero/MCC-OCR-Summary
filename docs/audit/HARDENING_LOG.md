@@ -159,3 +159,8 @@
   - Metrics snapshot: `/metrics` endpoint returned HTTP 404 (Cloud Run deployment still on previous revision without Prometheus sidecar); noted for follow-up once image is available.
   - Latest revision attempt: `mcc-ocr-summary-00290-lhs` (failed – image missing). Commit SHA: `c77dcff2ea3715fd799c08ada64b5d2d4065a068`.
 - **Status:** PARTIAL – Code changes and verification run succeeded locally, but the automated CI mirror still fails on long-standing lint/type debt and the Cloud Build/Run deployment needs IAM + successful image push before the Prometheus sidecar can be validated. Metrics endpoint remains unavailable until the new revision is live.
+## Final Verification (2025-10-29)
+- report_file_id: 1-yPm59c-l66fWUhycgrQ2dYSv5gd9HtH
+- latestReadyRevisionName: mcc-ocr-summary-00292-j76
+- commit: 4c706d9
+- validator: (printed above)
