@@ -31,10 +31,11 @@ from src.utils.docai_request_builder import build_docai_request
 from src.errors import OCRServiceError, ValidationError
 from src.services.docai_batch_helper import batch_process_documents_gcs
 from src.services.pipeline import PipelineStatus, PipelineStateStore, create_state_store_from_env
+from src.utils.pipeline_failures import publish_pipeline_failure
 
 try:  # pragma: no cover - optional dependency fallback
-    from PyPDF2 import PdfReader, PdfWriter  # type: ignore
-except Exception:  # pragma: no cover - allow runtime environments without PyPDF2
+    from pypdf import PdfReader, PdfWriter  # type: ignore
+except Exception:  # pragma: no cover - allow runtime environments without pypdf
     PdfReader = None  # type: ignore
     PdfWriter = None  # type: ignore
 
@@ -53,16 +54,65 @@ _RETRYABLE_STATUS_NAMES = {
 }
 _RETRYABLE_HTTP_STATUSES = {429, 500, 502, 503, 504}
 
-_NOISE_PATTERNS: tuple[re.Pattern[str], ...] = (
-    re.compile(r"(?im)^\s*(fax|facsimile)[: ].*$"),
-    re.compile(r"(?im)\bpage\s+\d+\b.*$"),
+_NOISE_LINE_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"(?im)^\s*(?:fax|facsimile)\s*[:\-].*$"),
+    re.compile(r"(?im)^\s*(?:to|from)\s*[:\-].*$"),
+    re.compile(r"(?im)\bpage(?:\s+|:\s*)\d+(?:\s+of\s+\d+)?\b.*$"),
     re.compile(r"(?im)\b(cpt|icd[- ]?\d*)\b.*$"),
-    re.compile(r"(?im)\bprocedure\s+code[: ]?\d+.*$"),
-    re.compile(r"(?im)\b(billed|billing|charges?)\b.*$"),
+    re.compile(r"(?im)\bprocedure\s+code[: ]?\w+.*$"),
+    re.compile(r"(?im)\b(billed|billing|charges?|ledger|invoice|statement\s+covers\s+period|amount\s+due)\b.*$"),
+    re.compile(r"(?im)\b(payer|health\s+plan\s+id|group\s+no\.?|claim\s+no\.?|account\s+no\.?)\b.*$"),
     re.compile(r"(?im)\b(timestamps?|generated on|scanned on)\b.*$"),
     re.compile(r"(?im)\b(npi|mrn|acct#?)\b.*$"),
+    re.compile(
+        r"(?im)\b(affidavit|notary|custodian|commission\s+expires|state\s+of|county\s+of|sworn|regular\s+course\s+of\s+business|original\s+or\s+duplicate)\b.*$"
+    ),
+    re.compile(r"(?im)\b(true\s+and\s+correct\s+copy|attached\s+hereto)\b.*$"),
+    re.compile(
+        r"(?im)\b(follow\s+(?:the\s+)?instructions\s+from\s+your\s+(?:health\s*care|healthcare)\s+provider)\b.*$"
+    ),
+    re.compile(
+        r"(?im)\b(seek\s+immediate\s+medical\s+attention|go\s+to\s+(?:the\s+)?nearest\s+emergency\s+department|call\s+911)\b.*$"
+    ),
+    re.compile(r"(?im)\b(do\s+not\s+(?:drive|operate\s+heavy\s+machinery))\b.*$"),
+    re.compile(
+        r"(?im)\b(signs?\s+of\s+infection(?:\s+(?:fever|chills|redness|swelling|warmth|drainage))?)\b.*$"
+    ),
+)
+_NOISE_KEYWORD_PATTERN = re.compile(
+    r"(?im)\b("
+    r"affidavit|notary|custodian|commission\s+expires|state\s+of|county\s+of|sworn|true\s+and\s+correct\s+copy|attached\s+hereto|regular\s+course\s+of\s+business|original\s+or\s+duplicate"
+    r"|ledger|invoice|charges?|amount\s+due|payer|health\s+plan\s+id|group\s+no\.?|claim\s+no\.?|account\s+no\.?"
+    r"|follow\s+(?:the\s+)?instructions\s+from\s+your\s+(?:health\s*care|healthcare)\s+provider"
+    r"|seek\s+immediate\s+medical\s+attention|nearest\s+emergency\s+department|call\s+911"
+    r"|signs?\s+of\s+infection"
+    r")\b"
 )
 _NOISE_TABLE_CHARS_RE = re.compile(r"[│║╚═╦╩╣╠┼┤├┐└┘┌─]+")
+
+
+def _strip_noise(raw_text: str) -> str:
+    """Remove fax headers, billing/legal boilerplate, and table debris while retaining spacing."""
+
+    if not raw_text:
+        return ""
+    lines: list[str] = []
+    for raw_line in raw_text.splitlines():
+        table_scrubbed = _NOISE_TABLE_CHARS_RE.sub(" ", raw_line)
+        candidate = table_scrubbed.strip()
+        if not candidate:
+            if lines and lines[-1] != "":
+                lines.append("")
+            continue
+        if any(pattern.search(candidate) for pattern in _NOISE_LINE_PATTERNS):
+            continue
+        if _NOISE_KEYWORD_PATTERN.search(candidate):
+            continue
+        lines.append(candidate)
+    cleaned = "\n".join(lines)
+    cleaned = re.sub(r"[ \t]{2,}", " ", cleaned)
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
+    return cleaned.strip()
 
 
 def clean_ocr_output(raw_text: str) -> str:
@@ -70,10 +120,7 @@ def clean_ocr_output(raw_text: str) -> str:
 
     if not raw_text:
         return ""
-    cleaned = raw_text
-    for pattern in _NOISE_PATTERNS:
-        cleaned = pattern.sub("", cleaned)
-    cleaned = _NOISE_TABLE_CHARS_RE.sub(" ", cleaned)
+    cleaned = _strip_noise(raw_text)
     cleaned = re.sub(r"\s+", " ", cleaned)
     return cleaned.strip()
 
@@ -120,15 +167,16 @@ def _normalise(doc: Dict[str, Any]) -> Dict[str, Any]:
         if not text:
             # Some simplified fixtures may already provide 'text'
             text = p.get("text", "") if isinstance(p, dict) else ""
-        pages_out.append({"page_number": idx, "text": text})
-    full_text = doc.get("text") or " ".join(pg["text"] for pg in pages_out)
+        pages_out.append({"page_number": idx, "text": _strip_noise(text)})
+    full_text_source = doc.get("text") or " ".join(pg["text"] for pg in pages_out)
+    full_text = _strip_noise(full_text_source)
     return {"text": full_text, "pages": pages_out}
 
 
 def _split_pdf_bytes(pdf_bytes: bytes, *, max_pages: int = DEFAULT_CHUNK_MAX_PAGES) -> list[bytes]:
     """Split PDF bytes into <= max_pages chunks."""
     if PdfReader is None or PdfWriter is None:
-        raise OCRServiceError("PyPDF2 is required for PDF splitting but is not installed")
+        raise OCRServiceError("pypdf is required for PDF splitting but is not installed")
     try:
         reader = PdfReader(io.BytesIO(pdf_bytes))
     except Exception as exc:
@@ -235,10 +283,18 @@ def _process_chunk_with_docai(
     project_id: str,
     location: str,
     processor_id: str,
+    cfg: AppConfig,
 ) -> Dict[str, Any]:
     """Process PDF bytes through Document AI and return a normalised payload."""
     try:
-        _name, request = build_docai_request(pdf_bytes, project_id, location, processor_id)
+        _name, request = build_docai_request(
+            pdf_bytes,
+            project_id,
+            location,
+            processor_id,
+            legacy_layout=getattr(cfg, "doc_ai_legacy_layout", False),
+            enable_image_quality_scores=getattr(cfg, "doc_ai_enable_image_quality_scores", True),
+        )
     except ValidationError:
         raise
     except Exception as exc:
@@ -415,7 +471,7 @@ class OCRService:
         if should_split:
             if PdfReader is None or PdfWriter is None:
                 raise OCRServiceError(
-                    "PyPDF2 is required to split oversized PDFs but is not available"
+                    "pypdf is required to split oversized PDFs but is not available"
                 )
             total_pages = actual_pages or estimated_pages
             _LOG.info(
@@ -484,6 +540,7 @@ class OCRService:
             project_id=project_id,
             location=location,
             processor_id=self.processor_id,
+            cfg=self._cfg,
         )
 
     def _process_large_pdf(
@@ -544,6 +601,7 @@ class OCRService:
                     project_id=project_id,
                     location=location,
                     processor_id=self.processor_id,
+                    cfg=self._cfg,
                 )
                 futures.append((future, info))
 
@@ -565,7 +623,7 @@ class OCRService:
             chunk_pages = chunk_result.get("pages", [])
             chunk_text = chunk_result.get("text", "")
             if chunk_text:
-                combined_texts.append(chunk_text)
+                combined_texts.append(_strip_noise(chunk_text))
 
             if chunk_pages:
                 for page in chunk_pages:
@@ -574,14 +632,14 @@ class OCRService:
                     combined_pages.append(
                         {
                             "page_number": absolute_page,
-                            "text": page.get("text", ""),
+                            "text": _strip_noise(page.get("text", "")),
                         }
                     )
                 page_offset += len(chunk_pages)
             elif chunk_text:
                 fallback_page = {
                     "page_number": page_offset + 1,
-                    "text": chunk_text,
+                    "text": _strip_noise(chunk_text),
                 }
                 combined_pages.append(fallback_page)
                 page_offset += 1
@@ -592,6 +650,7 @@ class OCRService:
         full_text = "\n".join(text for text in combined_texts if text)
         if not full_text and combined_pages:
             full_text = " ".join(page.get("text", "") for page in combined_pages)
+        full_text = _strip_noise(full_text)
 
         return {"text": full_text, "pages": combined_pages}
 
@@ -841,13 +900,35 @@ def run_splitter(  # pylint: disable=too-many-arguments
             job_snapshot = None
     started_at = time.perf_counter()
     operation = client.batch_process_documents(request=request)
-    result = _poll_operation(
-        operation,
-        stage="docai_splitter",
-        job_id=job_id,
-        trace_id=trace_id,
-        sleep_fn=sleep_fn,
-    )
+    try:
+        result = _poll_operation(
+            operation,
+            stage="docai_splitter",
+            job_id=job_id,
+            trace_id=trace_id,
+            sleep_fn=sleep_fn,
+        )
+    except Exception as exc:
+        if resolved_store and job_id:
+            try:
+                resolved_store.mark_status(
+                    job_id,
+                    PipelineStatus.FAILED,
+                    stage="DOC_AI_SPLITTER",
+                    message=str(exc),
+                    extra={"input_uri": gcs_uri},
+                    updates={"last_error": {"stage": "docai_splitter", "error": str(exc)}},
+                )
+            except Exception:
+                _LOG.exception("split_state_mark_failure_failed", extra={"job_id": job_id, "trace_id": trace_id})
+        publish_pipeline_failure(
+            stage="DOC_AI_SPLITTER",
+            job_id=job_id,
+            trace_id=trace_id,
+            error=exc,
+            metadata={"input_uri": gcs_uri},
+        )
+        raise
     duration_ms = int((time.perf_counter() - started_at) * 1000)
     output_uri = _extract_gcs_output(result) or destination_uri
     shards = _extract_shards(result, output_uri)
@@ -921,7 +1002,7 @@ def run_batch_ocr(  # pylint: disable=too-many-arguments
     trace_id: str | None = None,
     state_store: PipelineStateStore | None = None,
     client: Any | None = None,
-    max_concurrency: int = 12,
+    max_concurrency: int | None = None,
     sleep_fn: Callable[[float], None] = time.sleep,
 ) -> Dict[str, Any]:
     if not shards:
@@ -934,6 +1015,9 @@ def run_batch_ocr(  # pylint: disable=too-many-arguments
         raise OCRServiceError("DOC_AI_PROCESSOR_ID not configured")
     output_bucket = output_bucket or cfg.output_gcs_bucket
     base_prefix = output_prefix or f"ocr/{job_id or uuid.uuid4().hex}/"
+
+    if max_concurrency is None:
+        max_concurrency = max(1, getattr(cfg, "max_shard_concurrency", 4))
 
     client = client or documentai.DocumentProcessorServiceClient(
         client_options=ClientOptions(api_endpoint=f"{location}-documentai.googleapis.com")
@@ -1035,6 +1119,13 @@ def run_batch_ocr(  # pylint: disable=too-many-arguments
                     )
                 except Exception:
                     _LOG.exception("ocr_state_mark_failure_failed", extra={"job_id": job_id, "trace_id": trace_id})
+            publish_pipeline_failure(
+                stage="DOC_AI_OCR",
+                job_id=job_id,
+                trace_id=trace_id,
+                error=exc,
+                metadata={"shard_uri": shard_uri},
+            )
             raise
 
         output_uri = _extract_gcs_output(result) or dest_uri

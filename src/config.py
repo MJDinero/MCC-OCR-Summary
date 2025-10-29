@@ -9,7 +9,7 @@ Retained variables (env names in parentheses):
  - DOC_AI_PROCESSOR_ID
  - OPENAI_API_KEY
  - DRIVE_INPUT_FOLDER_ID
- - DRIVE_REPORT_FOLDER_ID (MedCostContain Output Folder `1eyMO0126VfLBK3bBQEpWlVOL6tWxriCE`)
+ - DRIVE_REPORT_FOLDER_ID (MedCostContain Output Folder `130jJzsl3OBzMD8weGfBOaXikfEnD2KVg`)
  - GOOGLE_APPLICATION_CREDENTIALS (used implicitly by Google clients)
 
 All legacy flags (metrics, sheets, multiple processor fallbacks, CORS, etc.) removed.
@@ -48,8 +48,11 @@ class AppConfig(BaseSettings):
         validation_alias=AliasChoices('DOC_AI_PROCESSOR_ID', 'DOC_AI_OCR_PROCESSOR_ID'),
     )
     doc_ai_splitter_id: str | None = Field(None, validation_alias='DOC_AI_SPLITTER_PROCESSOR_ID')
+    doc_ai_legacy_layout: bool = Field(False, validation_alias='DOC_AI_LEGACY_LAYOUT')
+    doc_ai_enable_image_quality_scores: bool = Field(True, validation_alias='DOC_AI_ENABLE_IMAGE_QUALITY_SCORES')
     openai_api_key: str | None = Field(None, validation_alias='OPENAI_API_KEY')
     openai_model: str | None = Field(None, validation_alias='OPENAI_MODEL')
+    internal_event_token: str = Field('', validation_alias='INTERNAL_EVENT_TOKEN')
     use_refactored_summariser_raw: str | bool | None = Field(False, validation_alias='USE_REFACTORED_SUMMARISER')
     drive_input_folder_id: str = Field('', validation_alias='DRIVE_INPUT_FOLDER_ID')
     drive_report_folder_id: str = Field('', validation_alias='DRIVE_REPORT_FOLDER_ID')
@@ -79,6 +82,7 @@ class AppConfig(BaseSettings):
     summary_dlq_topic: str = Field('projects/demo/topics/summary-dlq', validation_alias='SUMMARY_DLQ_TOPIC')
     storage_dlq_topic: str = Field('projects/demo/topics/storage-dlq', validation_alias='STORAGE_DLQ_TOPIC')
     cmek_key_name: str | None = Field(None, validation_alias='CMEK_KEY_NAME')
+    pipeline_state_kms_key: str | None = Field(None, validation_alias='PIPELINE_STATE_KMS_KEY')
     enable_diag_endpoints_raw: str | bool | None = Field(False, validation_alias='ENABLE_DIAG_ENDPOINTS')
     max_words: int = Field(200, validation_alias='MAX_WORDS')
     chunk_size: int = Field(4000, validation_alias='CHUNK_SIZE')
@@ -88,6 +92,7 @@ class AppConfig(BaseSettings):
     summary_bigquery_dataset: str = Field('mcc_summary', validation_alias='SUMMARY_BIGQUERY_DATASET')
     summary_bigquery_table: str = Field('summaries', validation_alias='SUMMARY_BIGQUERY_TABLE')
     summary_output_bucket: str = Field('quantify-agent-summary', validation_alias='SUMMARY_OUTPUT_BUCKET')
+    service_account_json: str | None = Field(None, validation_alias='SERVICE_ACCOUNT_JSON')
 
     # Hard (safe) defaults
     max_pdf_bytes: int = 20 * 1024 * 1024  # 20MB limit for uploaded PDFs
@@ -112,6 +117,9 @@ class AppConfig(BaseSettings):
             "drive_shared_drive_id",
             "drive_impersonation_user",
             "cmek_key_name",
+            "pipeline_state_kms_key",
+            "service_account_json",
+            "internal_event_token",
         )
         for field_name in secret_fields:
             value = getattr(self, field_name, None)
@@ -152,6 +160,7 @@ class AppConfig(BaseSettings):
             ("intake_gcs_bucket", self.intake_gcs_bucket, "INTAKE_GCS_BUCKET"),
             ("output_gcs_bucket", self.output_gcs_bucket, "OUTPUT_GCS_BUCKET"),
             ("summary_bucket", self.summary_bucket, "SUMMARY_BUCKET"),
+            ("internal_event_token", self.internal_event_token, "INTERNAL_EVENT_TOKEN"),
         ]
         missing = [name for name, value, _env in required_pairs if not value]
 
@@ -172,6 +181,7 @@ class AppConfig(BaseSettings):
             "INTAKE_GCS_BUCKET",
             "OUTPUT_GCS_BUCKET",
             "SUMMARY_BUCKET",
+            "INTERNAL_EVENT_TOKEN",
         }
         unmet_env: list[str] = []
         for name, value, env_name in required_pairs:
@@ -201,6 +211,8 @@ class AppConfig(BaseSettings):
         optional_pairs = [
             ("drive_impersonation_user", self.drive_impersonation_user, "DRIVE_IMPERSONATION_USER"),
             ("cmek_key_name", self.cmek_key_name, "CMEK_KEY_NAME"),
+            ("pipeline_state_kms_key", self.pipeline_state_kms_key, "PIPELINE_STATE_KMS_KEY"),
+            ("service_account_json", self.service_account_json, "SERVICE_ACCOUNT_JSON"),
             (
                 "google_application_credentials",
                 self.google_application_credentials or os.getenv("GOOGLE_APPLICATION_CREDENTIALS"),

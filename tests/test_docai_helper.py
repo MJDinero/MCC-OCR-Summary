@@ -2,7 +2,7 @@ import pytest
 from types import SimpleNamespace
 from google.api_core import exceptions as gexc
 
-from src.services.docai_helper import OCRService, run_splitter, run_batch_ocr
+from src.services.docai_helper import OCRService, run_splitter, run_batch_ocr, clean_ocr_output
 from src.errors import OCRServiceError, ValidationError
 from src.config import AppConfig, get_config
 from src.services.pipeline import InMemoryStateStore, PipelineJobCreate, PipelineStatus
@@ -26,6 +26,42 @@ class DummyClient:
 def make_cfg():
     return AppConfig(project_id="proj", DOC_AI_LOCATION="us", DOC_AI_OCR_PROCESSOR_ID="pid")
 
+
+def test_clean_ocr_output_strips_transport_headers():
+    raw = (
+        "To: +12145551234\n"
+        "Fax: 214-555-9999\n"
+        "Page: 2 of 5\n"
+        "Clinical summary states patient followed up with provider.\n"
+        "From: Records Desk\n"
+        "Affidavit of Custodian of Records\n"
+        "State of Texas, County of Dallas\n"
+        "Sworn statement and true and correct copy attached hereto.\n"
+        "Invoice 12345 Total Charges\n"
+        "Commission expires March 2027\n"
+        "Regular course of business attestment by custodian\n"
+        "Payer: Blue Cross PPO\n"
+        "Health Plan ID: AB-12345\n"
+        "Follow the instructions from your healthcare provider and call 911 if symptoms worsen.\n"
+        "Signs of infection such as fever or redness should prompt immediate medical attention.\n"
+        "Follow-up scheduled next month."
+    )
+    cleaned = clean_ocr_output(raw)
+    assert "Clinical summary states patient followed up with provider." in cleaned
+    assert "Follow-up scheduled next month." in cleaned
+    assert "To:" not in cleaned
+    assert "Fax" not in cleaned
+    assert "Page" not in cleaned
+    assert "Affidavit" not in cleaned
+    assert "County of Dallas" not in cleaned
+    assert "Invoice" not in cleaned
+    assert "true and correct copy" not in cleaned.lower()
+    assert "Commission expires" not in cleaned
+    assert "regular course of business" not in cleaned.lower()
+    assert "Payer:" not in cleaned
+    assert "Health Plan ID" not in cleaned
+    assert "Follow the instructions" not in cleaned
+    assert "Signs of infection" not in cleaned
 
 def test_success_first_try():
     client = DummyClient([{"text": "Hello", "pages": [{"text": "Hello"}]}])
@@ -227,6 +263,11 @@ def test_run_batch_ocr_propagates_poll_errors(monkeypatch):
         raise RuntimeError("ocr shard failed")
 
     monkeypatch.setattr("src.services.docai_helper._poll_operation", _failing_poll)
+    published: list[dict] = []
+    monkeypatch.setattr(
+        "src.services.docai_helper.publish_pipeline_failure",
+        lambda **kwargs: published.append(kwargs),
+    )
 
     with pytest.raises(RuntimeError):
         run_batch_ocr(
@@ -247,3 +288,5 @@ def test_run_batch_ocr_propagates_poll_errors(monkeypatch):
     failed_job = store.get_job(job.job_id)
     assert failed_job.status is PipelineStatus.FAILED
     assert failed_job.last_error["stage"] == "ocr"
+    assert published and published[0]["stage"] == "DOC_AI_OCR"
+    assert published[0]["job_id"] == job.job_id

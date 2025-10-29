@@ -184,6 +184,11 @@ async def _execute_pipeline(request: Request, *, pdf_bytes: bytes, source: str) 
     return pdf_payload, validation, drive_file_id
 
 
+@router.get("/healthz", tags=["health"])
+async def health_check(_: Request) -> JSONResponse:
+    return JSONResponse({"status": "ok"})
+
+
 @router.post("", tags=["process"])
 async def process_pdf(request: Request, file: UploadFile) -> Response:
     pdf_bytes = await file.read()
@@ -194,10 +199,12 @@ async def process_pdf(request: Request, file: UploadFile) -> Response:
 @router.get("/drive", tags=["process"])
 async def process_drive(request: Request, file_id: str = Query(..., min_length=1)) -> JSONResponse:
     trace_id = _extract_trace_id(request)
+    cfg = request.app.state.config
     try:
         pdf_bytes = request.app.state.drive_client.download_pdf(
             file_id,
             log_context={"trace_id": trace_id, "phase": "drive_download"},
+            quota_project=getattr(cfg, "project_id", None),
         )
     except ValidationError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

@@ -28,6 +28,27 @@ def test_build_request_from_bytes_success():
     assert req["raw_document"]["mime_type"] == "application/pdf"
 
 
+def test_build_request_with_quality_scores_disabled():
+    _, req = build_docai_request(
+        VALID_PDF,
+        "p",
+        "us",
+        "x",
+        filename="file.pdf",
+        legacy_layout=True,
+        enable_image_quality_scores=False,
+    )
+    ocr = req["process_options"]["ocr_config"]
+    assert "legacy_layout" in ocr["advanced_ocr_options"]
+    assert "enable_image_quality_scores" not in ocr
+
+
+def test_build_request_with_quality_scores_enabled_by_default():
+    _, req = build_docai_request(VALID_PDF, "p", "us", "x", filename="file.pdf")
+    ocr_config = req.get("process_options", {}).get("ocr_config", {})
+    assert ocr_config.get("enable_image_quality_scores") is True
+
+
 def test_invalid_extension_path():
     path = _write_pdf(VALID_PDF, suffix=".txt")
     with pytest.raises(ValidationError):

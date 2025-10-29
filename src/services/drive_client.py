@@ -30,6 +30,13 @@ _LOG = logging.getLogger("drive_client")
 _ID_PATTERN = re.compile(r"[A-Za-z0-9_-]{10,}")
 
 
+def _format_resource_keys(ids_to_keys: Optional[Dict[str, str]]) -> Optional[str]:
+    if not ids_to_keys:
+        return None
+    pairs = [f"{fid}/{rk}" for fid, rk in ids_to_keys.items() if fid and rk]
+    return ",".join(pairs) if pairs else None
+
+
 def _mask_drive_id(file_id: str | None) -> str | None:
     if not file_id:
         return None
@@ -182,6 +189,8 @@ def download_pdf(
     *,
     mime_type: str = "application/pdf",
     log_context: Optional[Dict[str, Any]] = None,
+    quota_project: Optional[str] = None,
+    resource_key: Optional[str] = None,
 ) -> bytes:
     """Download a file from Drive, enforcing PDF payloads and optional structured logging."""
     if not file_id:
@@ -190,6 +199,9 @@ def download_pdf(
         raise ValueError(f"Unsupported mime_type {mime_type!r} for download_pdf")
 
     extra_context: Dict[str, Any] = {"file_id": file_id}
+    if resource_key:
+        masked_key = f"{resource_key[:4]}***{resource_key[-4:]}" if len(resource_key) > 8 else resource_key
+        extra_context["resource_key"] = masked_key
     if log_context:
         extra_context.update(log_context)
         try:
@@ -201,10 +213,31 @@ def download_pdf(
 
     service = _drive_service()
     # Attempt Shared Drive parameter if supported (mock in tests doesn't accept it)
+    request_kwargs: Dict[str, Any] = {"fileId": file_id}
+    if resource_key:
+        request_kwargs["resourceKey"] = resource_key
     try:  # pragma: no cover - thin wrapper
-        request = service.files().get_media(fileId=file_id, supportsAllDrives=True)  # type: ignore[attr-defined]
+        request = service.files().get_media(supportsAllDrives=True, **request_kwargs)  # type: ignore[attr-defined]
     except TypeError:  # fallback for environments / mocks without param
-        request = service.files().get_media(fileId=file_id)
+        fallback_kwargs = {"fileId": file_id}
+        if resource_key:
+            fallback_kwargs["resourceKey"] = resource_key
+        request = service.files().get_media(**fallback_kwargs)
+
+    # Ensure quota project and resource keys headers propagate.
+    if not hasattr(request, "headers") or request.headers is None:  # type: ignore[attr-defined]
+        request.headers = {}
+    quota_value = quota_project
+    if not quota_value:
+        try:
+            quota_value = getattr(get_config(), "project_id", None)
+        except Exception:  # pragma: no cover - config fallback for tests
+            quota_value = None
+    if quota_value:
+        request.headers["X-Goog-User-Project"] = quota_value
+    header_value = _format_resource_keys({file_id: resource_key} if resource_key else None)
+    if header_value:
+        request.headers["X-Goog-Drive-Resource-Keys"] = header_value
     buf = io.BytesIO()
     downloader = MediaIoBaseDownload(buf, request)
     done = False
@@ -231,9 +264,15 @@ def upload_pdf(
         raise ValueError('file_bytes must be a PDF (bytes starting with %PDF-)')
     cfg = get_config()
     config_folder = (cfg.drive_report_folder_id or "").strip()
+    explicit_output = (os.getenv("OUTPUT_FOLDER_ID") or "").strip()
     env_output = (os.getenv("DRIVE_OUTPUT_FOLDER_ID") or "").strip()
     env_report = (os.getenv("DRIVE_REPORT_FOLDER_ID") or "").strip()
-    canonical_folder = (config_folder or env_output or env_report).strip()
+    canonical_folder = (config_folder or explicit_output or env_output or env_report).strip()
+    if explicit_output:
+        _LOG.info(
+            "drive_output_folder_env",
+            extra={"folder_id": explicit_output, "source": "OUTPUT_FOLDER_ID"},
+        )
     if not canonical_folder:
         raise RuntimeError("DRIVE_OUTPUT_FOLDER_ID must be configured")
     folder_source = (parent_folder_id or canonical_folder).strip()

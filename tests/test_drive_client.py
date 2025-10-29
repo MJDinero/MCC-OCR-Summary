@@ -1,9 +1,12 @@
+from __future__ import annotations
+
 from typing import Any
 import json
 
 import pytest
 
 from src.services import drive_client as dc
+from src.services.drive_client import _format_resource_keys
 
 
 class _DummyDownloader:
@@ -20,6 +23,7 @@ class _DummyDownloader:
 class _Req:
     def __init__(self, data: bytes):
         self.data = data
+        self.headers: dict[str, str] = {}
     # MediaIoBaseDownload expects .execute-like interface via its wrapper; we simulate stream by write in downloader
 
 
@@ -27,8 +31,14 @@ class _FilesResource:
     def __init__(self, pdf_bytes: bytes):
         self._pdf_bytes = pdf_bytes
         self.created: dict[str, Any] = {}
-    def get_media(self, fileId: str):  # noqa: N802
-        return _Req(self._pdf_bytes)
+        self.last_get_media_kwargs: dict[str, Any] = {}
+        self.last_request: _Req | None = None
+
+    def get_media(self, fileId: str, **kwargs):  # noqa: N802
+        self.last_get_media_kwargs = {"fileId": fileId, **kwargs}
+        req = _Req(self._pdf_bytes)
+        self.last_request = req
+        return req
     def create(self, body, media_body, fields, enforceSingleParent=False):  # noqa: D401
         class _Exec:
             def __init__(self, outer, body):
@@ -84,7 +94,9 @@ class _FakeMediaUpload:
 @pytest.fixture(autouse=True)
 def patch_google(monkeypatch, tmp_path):
     # patch builder
-    monkeypatch.setenv('DRIVE_REPORT_FOLDER_ID', 'out-folder')
+    output_folder = '130jJzsl3OBzMD8weGfBOaXikfEnD2KVg'
+    monkeypatch.setenv('DRIVE_REPORT_FOLDER_ID', output_folder)
+    monkeypatch.setenv('OUTPUT_FOLDER_ID', output_folder)
     monkeypatch.setenv('DRIVE_SHARED_DRIVE_ID', '0AFPP3mbSAh_oUk9PVA')
     monkeypatch.setenv('DRIVE_INPUT_FOLDER_ID', 'in-folder')
     monkeypatch.setenv('PROJECT_ID', 'proj')
@@ -122,13 +134,44 @@ def patch_google(monkeypatch, tmp_path):
     monkeypatch.setattr(dc, 'build', fake_build)
     monkeypatch.setattr(dc, 'MediaIoBaseDownload', _FakeMediaDownload)
     monkeypatch.setattr(dc, 'MediaIoBaseUpload', _FakeMediaUpload)
-    monkeypatch.setattr(dc, '_resolve_folder_metadata', lambda fid: {"id": fid, "driveId": "0AFPP3mbSAh_oUk9PVA"})
+    def _fake_resolve(fid):
+        assert fid == output_folder
+        return {"id": fid, "driveId": "0AFPP3mbSAh_oUk9PVA"}
+
+    monkeypatch.setattr(dc, '_resolve_folder_metadata', _fake_resolve)
     yield
 
 
 def test_download_pdf_success():
     data = dc.download_pdf('file123')
     assert data.startswith(b'%PDF-')
+
+
+def test_format_resource_keys():
+    formatted = _format_resource_keys({"abc": "rk1", "def": "rk2"})
+    assert formatted in {"abc/rk1,def/rk2", "def/rk2,abc/rk1"}
+
+
+def test_download_pdf_sets_headers(monkeypatch):
+    pdf_bytes = b"%PDF-1.4 test-resource-key"
+    service = _Service(pdf_bytes)
+
+    def fake_build(serviceName, version, credentials=None, cache_discovery=False):  # noqa: N802
+        return service
+
+    monkeypatch.setattr(dc, 'build', fake_build)
+    monkeypatch.setattr(dc, 'MediaIoBaseDownload', _FakeMediaDownload)
+
+    data = dc.download_pdf(
+        'file123',
+        quota_project='quantify-agent',
+        resource_key='rk-1234567890',
+    )
+    assert data.startswith(b'%PDF-')
+    request = service._files.last_request
+    assert request is not None
+    assert request.headers["X-Goog-User-Project"] == 'quantify-agent'
+    assert request.headers["X-Goog-Drive-Resource-Keys"] == 'file123/rk-1234567890'
 
 
 def test_download_pdf_not_pdf(monkeypatch):

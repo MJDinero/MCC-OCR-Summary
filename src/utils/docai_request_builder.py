@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import mimetypes
 from pathlib import Path
-from typing import Optional, Tuple, Union
+from typing import Any, Optional, Tuple, Union
 
 from src.errors import ValidationError
 
@@ -50,6 +50,8 @@ def build_docai_request(
     processor_id: str,
     *,
     filename: Optional[str] = None,
+    legacy_layout: bool = False,
+    enable_image_quality_scores: bool = True,
 ) -> Tuple[str, dict]:
     """Return (resource_name, request_dict) for DocumentProcessorServiceClient.process_document.
 
@@ -95,6 +97,18 @@ def build_docai_request(
         "name": resource_name,
         "raw_document": {"content": data, "mime_type": "application/pdf"},
     }
+
+    ocr_config: dict[str, Any] = {}
+    advanced: list[str] = []
+    if legacy_layout:
+        advanced.append("legacy_layout")
+    if advanced:
+        ocr_config["advanced_ocr_options"] = advanced
+    if enable_image_quality_scores:
+        ocr_config["enable_image_quality_scores"] = True
+    if ocr_config:
+        request["process_options"] = {"ocr_config": ocr_config}
+
     return resource_name, request
 
 
