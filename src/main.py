@@ -19,10 +19,14 @@ from src.logging_setup import configure_logging
 from src.services import drive_client as drive_client_module
 from src.services.docai_helper import OCRService
 from src.services.metrics import PrometheusMetrics, NullMetrics
-from src.services.pdf_writer import MinimalPDFBackend, PDFWriter
+from src.services.pdf_writer import MinimalPDFBackend, PDFWriter, ReportLabBackend
 from src.services.pipeline import (
     create_state_store_from_env,
     create_workflow_launcher_from_env,
+)
+from src.services.summariser import (
+    OpenAIBackend as LegacyOpenAIBackend,
+    Summariser as LegacySummariser,
 )
 from src.services.summariser_refactored import (
     OpenAIResponsesBackend,
@@ -100,6 +104,13 @@ class _DriveClientAdapter:
         return getattr(drive_client_module, item)
 
 
+def _normalise_mode(raw: str | None, *, default: str, allowed: set[str]) -> str:
+    if raw is None:
+        return default
+    value = str(raw).strip().lower()
+    return value if value in allowed else default
+
+
 def _build_summariser(stub_mode: bool, *, cfg) -> Any:
     if stub_mode:
 
@@ -122,12 +133,35 @@ def _build_summariser(stub_mode: bool, *, cfg) -> Any:
 
         return _StubSummariser()
 
-    backend = OpenAIResponsesBackend(
+    compose_mode = _normalise_mode(
+        getattr(cfg, "summary_compose_mode", None),
+        default="refactored",
+        allowed={"legacy", "refactored"},
+    )
+    if compose_mode == "legacy":
+        legacy_backend = LegacyOpenAIBackend(
+            model=cfg.openai_model or "gpt-4o-mini",
+            api_key=cfg.openai_api_key,
+        )
+        return LegacySummariser(backend=legacy_backend)
+
+    refactored_backend = OpenAIResponsesBackend(
         model=cfg.openai_model or "gpt-4o-mini",
         api_key=cfg.openai_api_key,
     )
-    # Always rely on the refactored hierarchical summariser for production workloads.
-    return RefactoredSummariser(backend=backend)
+    return RefactoredSummariser(backend=refactored_backend)
+
+
+def _build_pdf_writer(*, cfg) -> tuple[str, PDFWriter, str]:
+    writer_mode = _normalise_mode(
+        getattr(cfg, "pdf_writer_mode", None),
+        default="rich",
+        allowed={"minimal", "rich", "reportlab"},
+    )
+    if writer_mode == "minimal":
+        return writer_mode, PDFWriter(MinimalPDFBackend()), "minimal"
+    backend_label = "reportlab" if writer_mode == "reportlab" else "rich"
+    return "rich", PDFWriter(ReportLabBackend()), backend_label
 
 
 def _configure_state_store() -> tuple["PipelineStateStore", "WorkflowLauncher"]:
@@ -177,8 +211,19 @@ def create_app() -> FastAPI:
     else:
         app.state.ocr_service = OCRService(processor_id=cfg.doc_ai_processor_id, config=cfg)  # type: ignore[assignment]
 
+    compose_mode = _normalise_mode(
+        getattr(cfg, "summary_compose_mode", None),
+        default="refactored",
+        allowed={"legacy", "refactored"},
+    )
+    app.state.summary_compose_mode = compose_mode
+    app.state.enable_noise_filters = bool(getattr(cfg, "enable_noise_filters", True))
+
     app.state.summariser = _build_summariser(stub_mode, cfg=cfg)
-    app.state.pdf_writer = PDFWriter(MinimalPDFBackend())
+    writer_mode, pdf_writer, writer_backend = _build_pdf_writer(cfg=cfg)
+    app.state.pdf_writer = pdf_writer
+    app.state.pdf_writer_mode = writer_mode
+    app.state.writer_backend = writer_backend
     app.state.drive_client = _DriveClientAdapter(stub=stub_mode, config=cfg)
 
     internal_token = resolve_secret_env(

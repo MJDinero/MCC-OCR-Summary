@@ -63,6 +63,13 @@ class AppConfig(BaseSettings):
     use_refactored_summariser_raw: str | bool | None = Field(
         False, validation_alias="USE_REFACTORED_SUMMARISER"
     )
+    summary_compose_mode_raw: str | None = Field(
+        "refactored", validation_alias="SUMMARY_COMPOSE_MODE"
+    )
+    pdf_writer_mode_raw: str | None = Field("rich", validation_alias="PDF_WRITER_MODE")
+    enable_noise_filters_raw: str | bool | None = Field(
+        True, validation_alias="ENABLE_NOISE_FILTERS"
+    )
     drive_input_folder_id: str = Field("", validation_alias="DRIVE_INPUT_FOLDER_ID")
     drive_report_folder_id: str = Field("", validation_alias="DRIVE_REPORT_FOLDER_ID")
     drive_shared_drive_id: str | None = Field(
@@ -193,6 +200,27 @@ class AppConfig(BaseSettings):
     @property
     def use_refactored_summariser(self) -> bool:
         raw = self.use_refactored_summariser_raw
+        if isinstance(raw, bool):
+            return raw
+        return parse_bool(str(raw))
+
+    @property
+    def summary_compose_mode(self) -> str:
+        raw = (self.summary_compose_mode_raw or "").strip().lower()
+        if raw in {"legacy", "refactored"}:
+            return raw
+        return "refactored"
+
+    @property
+    def pdf_writer_mode(self) -> str:
+        raw = (self.pdf_writer_mode_raw or "").strip().lower()
+        if raw in {"minimal", "rich", "reportlab"}:
+            return raw
+        return "rich"
+
+    @property
+    def enable_noise_filters(self) -> bool:
+        raw = self.enable_noise_filters_raw
         if isinstance(raw, bool):
             return raw
         return parse_bool(str(raw))
