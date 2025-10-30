@@ -24,6 +24,7 @@ import os
 import re
 import textwrap
 import time
+import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Protocol, Any, Iterable, Optional, Tuple
@@ -455,28 +456,43 @@ _LEGAL_NOISE_PHRASES: tuple[str, ...] = (
 
 _NON_ALNUM_RE = re.compile(r"[^a-z0-9]+")
 
-_FINAL_NOISE_FRAGMENTS: tuple[str, ...] = (
-    "temporary localized increase in pain",
-    "fever, facial flushing",
-    "call the office immediately",
-    "emergency room",
-    "patient education",
-    "discharge instructions",
-    "no heavy lifting",
-    "facet injections are mostly a diagnostic tool",
-    "medial branch blocks are spinal injections",
-    "i retain the right to refuse",
-    "plan of care (continued)",
-    "thank you for choosing",
-    "return to your normal activities",
-    "instructions, prescriptions",
-    "educated on care of site",
-    "workers comp",
-    "potential for additional necessary care",
-    "order status",
-    "department status",
-    "follow-up evaluation date",
+_FINAL_NOISE_PATTERN_STRINGS: tuple[str, ...] = (
+    r"temporary localized increase in pain",
+    r"fever, facial flushing",
+    r"call the office immediately",
+    r"emergency room",
+    r"patient education",
+    r"discharge instructions",
+    r"no heavy lifting",
+    r"facet injections are mostly a diagnostic tool",
+    r"medial branch blocks are spinal injections",
+    r"i retain the right to refuse",
+    r"plan of care \(continued\)",
+    r"thank you for choosing",
+    r"return to your normal activities",
+    r"instructions, prescriptions",
+    r"educated on care of site",
+    r"workers? comp",
+    r"potential for additional necessary care",
+    r"order status",
+    r"department status",
+    r"follow-up evaluation date",
+    r"document processed in \d+\s+chunk(?:s)?",
+    r"female patients pregnancy",
+    r"please fill your prescriptions",
+    r"pharmacy only:",
+    r"write the percentage relief",
+    r"greater [\w\s]+ orthopedic",
+    r"\bi understand that\b",
+    r"patient (education|consent|privacy notice)",
 )
+
+_FINAL_NOISE_PATTERNS: tuple[re.Pattern[str], ...] = tuple(
+    re.compile(pattern, re.IGNORECASE) for pattern in _FINAL_NOISE_PATTERN_STRINGS
+)
+
+_SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+")
+_TOKEN_RE = re.compile(r"[a-z0-9]+")
 
 
 def _sanitise_keywords(text: str) -> str:
@@ -489,7 +505,8 @@ def _sanitise_keywords(text: str) -> str:
 def _clean_text(raw: str) -> str:
     """Normalise OCR text by removing control chars and collapsing whitespace."""
 
-    cleaned = _CONTROL_CHARS_RE.sub(" ", raw or "")
+    normalised = _normalize_text(raw or "")
+    cleaned = _CONTROL_CHARS_RE.sub(" ", normalised)
     collapsed = _WHITESPACE_RE.sub(" ", cleaned)
     return collapsed.strip()
 
@@ -503,32 +520,317 @@ def _normalise_line_key(value: str) -> str:
     return _NON_ALNUM_RE.sub(" ", value.lower()).strip()
 
 
-def _strip_noise_lines(text: str) -> str:
-    cleaned: List[str] = []
-    for raw_line in text.splitlines():
-        line = raw_line.strip()
-        low = line.lower()
-        if not line:
-            if cleaned and cleaned[-1] != "":
+def _normalize_text(value: str) -> str:
+    normalised = unicodedata.normalize("NFKC", value or "")
+    try:
+        ascii_normalised = normalised.encode("ascii", "ignore").decode("ascii")
+    except Exception:
+        ascii_normalised = normalised
+    return ascii_normalised
+
+
+def _matches_noise_fragment(value: str) -> bool:
+    if not value:
+        return False
+    return any(pattern.search(value) for pattern in _FINAL_NOISE_PATTERNS)
+
+
+def _strip_noise_lines(lines: Iterable[str]) -> list[str]:
+    cleaned: list[str] = []
+    pending_blank = False
+
+    for raw in lines:
+        raw_str = raw or ""
+        core = raw_str.lstrip("-• ").strip()
+        if not core:
+            if cleaned and not pending_blank:
                 cleaned.append("")
+                pending_blank = True
             continue
-        if _contains_noise_phrase(line):
+        if _contains_noise_phrase(core):
             continue
-        if any(fragment in low for fragment in _FINAL_NOISE_FRAGMENTS):
+        if _matches_noise_fragment(core):
             continue
+        low = core.lower()
         if "call" in low and "immediately" in low:
-            continue
-        if "thank you for choosing" in low:
             continue
         if low.count(",") >= 4 and ("risk" in low or "hazard" in low):
             continue
-        if len(low) and sum(ch.isalpha() for ch in line) < 4:
+        if sum(ch.isalpha() for ch in core) < 4:
             continue
-        cleaned.append(raw_line)
-    # Remove trailing blank lines
+        cleaned.append(raw_str.strip())
+        pending_blank = False
+
     while cleaned and not cleaned[-1].strip():
         cleaned.pop()
-    return "\n".join(cleaned)
+    return cleaned
+
+
+def _limit_sentences(text: str, max_sentences: int) -> str:
+    sentences = [segment.strip() for segment in _SENTENCE_SPLIT_RE.split(text) if segment.strip()]
+    if not sentences:
+        return ""
+    limited = " ".join(sentences[:max_sentences]).strip()
+    return limited
+
+
+def _looks_all_caps(text: str) -> bool:
+    letters = [ch for ch in text if ch.isalpha()]
+    if not letters:
+        return False
+    uppercase = sum(1 for ch in letters if ch.isupper())
+    return uppercase / max(1, len(letters)) >= 0.8
+
+
+_ADMIN_KEYWORDS = (
+    "consent",
+    "privacy notice",
+    "policy",
+    "insurance",
+    "billing",
+    "payment",
+    "signature",
+    "percentage relief",
+    "pharmacy only",
+    "document processed",
+    "refill request",
+    "patient education",
+)
+
+_VITAL_TOKENS = (
+    "blood pressure",
+    "vital",
+    "pulse",
+    "temperature",
+    "heart rate",
+    "respiratory rate",
+    "oxygen saturation",
+)
+
+
+def _is_admin_noise(text: str) -> bool:
+    low = text.lower()
+    if any(keyword in low for keyword in _ADMIN_KEYWORDS):
+        return True
+    if low.startswith("document processed"):
+        return True
+    return False
+
+
+_DETAIL_VITAL_RE = re.compile(
+    r"\b(blood pressure|bp|pulse|heart rate|temperature|respiratory|oxygen saturation)\b",
+    re.IGNORECASE,
+)
+
+
+def _filter_intro_lines(lines: Iterable[str]) -> List[str]:
+    filtered: List[str] = []
+    for line in lines:
+        text = _limit_sentences(line, 2)
+        if not text:
+            continue
+        low = text.lower()
+        if _is_admin_noise(text):
+            continue
+        if any(token in low for token in _VITAL_TOKENS):
+            continue
+        if _matches_noise_fragment(text):
+            continue
+        filtered.append(text)
+        if len(filtered) >= 3:
+            break
+    return filtered
+
+
+def _filter_key_points(lines: Iterable[str]) -> List[str]:
+    filtered: List[str] = []
+    for line in lines:
+        text = _limit_sentences(line, 2)
+        if not text:
+            continue
+        if _is_admin_noise(text) or _matches_noise_fragment(text):
+            continue
+        if _looks_all_caps(text):
+            continue
+        filtered.append(text)
+    return filtered
+
+
+def _filter_details(lines: Iterable[str]) -> List[str]:
+    filtered: List[str] = []
+    impressions: List[str] = []
+    seen_keys: set[str] = set()
+    vital_seen = False
+
+    for line in lines:
+        text = _limit_sentences(line, 2)
+        if not text:
+            continue
+        if _is_admin_noise(text) or _matches_noise_fragment(text):
+            continue
+        norm_key = _normalise_line_key(text)
+        if not norm_key or norm_key in seen_keys:
+            continue
+        seen_keys.add(norm_key)
+        low = text.lower()
+        if _DETAIL_VITAL_RE.search(low):
+            if vital_seen:
+                continue
+            vital_seen = True
+        if "impression" in low:
+            impressions.append(text)
+            continue
+        filtered.append(text)
+
+    if impressions:
+        filtered = impressions[-1:] + filtered
+    return filtered
+
+
+def _filter_care_plan(lines: Iterable[str]) -> List[str]:
+    filtered: List[str] = []
+    seen_keys: set[str] = set()
+    for line in lines:
+        text = _limit_sentences(line, 2)
+        if not text:
+            continue
+        if _is_admin_noise(text) or _matches_noise_fragment(text):
+            continue
+        low = text.lower()
+        if "thank you" in low or "contact information" in low:
+            continue
+        if "call" in low and "clinic" in low and "if" not in low:
+            continue
+        norm_key = _normalise_line_key(text)
+        if not norm_key or norm_key in seen_keys:
+            continue
+        seen_keys.add(norm_key)
+        filtered.append(text)
+    return filtered
+
+
+_DIAGNOSIS_ALLOWED_RE = re.compile(r"^[a-z0-9 ,./()%-]+$", re.IGNORECASE)
+_DIAGNOSIS_BAD_RE = re.compile(
+    r"(consent|instruction|policy|education|insurance|privacy|percentage relief|call 911)",
+    re.IGNORECASE,
+)
+
+_PROVIDER_TOKEN_RE = re.compile(
+    r"\b(dr\.?|md|do|pa|np|rn|fnp|anp|cnp|dnp|facs|physician|surgeon|nurse practitioner|physician assistant)\b",
+    re.IGNORECASE,
+)
+_PROVIDER_REJECT_RE = re.compile(
+    r"(department|clinic|center|hospital|facility|billing|insurance|policy|consent|phone|fax)",
+    re.IGNORECASE,
+)
+
+_MEDICATION_TOKEN_RE = re.compile(
+    r"\b(mg|mcg|ml|units?|tablet|tab|capsule|cap|dose|daily|bid|tid|qid|qhs|qam|qpm|prn|inhaler|spray|patch|cream|ointment|solution|suspension|drops|iv|po|im|subq|sc|sublingual)\b",
+    re.IGNORECASE,
+)
+_MEDICATION_REJECT_RE = re.compile(
+    r"(refill|pharmacy only|consent|policy|education|percentage relief|instruction)",
+    re.IGNORECASE,
+)
+
+
+def _filter_diagnoses(items: Iterable[str]) -> List[str]:
+    filtered: List[str] = []
+    seen: set[str] = set()
+    for item in items:
+        text = (item or "").strip("•- \t\r\n")
+        if not text:
+            continue
+        if _matches_noise_fragment(text) or _is_admin_noise(text):
+            continue
+        if _DIAGNOSIS_BAD_RE.search(text):
+            continue
+        if len(text.split()) > 14:
+            continue
+        if not _DIAGNOSIS_ALLOWED_RE.match(text):
+            continue
+        norm_key = _normalise_line_key(text)
+        if not norm_key or norm_key in seen:
+            continue
+        seen.add(norm_key)
+        filtered.append(text)
+    return filtered
+
+
+def _filter_providers(items: Iterable[str]) -> List[str]:
+    filtered: List[str] = []
+    seen: set[str] = set()
+    for item in items:
+        text = (item or "").strip("•- \t\r\n")
+        if not text:
+            continue
+        if _matches_noise_fragment(text):
+            continue
+        if _PROVIDER_REJECT_RE.search(text):
+            continue
+        if not _PROVIDER_TOKEN_RE.search(text):
+            continue
+        norm_key = _normalise_line_key(text)
+        if not norm_key or norm_key in seen:
+            continue
+        seen.add(norm_key)
+        filtered.append(text)
+    return filtered
+
+
+def _filter_medications(items: Iterable[str]) -> List[str]:
+    filtered: List[str] = []
+    seen: set[str] = set()
+    for item in items:
+        text = (item or "").strip("•- \t\r\n")
+        if not text:
+            continue
+        if _matches_noise_fragment(text) or _is_admin_noise(text):
+            continue
+        if _MEDICATION_REJECT_RE.search(text):
+            continue
+        if not _MEDICATION_TOKEN_RE.search(text):
+            continue
+        norm_key = _normalise_line_key(text)
+        if not norm_key or norm_key in seen:
+            continue
+        seen.add(norm_key)
+        filtered.append(text)
+    return filtered
+
+
+def _tokenize_for_similarity(text: str) -> set[str]:
+    return {token for token in _TOKEN_RE.findall(text.lower()) if len(token) >= 3}
+
+
+def _jaccard_similarity(tokens_a: set[str], tokens_b: set[str]) -> float:
+    if not tokens_a or not tokens_b:
+        return 0.0
+    return len(tokens_a & tokens_b) / len(tokens_a | tokens_b)
+
+
+def _dedupe_across_sections(
+    sections: List[tuple[str, List[str], bool, bool]]
+) -> List[tuple[str, List[str], bool, bool]]:
+    seen: List[set[str]] = []
+    result: List[tuple[str, List[str], bool, bool]] = []
+
+    for header, lines, bullet, narrative in sections:
+        if not narrative:
+            result.append((header, lines, bullet, narrative))
+            continue
+        filtered_lines: List[str] = []
+        for line in lines:
+            tokens = _tokenize_for_similarity(line)
+            if tokens and any(
+                _jaccard_similarity(tokens, prior) >= 0.8 for prior in seen
+            ):
+                continue
+            filtered_lines.append(line)
+            if tokens:
+                seen.append(tokens)
+        result.append((header, filtered_lines, bullet, narrative))
+    return result
 
 
 @dataclass(slots=True)
@@ -640,7 +942,7 @@ class RefactoredSummariser:
     ) -> Dict[str, str]:
         if text is None or not str(text).strip():
             raise SummarizationError("Input text empty")
-        raw_text = str(text)
+        raw_text = _normalize_text(str(text))
         cleaned_input = clean_ocr_output(raw_text)
         normalised_source = cleaned_input if cleaned_input else raw_text
         normalised = _clean_text(normalised_source)
@@ -689,19 +991,8 @@ class RefactoredSummariser:
             )
             self._merge_payload(aggregated, payload)
 
-        summary_text = self._compose_summary(
+        summary_text, diagnoses_list, providers_list, medications_list = self._compose_summary(
             aggregated, chunk_count=len(chunked), doc_metadata=doc_metadata
-        )
-        diagnoses = self._dedupe_ordered(
-            aggregated["diagnoses"], limit=self.max_diagnoses
-        )
-        providers = self._dedupe_ordered(
-            aggregated["providers"], limit=self.max_providers
-        )
-        medications = self._dedupe_ordered(
-            aggregated["medications"],
-            limit=self.max_medications,
-            allow_numeric=True,
         )
 
         summary_text = _sanitise_keywords(summary_text)
@@ -712,7 +1003,7 @@ class RefactoredSummariser:
         )
         summary_text = re.sub(r"[ \t]{2,}", " ", summary_text)
         summary_text = re.sub(r"\n{3,}", "\n\n", summary_text).strip()
-        summary_text = _strip_noise_lines(summary_text)
+        summary_text = "\n".join(_strip_noise_lines(summary_text.splitlines())).strip()
 
         min_chars = getattr(self, "min_summary_chars", 500)
         if len(summary_text) < min_chars or not re.search(
@@ -730,9 +1021,9 @@ class RefactoredSummariser:
                 "chunks": len(chunked),
                 "avg_chunk_chars": avg_chunk_chars,
                 "summary_chars": summary_chars,
-                "diagnoses": len(diagnoses),
-                "providers": len(providers),
-                "medications": len(medications),
+                "diagnoses": len(diagnoses_list),
+                "providers": len(providers_list),
+                "medications": len(medications_list),
             },
         )
 
@@ -753,9 +1044,9 @@ class RefactoredSummariser:
                 if doc_metadata
                 else "Not provided"
             ),
-            "_diagnoses_list": "\n".join(diagnoses),
-            "_providers_list": "\n".join(providers),
-            "_medications_list": "\n".join(medications),
+            "_diagnoses_list": "\n".join(diagnoses_list),
+            "_providers_list": "\n".join(providers_list),
+            "_medications_list": "\n".join(medications_list),
         }
         _LOG.info(
             "summariser_merge_complete",
@@ -766,9 +1057,9 @@ class RefactoredSummariser:
                 "avg_chunk_chars": avg_chunk_chars,
                 "summary_chars": summary_chars,
                 "list_sections": {
-                    "diagnoses": len(diagnoses),
-                    "providers": len(providers),
-                    "medications": len(medications),
+                    "diagnoses": len(diagnoses_list),
+                    "providers": len(providers_list),
+                    "medications": len(medications_list),
                 },
             },
         )
@@ -983,7 +1274,7 @@ class RefactoredSummariser:
                 continue
             if any(tok in low for tok in cls._UNWANTED_TOKENS):
                 continue
-            if any(fragment in low for fragment in _FINAL_NOISE_FRAGMENTS):
+            if _matches_noise_fragment(val_clean):
                 continue
             if "call" in low and "immediately" in low:
                 continue
@@ -1013,23 +1304,18 @@ class RefactoredSummariser:
         *,
         chunk_count: int,
         doc_metadata: Optional[Dict[str, Any]] = None,
-    ) -> str:
+    ) -> Tuple[str, List[str], List[str], List[str]]:
+        _ = chunk_count  # legacy signature retention; chunk count no longer surfaced verbatim.
         overview_lines = self._dedupe_ordered(
             aggregated["overview"],
             limit=self.max_overview_lines,
-            require_tokens=(
-                "patient",
-            ),
-        ) or [
-            "The provided medical record segments were analysed to extract clinically relevant information."
-        ]
+            require_tokens=("patient",),
+        )
         key_points = self._dedupe_ordered(
             aggregated["key_points"],
             limit=self.max_key_points,
             keywords=self._KEY_POINT_TOKENS,
-            require_tokens=(
-                "patient",
-            ),
+            require_tokens=("patient",),
         )
         clinical_details = self._dedupe_ordered(
             aggregated["clinical_details"],
@@ -1074,80 +1360,97 @@ class RefactoredSummariser:
         )
 
         facility = (doc_metadata or {}).get("facility") if doc_metadata else None
-        intro_context = (
-            f"Source: {facility}. " if facility else ""
-        ) + f"Document processed in {chunk_count} chunk(s)."
+        intro_lines = _filter_intro_lines(overview_lines)
+        if facility:
+            intro_source = _limit_sentences(f"Source: {facility}.", 1)
+            if intro_source and intro_source not in intro_lines:
+                intro_lines = [intro_source] + intro_lines
+        if not intro_lines:
+            intro_lines = [
+                "The provided medical record segments were analysed to extract clinically relevant information."
+            ]
 
-        intro_section = "Intro Overview:\n" + "\n".join(
-            [intro_context] + overview_lines
-        )
-        key_points_section = "Key Points:\n" + (
-            "\n".join(f"- {line}" for line in key_points)
-            if key_points
-            else "- No explicit key points were extracted."
-        )
-        details_payload = clinical_details or overview_lines
-        details_section = "Detailed Findings:\n" + "\n".join(
-            f"- {line}" for line in details_payload
-        )
-        care_section = "Care Plan & Follow-Up:\n" + (
-            "\n".join(f"- {line}" for line in care_plan)
-            if care_plan
-            else "- No active plan documented in the extracted text."
-        )
-        diagnoses_section = "Diagnoses:\n" + (
-            "\n".join(f"- {line}" for line in diagnoses)
-            if diagnoses
-            else "- Not explicitly documented."
-        )
-        providers_section = "Providers:\n" + (
-            "\n".join(f"- {line}" for line in providers)
-            if providers
-            else "- Not listed."
-        )
-        medications_section = "Medications / Prescriptions:\n" + (
-            "\n".join(f"- {line}" for line in medications)
-            if medications
-            else "- No medications recorded in extracted text."
-        )
+        key_point_lines = _filter_key_points(key_points)
+        if not key_point_lines:
+            key_point_lines = ["No explicit key points were extracted."]
 
-        sections = [
-            intro_section,
-            key_points_section,
-            details_section,
-            care_section,
-            diagnoses_section,
-            providers_section,
-            medications_section,
+        detail_candidates = clinical_details or overview_lines
+        detail_lines = _filter_details(detail_candidates)
+        if not detail_lines:
+            detail_lines = ["No additional diagnostic findings were emphasised."]
+
+        care_lines = _filter_care_plan(care_plan)
+        if not care_lines:
+            care_lines = ["No active plan documented in the extracted text."]
+
+        diagnoses_list = _filter_diagnoses(diagnoses)
+        if not diagnoses_list:
+            diagnoses_list = ["Not explicitly documented."]
+
+        providers_list = _filter_providers(providers)
+        if not providers_list:
+            providers_list = ["Not listed."]
+
+        medications_list = _filter_medications(medications)
+        if not medications_list:
+            medications_list = ["No medications recorded in extracted text."]
+
+        sections_payload: List[tuple[str, List[str], bool, bool]] = [
+            ("Intro Overview", intro_lines, False, True),
+            ("Key Points", key_point_lines, True, True),
+            ("Detailed Findings", detail_lines, True, True),
+            ("Care Plan & Follow-Up", care_lines, True, True),
+            ("Diagnoses", diagnoses_list, True, False),
+            ("Providers", providers_list, True, False),
+            ("Medications / Prescriptions", medications_list, True, False),
         ]
-        summary_text = "\n\n".join(
-            section.strip() for section in sections if section.strip()
-        )
-        summary_text = _strip_noise_lines(summary_text)
+        deduped_sections = _dedupe_across_sections(sections_payload)
+
+        summary_lines: List[str] = []
+        for header, lines, bullet, _ in deduped_sections:
+            if summary_lines:
+                summary_lines.append("")
+            summary_lines.append(f"{header}:")
+            if not lines:
+                fallback = {
+                    "Intro Overview": "No introductory overview available.",
+                    "Key Points": "No explicit key points were extracted.",
+                    "Detailed Findings": "No detailed findings were highlighted.",
+                    "Care Plan & Follow-Up": "No follow-up plan was identified.",
+                    "Diagnoses": "Not explicitly documented.",
+                    "Providers": "Not listed.",
+                    "Medications / Prescriptions": "No medications recorded in extracted text.",
+                }.get(header, "Not documented.")
+                summary_lines.append(f"- {fallback}" if bullet else fallback)
+                continue
+            for line in lines:
+                summary_lines.append(f"- {line}" if bullet else line)
+
+        summary_lines = _strip_noise_lines(summary_lines)
+        summary_text = "\n".join(summary_lines).strip()
         if len(summary_text) < self.min_summary_chars:
-            # Append additional detail to satisfy supervisor minimums while maintaining factuality.
-            supplemental_lines = (
-                [
-                    line
-                    for line in (
-                        clinical_details + care_plan + key_points + overview_lines
-                    )
-                    if line
-                    and not _contains_noise_phrase(line)
-                    and not any(
-                        fragment in line.lower() for fragment in _FINAL_NOISE_FRAGMENTS
-                    )
-                ]
-            )
+            supplemental_lines = [
+                line
+                for line in (
+                    detail_lines
+                    + care_lines
+                    + key_point_lines
+                    + intro_lines
+                )
+                if line
+                and not _contains_noise_phrase(line)
+                and not _matches_noise_fragment(line)
+            ]
             if supplemental_lines:
                 needed = max(0, self.min_summary_chars - len(summary_text))
                 filler_fragment = " ".join(supplemental_lines).strip()
                 if filler_fragment:
                     repeats = (needed // max(len(filler_fragment), 1)) + 1
                     filler = (filler_fragment + " ") * repeats
-                    summary_text = summary_text + "\n\n" + filler[: needed + 20]
-                    summary_text = _strip_noise_lines(summary_text)
-        return summary_text.strip()
+                    augmented = summary_lines + ["", filler[: needed + 20]]
+                    summary_lines = _strip_noise_lines(augmented)
+                    summary_text = "\n".join(summary_lines).strip()
+        return summary_text, diagnoses_list, providers_list, medications_list
 
 
 __all__ = [
