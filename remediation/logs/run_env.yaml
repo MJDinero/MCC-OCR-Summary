@@ -1,0 +1,80 @@
+spec:
+  template:
+    spec:
+      containers:
+      - env:
+        - name: OPENAI_API_KEY
+          valueFrom:
+            secretKeyRef:
+              key: latest
+              name: OPENAI_API_KEY
+        - name: INTERNAL_EVENT_TOKEN
+          valueFrom:
+            secretKeyRef:
+              key: latest
+              name: internal-event-token
+        - name: SERVICE_ACCOUNT_JSON
+          valueFrom:
+            secretKeyRef:
+              key: latest
+              name: mcc_orch_sa_key
+        - name: DOC_AI_FORCE_SPLIT_MIN_PAGES
+          value: '40'
+        - name: DOC_AI_LOCATION
+          value: us
+        - name: SUMMARY_COMPOSE_MODE
+          value: refactored
+        - name: PDF_WRITER_MODE
+          value: rich
+        - name: ENABLE_NOISE_FILTERS
+          value: 'true'
+        - name: MODE
+          value: mvp
+        - name: STUB_MODE
+          value: 'false'
+        - name: USE_REFACTORED_SUMMARISER
+          value: 'true'
+        - name: SUPERVISOR_MODE
+          value: simple
+        - name: DRIVE_ENABLED
+          value: 'true'
+        - name: WRITE_TO_DRIVE
+          value: 'true'
+        - name: PDF_ENABLED
+          value: 'true'
+        - name: SHEETS_ENABLED
+          value: 'false'
+        - name: ENABLE_METRICS
+          value: 'false'
+        - name: PROJECT_ID
+          value: quantify-agent
+        - name: REGION
+          value: us-central1
+        - name: DOC_AI_PROCESSOR_ID
+          value: 21c8becfabc49de6
+        - name: DOC_AI_OCR_PROCESSOR_ID
+          value: 21c8becfabc49de6
+        - name: DRIVE_INPUT_FOLDER_ID
+          value: 19xdu6hV9KNgnE_Slt4ogrJdASWXZb5gl
+        - name: DRIVE_REPORT_FOLDER_ID
+          value: 1eyMO0126VfLBK3bBQEpWlVOL6tWxriCE
+        - name: DRIVE_SHARED_DRIVE_ID
+          value: 0AFPP3mbSAh_oUk9PVA
+        - name: CMEK_KEY_NAME
+          value: projects/quantify-agent/locations/us-central1/keyRings/mcc-phi/cryptoKeys/mcc-phi-key
+        - name: INTAKE_GCS_BUCKET
+          value: mcc-intake
+        - name: OUTPUT_GCS_BUCKET
+          value: mcc-output
+        - name: SUMMARY_BUCKET
+          value: mcc-output
+        - name: DRIVE_IMPERSONATION_USER
+          value: Matt@moneymediausa.com
+        - name: GOOGLE_APPLICATION_CREDENTIALS
+          value: /tmp/google-application-credentials.json
+        - name: MIN_SUMMARY_CHARS
+          value: '300'
+        - name: MIN_SUMMARY_DYNAMIC_RATIO
+          value: '0.005'
+status:
+  latestReadyRevisionName: mcc-ocr-summary-00334-s26

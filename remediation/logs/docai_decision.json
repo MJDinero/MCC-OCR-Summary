@@ -1,0 +1,34 @@
+[
+  {
+    "insertId": "6903e8ca0002c5bf5418ff8f",
+    "jsonPayload": {
+      "decision": "local_pypdf_split",
+      "level": "INFO",
+      "location": "us",
+      "logger": "ocr_service",
+      "msg": "docai_decision",
+      "pages_total": 263,
+      "processor_id": "21c8becfabc49de6",
+      "request_id": "1617c98380bf4878bb01074a5070076e",
+      "retry_on_page_limit": false,
+      "splitter_processor_id": null,
+      "ts": "2025-10-30T22:38:02.179635+00:00"
+    },
+    "labels": {
+      "instanceId": "00147782960158f3cf9e15bc3ad241d46c00a430e47af137098194ce04b00ae0ea9777e5c8ad5ed1d4ba333f8f807a09a98b8b747d0d2352165750d1cbee333f4021eacdc3c2f64773635f215c35"
+    },
+    "logName": "projects/quantify-agent/logs/run.googleapis.com%2Fstdout",
+    "receiveTimestamp": "2025-10-30T22:38:02.374355030Z",
+    "resource": {
+      "labels": {
+        "configuration_name": "mcc-ocr-summary",
+        "location": "us-central1",
+        "project_id": "quantify-agent",
+        "revision_name": "mcc-ocr-summary-00332-xww",
+        "service_name": "mcc-ocr-summary"
+      },
+      "type": "cloud_run_revision"
+    },
+    "timestamp": "2025-10-30T22:38:02.181695Z"
+  }
+]
