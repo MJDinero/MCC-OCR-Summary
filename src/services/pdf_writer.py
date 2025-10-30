@@ -4,6 +4,7 @@ Default implementation uses reportlab *if available*, else falls back to a
 very simple pure-Python minimal PDF generator (sufficient for tests) so the
 module works without optional dependencies during early development.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -17,18 +18,25 @@ _LOG = logging.getLogger("pdf_writer")
 
 try:  # pragma: no cover - optional metrics
     from prometheus_client import Counter  # type: ignore
-    _PDF_CALLS = Counter("pdf_writer_calls_total", "Total PDF generation calls", ["status"])
+
+    _PDF_CALLS = Counter(
+        "pdf_writer_calls_total", "Total PDF generation calls", ["status"]
+    )
 except Exception:  # pragma: no cover
     _PDF_CALLS = None  # type: ignore
 
 
 class PDFBackend(Protocol):  # pragma: no cover - interface only
-    def build(self, title: str, sections: Sequence[tuple[str, str]]) -> bytes:  # noqa: D401
+    def build(
+        self, title: str, sections: Sequence[tuple[str, str]]
+    ) -> bytes:  # noqa: D401
         ...
 
 
 class ReportLabBackend:
-    def build(self, title: str, sections: Sequence[tuple[str, str]]) -> bytes:  # pragma: no cover - depends on external lib
+    def build(
+        self, title: str, sections: Sequence[tuple[str, str]]
+    ) -> bytes:  # pragma: no cover - depends on external lib
         try:  # noqa: WPS501
             from reportlab.lib.pagesizes import LETTER  # type: ignore
             from reportlab.pdfgen import canvas  # type: ignore
@@ -88,6 +96,7 @@ class MinimalPDFBackend:
     Produces a single-page textual PDF using plain text objects. Not suitable
     for production rendering sophistication but keeps tests self-contained.
     """
+
     def build(self, title: str, sections: Sequence[tuple[str, str]]) -> bytes:
         try:
             lines = [title]
@@ -105,19 +114,43 @@ class MinimalPDFBackend:
 def _simple_pdf(text: str) -> bytes:
     # This is a very naive PDF writer for testing; ensures %PDF header
     # Reference: simplest possible PDF with one page & one text object.
-    escaped = text.replace("(", "\\(").replace(")", "\\)")
+    lines = text.splitlines() or [text]
+    escaped_lines = []
+    for line in lines:
+        escaped = (
+            line.replace("\\", "\\\\")
+            .replace("(", "\\(")
+            .replace(")", "\\)")
+        )
+        escaped_lines.append(escaped)
+    content_ops = [
+        "BT",
+        "/F1 12 Tf",
+        "1 0 0 1 72 720 Tm",
+        "14 TL",
+    ]
+    for escaped in escaped_lines:
+        content_ops.append(f"({escaped}) Tj")
+        content_ops.append("T*")
+    content_ops.append("ET")
+    stream = "\n".join(content_ops)
     objects = []
     # 1: Catalog
     objects.append("1 0 obj<< /Type /Catalog /Pages 2 0 R >>endobj")
     # 2: Pages
     objects.append("2 0 obj<< /Type /Pages /Kids [3 0 R] /Count 1 >>endobj")
     # 3: Page
-    objects.append("3 0 obj<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources<< /Font<< /F1 5 0 R >> >> >>endobj")
+    objects.append(
+        "3 0 obj<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources<< /Font<< /F1 5 0 R >> >> >>endobj"
+    )
     # 4: Content
-    stream = f"BT /F1 12 Tf 72 720 Td ({escaped}) Tj ET"
-    objects.append(f"4 0 obj<< /Length {len(stream)} >>stream\n{stream}\nendstream endobj")
+    objects.append(
+        f"4 0 obj<< /Length {len(stream)} >>stream\n{stream}\nendstream endobj"
+    )
     # 5: Font
-    objects.append("5 0 obj<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>endobj")
+    objects.append(
+        "5 0 obj<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>endobj"
+    )
     xref_positions = []
     pdf = ["%PDF-1.4"]
     for obj in objects:
@@ -151,36 +184,69 @@ class PDFWriter:
             if not summary:
                 raise PDFGenerationError("Summary structure empty")
             # Preserve deterministic ordering
-            order = ["Patient Information", "Medical Summary", "Billing Highlights", "Legal / Notes"]
+            order = [
+                "Patient Information",
+                "Medical Summary",
+                "Billing Highlights",
+                "Legal / Notes",
+            ]
             sections_seq = []
             for key in order:
                 if key in summary:
-                    val = (summary[key] or '').strip() or 'N/A'
+                    val = (summary[key] or "").strip() or "N/A"
                     sections_seq.append((key, val))
             # Add any extra keys deterministically
-            for k in sorted(k for k in summary.keys() if k not in {o for o,_ in sections_seq}):
-                sections_seq.append((k, (summary[k] or '').strip()))
+            for k in sorted(
+                k for k in summary.keys() if k not in {o for o, _ in sections_seq}
+            ):
+                sections_seq.append((k, (summary[k] or "").strip()))
         # Detect structured lists via side-channel keys injected by Summariser
         if isinstance(summary, dict):
-            diag_list = [s for s in (summary.get("_diagnoses_list", "").splitlines()) if s.strip()]
-            prov_list = [s for s in (summary.get("_providers_list", "").splitlines()) if s.strip()]
-            med_list = [s for s in (summary.get("_medications_list", "").splitlines()) if s.strip()]
+            diag_list = [
+                s
+                for s in (summary.get("_diagnoses_list", "").splitlines())
+                if s.strip()
+            ]
+            prov_list = [
+                s
+                for s in (summary.get("_providers_list", "").splitlines())
+                if s.strip()
+            ]
+            med_list = [
+                s
+                for s in (summary.get("_medications_list", "").splitlines())
+                if s.strip()
+            ]
             any_lists = any([diag_list, prov_list, med_list])
             if any_lists:
-                divider = ("\n" + ("=" * 38) + "\nStructured Indices\n" + ("=" * 38) + "\n")
-                sections_seq.append(("—", divider.strip()))
+                sections_seq.append(
+                    (
+                        "Summary Lists",
+                        "Diagnoses, providers, and medications referenced in the document are enumerated below.",
+                    )
+                )
+
                 def _fmt_block(title: str, items: list[str]) -> str:
                     if not items:
                         return f"{title}:\nN/A"
                     return f"{title}:\n" + "\n".join(f"• {i}" for i in items)
+
                 sections_seq.append(("Diagnoses", _fmt_block("Diagnoses", diag_list)))
                 sections_seq.append(("Providers", _fmt_block("Providers", prov_list)))
-                sections_seq.append(("Medications", _fmt_block("Medications / Prescriptions", med_list)))
+                sections_seq.append(
+                    ("Medications", _fmt_block("Medications / Prescriptions", med_list))
+                )
         _LOG.info(
             "pdf_writer_started",
             extra={
                 "sections": len(sections_seq),
-                "structured_indices": bool(sum(1 for heading, _ in sections_seq if heading in {"Diagnoses", "Providers", "Medications"})),
+                "structured_indices": bool(
+                    sum(
+                        1
+                        for heading, _ in sections_seq
+                        if heading in {"Diagnoses", "Providers", "Medications"}
+                    )
+                ),
             },
         )
         try:

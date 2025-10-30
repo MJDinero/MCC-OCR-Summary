@@ -54,7 +54,9 @@ class DocumentIngestionEvent:
         # Attributes stored separately, omit from payload to avoid duplication
         attributes = payload.pop("attributes", {})
         payload.setdefault("event_type", "document.ingested")
-        payload.setdefault("gcs_uri", self.gcs_uri or f"gs://{self.bucket}/{self.object_name}")
+        payload.setdefault(
+            "gcs_uri", self.gcs_uri or f"gs://{self.bucket}/{self.object_name}"
+        )
         payload.setdefault("message_id", uuid.uuid4().hex)
         payload.setdefault("created_at", self.created_at)
         encoded = _encode_pubsub_data(payload)
@@ -199,7 +201,9 @@ class StorageRequestMessage:
     def to_pubsub(self) -> tuple[bytes, dict[str, str]]:
         payload = asdict(self)
         metadata = payload.pop("metadata", {})
-        payload["per_chunk_summaries"] = [asdict(item) for item in self.per_chunk_summaries]
+        payload["per_chunk_summaries"] = [
+            asdict(item) for item in self.per_chunk_summaries
+        ]
         payload.setdefault("event_type", "storage.persist.requested")
         payload.setdefault("created_at", self.created_at)
         encoded = _encode_pubsub_data(payload)

@@ -95,3 +95,10 @@ __pycache__/
 *.py[cod]
 .venv/
 response.json
+# Remediation artifacts
+remediation/
+run.json
+meta.json
+report.pdf
+report.txt
+validator.json

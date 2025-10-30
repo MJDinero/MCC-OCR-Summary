@@ -4,7 +4,9 @@ from src.services.summariser_refactored import RefactoredSummariser, ChunkSummar
 
 
 class DummyBackend(ChunkSummaryBackend):
-    def summarise_chunk(self, *, chunk_text, chunk_index, total_chunks, estimated_tokens):
+    def summarise_chunk(
+        self, *, chunk_text, chunk_index, total_chunks, estimated_tokens
+    ):
         return {
             "overview": "Patient summary",
             "key_points": ["Key details"],

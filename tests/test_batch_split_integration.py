@@ -24,7 +24,9 @@ def test_batch_split_triggers_multiple_batches(tmp_path, monkeypatch):
     pdf = _make_pdf(tmp_path, 450)
 
     # Fake batch result returned per part
-    def fake_batch_process(input_uri, output_uri, processor_id, region, project_id=None, clients=None):
+    def fake_batch_process(
+        input_uri, output_uri, processor_id, region, project_id=None, clients=None
+    ):
         # minimal shape used by integration code
         # fabricate pages based on unique counter to ensure merge distinctness
         return {
@@ -33,10 +35,14 @@ def test_batch_split_triggers_multiple_batches(tmp_path, monkeypatch):
         }
 
     class _DummyClient:
-        def process_document(self, request):  # pragma: no cover - never called in batch path
+        def process_document(
+            self, request
+        ):  # pragma: no cover - never called in batch path
             return {"document": {"text": "", "pages": []}}
 
-    svc = OCRService(processor_id="processor123", client_factory=lambda endpoint: _DummyClient())
+    svc = OCRService(
+        processor_id="processor123", client_factory=lambda endpoint: _DummyClient()
+    )
     with patch(
         "src.services.docai_helper.batch_process_documents_gcs",
         side_effect=fake_batch_process,

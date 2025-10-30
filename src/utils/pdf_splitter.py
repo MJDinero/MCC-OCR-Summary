@@ -5,6 +5,7 @@ Document AI's *Document Splitter* processor. The splitter writes output PDFs to
 a caller-specified GCS prefix and returns a manifest describing the emitted
 segments. All writes use `ifGenerationMatch=0` to guarantee idempotency.
 """
+
 from __future__ import annotations
 
 import json
@@ -42,9 +43,13 @@ def _ensure_clients(
     docai_client: Optional[documentai.DocumentProcessorServiceClient],
 ) -> Tuple[storage.Client, documentai.DocumentProcessorServiceClient]:
     if documentai is None or storage is None:
-        raise RuntimeError("google-cloud-documentai and google-cloud-storage are required for PDF splitting")
+        raise RuntimeError(
+            "google-cloud-documentai and google-cloud-storage are required for PDF splitting"
+        )
     client_options = ClientOptions(api_endpoint=f"{region}-documentai.googleapis.com")
-    docai_client = docai_client or documentai.DocumentProcessorServiceClient(client_options=client_options)
+    docai_client = docai_client or documentai.DocumentProcessorServiceClient(
+        client_options=client_options
+    )
     storage_client = storage_client or storage.Client()
     return storage_client, docai_client
 
@@ -65,7 +70,9 @@ def split_pdf_by_page_limit(
     if not splitter_processor_id:
         raise ValidationError("splitter_processor_id is required")
 
-    storage_client, docai_client = _ensure_clients(location, storage_client, docai_client)
+    storage_client, docai_client = _ensure_clients(
+        location, storage_client, docai_client
+    )
 
     if output_prefix and not output_prefix.startswith("gs://"):
         raise ValidationError("output_prefix must be gs:// or omitted")
@@ -75,7 +82,9 @@ def split_pdf_by_page_limit(
     if not output_prefix.endswith("/"):
         output_prefix += "/"
 
-    name = f"projects/{project_id}/locations/{location}/processors/{splitter_processor_id}"
+    name = (
+        f"projects/{project_id}/locations/{location}/processors/{splitter_processor_id}"
+    )
     request = {
         "name": name,
         "input_documents": {
@@ -85,14 +94,16 @@ def split_pdf_by_page_limit(
                 ]
             }
         },
-        "document_output_config": {
-            "gcs_output_config": {"gcs_uri": output_prefix}
-        },
+        "document_output_config": {"gcs_output_config": {"gcs_uri": output_prefix}},
     }
 
     _LOG.info(
         "splitter_start",
-        extra={"input_uri": input_uri, "output_prefix": output_prefix, "processor": splitter_processor_id},
+        extra={
+            "input_uri": input_uri,
+            "output_prefix": output_prefix,
+            "processor": splitter_processor_id,
+        },
     )
     operation = docai_client.batch_process_documents(request=request)
     start = time.time()
@@ -102,7 +113,13 @@ def split_pdf_by_page_limit(
         elapsed = time.time() - start
         if elapsed > POLL_TIMEOUT:
             raise RuntimeError("Document AI splitter timed out")
-        _LOG.debug("splitter_poll", extra={"operation": getattr(operation, "name", "unknown"), "elapsed_s": round(elapsed, 1)})
+        _LOG.debug(
+            "splitter_poll",
+            extra={
+                "operation": getattr(operation, "name", "unknown"),
+                "elapsed_s": round(elapsed, 1),
+            },
+        )
         time.sleep(POLL_SECONDS)
 
     try:
@@ -122,14 +139,20 @@ def split_pdf_by_page_limit(
 def _collect_output_parts(storage_client: storage.Client, prefix: str) -> List[str]:
     bucket_name, object_prefix = _split_gs_uri(prefix)
     blobs = list(storage_client.list_blobs(bucket_name, prefix=object_prefix))
-    parts = [f"gs://{bucket_name}/{blob.name}" for blob in blobs if blob.name.lower().endswith(".pdf")]
+    parts = [
+        f"gs://{bucket_name}/{blob.name}"
+        for blob in blobs
+        if blob.name.lower().endswith(".pdf")
+    ]
     if not parts:
         raise RuntimeError("Document AI splitter produced no PDF parts")
     parts.sort()
     return parts
 
 
-def _write_manifest(storage_client: storage.Client, prefix: str, input_uri: str, parts: List[str]) -> str:
+def _write_manifest(
+    storage_client: storage.Client, prefix: str, input_uri: str, parts: List[str]
+) -> str:
     bucket_name, object_prefix = _split_gs_uri(prefix)
     manifest_path = object_prefix.rstrip("/") + "/manifest.json"
     bucket = storage_client.bucket(bucket_name)
@@ -137,10 +160,7 @@ def _write_manifest(storage_client: storage.Client, prefix: str, input_uri: str,
     payload = {
         "input_uri": input_uri,
         "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-        "parts": [
-            {"part": idx + 1, "gcs_uri": uri}
-            for idx, uri in enumerate(parts)
-        ],
+        "parts": [{"part": idx + 1, "gcs_uri": uri} for idx, uri in enumerate(parts)],
     }
     blob.upload_from_string(
         json.dumps(payload, separators=(",", ":")),

@@ -13,7 +13,12 @@ import os
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field, ValidationError as PydanticValidationError, field_validator
+from pydantic import (
+    BaseModel,
+    Field,
+    ValidationError as PydanticValidationError,
+    field_validator,
+)
 
 from src.errors import ValidationError
 from src.services.pipeline import (
@@ -122,7 +127,9 @@ def _extract_traceparent(trace_parent: str | None) -> tuple[str | None, str | No
     return f"{trace_id_hex}/{span_dec};o=1", trace_id_hex
 
 
-def _build_ingest_payload(raw: Dict[str, Any], headers: Mapping[str, str]) -> Dict[str, Any]:
+def _build_ingest_payload(
+    raw: Dict[str, Any], headers: Mapping[str, str]
+) -> Dict[str, Any]:
     if "object" in raw:
         payload = dict(raw)
     elif "data" in raw and isinstance(raw["data"], dict):
@@ -152,7 +159,10 @@ def _build_ingest_payload(raw: Dict[str, Any], headers: Mapping[str, str]) -> Di
             ("contentType", ("contentType", "content_type")),
         ):
             if not gcs_object.get(key):
-                fallback = _first_non_empty(*(gcs_source.get(c) for c in candidates), *(attributes.get(c) for c in candidates))
+                fallback = _first_non_empty(
+                    *(gcs_source.get(c) for c in candidates),
+                    *(attributes.get(c) for c in candidates),
+                )
                 if fallback is not None:
                     gcs_object[key] = fallback
         if "metadata" in gcs_source and isinstance(gcs_source["metadata"], dict):
@@ -162,12 +172,18 @@ def _build_ingest_payload(raw: Dict[str, Any], headers: Mapping[str, str]) -> Di
             payload["attributes"] = dict(attributes)
         if raw.get("source"):
             payload["source"] = raw["source"]
-        request_id = raw.get("requestId") or attributes.get("eventId") or message.get("messageId")
+        request_id = (
+            raw.get("requestId")
+            or attributes.get("eventId")
+            or message.get("messageId")
+        )
         if request_id:
             payload["requestId"] = request_id
     else:
         payload = {"object": raw}
-    payload.setdefault("traceId", headers.get("x-trace-id") or headers.get("ce-traceid"))
+    payload.setdefault(
+        "traceId", headers.get("x-trace-id") or headers.get("ce-traceid")
+    )
     return payload
 
 
@@ -191,12 +207,21 @@ async def ingest(request: Request):
     workflow_launcher: WorkflowLauncher = request.app.state.workflow_launcher
 
     trace_header = request.headers.get("x-cloud-trace-context")
-    trace_parent_ctx, trace_parent_id = _extract_traceparent(request.headers.get("ce-traceparent"))
+    trace_parent_ctx, trace_parent_id = _extract_traceparent(
+        request.headers.get("ce-traceparent")
+    )
     if not trace_header and trace_parent_ctx:
         trace_header = trace_parent_ctx
-    trace_id = payload.trace_id or extract_trace_id(trace_header) or trace_parent_id or uuid.uuid4().hex
+    trace_id = (
+        payload.trace_id
+        or extract_trace_id(trace_header)
+        or trace_parent_id
+        or uuid.uuid4().hex
+    )
     request_id = payload.request_id or request.headers.get("ce-id") or trace_id
-    payload = payload.model_copy(update={"trace_id": trace_id, "request_id": request_id})
+    payload = payload.model_copy(
+        update={"trace_id": trace_id, "request_id": request_id}
+    )
     gcs_obj = payload.gcs_object
 
     if not gcs_obj.bucket or not gcs_obj.name:
@@ -242,7 +267,9 @@ async def ingest(request: Request):
             "generation": gcs_obj.generation,
         }
         if job.trace_id:
-            log_extra["logging.googleapis.com/trace"] = f"projects/{cfg.project_id}/traces/{job.trace_id}"
+            log_extra["logging.googleapis.com/trace"] = (
+                f"projects/{cfg.project_id}/traces/{job.trace_id}"
+            )
     except DuplicateJobError as dup:
         job = dup.job
         duration_ms = int((time.perf_counter() - ingest_started) * 1000)
@@ -265,8 +292,8 @@ async def ingest(request: Request):
         response_payload = job_public_view(job)
         response_payload["duplicate"] = True
         return JSONResponse(response_payload, status_code=412)
-    else:
-        _INGEST_LOG.info("ingest_received", extra=log_extra)
+
+    _INGEST_LOG.info("ingest_received", extra=log_extra)
 
     execution_name: str | None = None
     try:
@@ -332,9 +359,12 @@ async def ingest(request: Request):
             updates={"last_error": {"stage": "workflow_dispatch", "error": str(exc)}},
         )
         _INGEST_LOG.exception(
-            "workflow_dispatch_failed", extra={"job_id": job.job_id, "error": str(exc), "trace_id": job.trace_id}
+            "workflow_dispatch_failed",
+            extra={"job_id": job.job_id, "error": str(exc), "trace_id": job.trace_id},
         )
-        raise HTTPException(status_code=502, detail="Failed to dispatch workflow") from exc
+        raise HTTPException(
+            status_code=502, detail="Failed to dispatch workflow"
+        ) from exc
 
     updates = {}
     if execution_name:

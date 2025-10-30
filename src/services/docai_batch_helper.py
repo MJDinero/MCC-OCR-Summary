@@ -10,6 +10,7 @@ Returned structure mirrors the synchronous path so downstream components (e.g.
 summariser) can remain agnostic of sync vs async execution. Additional batch
 metadata is exposed under the 'batch_metadata' key for observability.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -35,8 +36,8 @@ TIMEOUT_SECONDS = 30 * 60  # 30 minutes
 
 
 def _gcs_uri(bucket: str, prefix: str) -> str:
-    if not prefix.endswith('/'):
-        prefix += '/'
+    if not prefix.endswith("/"):
+        prefix += "/"
     return f"gs://{bucket}/{prefix}"
 
 
@@ -56,7 +57,9 @@ def _normalise(doc: Dict[str, Any]) -> Dict[str, Any]:
     return {"text": full_text, "pages": pages_out}
 
 
-def _read_output_documents(storage_client: storage.Client, output_prefix: str) -> Dict[str, Any]:
+def _read_output_documents(
+    storage_client: storage.Client, output_prefix: str
+) -> Dict[str, Any]:
     """Aggregate all Document JSON outputs under the given GCS prefix.
 
     Document AI writes one or more JSON files (sharded). We concatenate page
@@ -67,7 +70,7 @@ def _read_output_documents(storage_client: storage.Client, output_prefix: str) -
         raise OCRServiceError("output_prefix must be a GCS URI")
     # Split gs://bucket/path/
     without_scheme = output_prefix[5:]
-    bucket_name, _, prefix = without_scheme.partition('/')
+    bucket_name, _, prefix = without_scheme.partition("/")
     blobs = list(storage_client.list_blobs(bucket_name, prefix=prefix))
     json_blobs = [b for b in blobs if b.name.endswith(".json")]
     if not json_blobs:
@@ -77,15 +80,15 @@ def _read_output_documents(storage_client: storage.Client, output_prefix: str) -
     for blob in json_blobs:
         try:
             data = blob.download_as_bytes()
-            parsed = json.loads(data.decode('utf-8'))
+            parsed = json.loads(data.decode("utf-8"))
             # Each JSON may contain a Document object or wrapper with 'document'
-            doc_obj = parsed.get('document') if isinstance(parsed, dict) else None
+            doc_obj = parsed.get("document") if isinstance(parsed, dict) else None
             if not doc_obj:
                 doc_obj = parsed  # Accept raw Document
             if isinstance(doc_obj, dict):
-                pages = doc_obj.get('pages') or []
+                pages = doc_obj.get("pages") or []
                 combined_pages.extend(pages)
-                txt = doc_obj.get('text') or ''
+                txt = doc_obj.get("text") or ""
                 if txt:
                     full_text_parts.append(txt)
         except Exception as exc:  # pragma: no cover - best effort; fail fast
@@ -103,7 +106,9 @@ class _BatchClients:
 def _default_clients(region: str) -> _BatchClients:
     endpoint = f"{region}-documentai.googleapis.com"
     return _BatchClients(
-        docai=documentai.DocumentProcessorServiceClient(client_options=ClientOptions(api_endpoint=endpoint)),
+        docai=documentai.DocumentProcessorServiceClient(
+            client_options=ClientOptions(api_endpoint=endpoint)
+        ),
         storage=storage.Client(),
     )
 
@@ -136,7 +141,9 @@ def batch_process_documents_gcs(
     cfg: AppConfig = get_config()
     project_id = project_id or cfg.project_id
     if not all([project_id, region, processor_id]):
-        raise ValidationError("project_id, region, processor_id required for batch processing")
+        raise ValidationError(
+            "project_id, region, processor_id required for batch processing"
+        )
 
     clients = clients or _default_clients(region)
     storage_client = clients.storage
@@ -145,7 +152,9 @@ def batch_process_documents_gcs(
 
     # Ensure input is in GCS
     intake_bucket = (cfg.intake_gcs_bucket or "").strip() or "quantify-agent-intake"
-    output_bucket = (cfg.output_gcs_bucket or cfg.summary_bucket or "").strip() or "quantify-agent-output"
+    output_bucket = (
+        cfg.output_gcs_bucket or cfg.summary_bucket or ""
+    ).strip() or "quantify-agent-output"
 
     if input_uri.startswith("gs://"):
         gcs_input_uri = input_uri
@@ -153,22 +162,25 @@ def batch_process_documents_gcs(
         local_path = Path(input_uri)
         if not local_path.exists():
             raise ValidationError(f"Input file not found: {local_path}")
-        if local_path.suffix.lower() != '.pdf':
+        if local_path.suffix.lower() != ".pdf":
             raise ValidationError("Only PDF inputs supported for batch")
-        target_name = f"uploads/{uuid.uuid4().hex}-{local_path.name}".replace('//', '/')
+        target_name = f"uploads/{uuid.uuid4().hex}-{local_path.name}".replace("//", "/")
         gcs_input_uri = _gcs_uri(intake_bucket, target_name)
         # Upload
         bucket = storage_client.bucket(intake_bucket)
         blob = bucket.blob(target_name)
         if kms_key:
             setattr(blob, "kms_key_name", kms_key)
-        _LOG.info("batch_upload_start", extra={"gcs_uri": gcs_input_uri, "size_bytes": local_path.stat().st_size})
+        _LOG.info(
+            "batch_upload_start",
+            extra={"gcs_uri": gcs_input_uri, "size_bytes": local_path.stat().st_size},
+        )
         blob.upload_from_filename(str(local_path))
         _LOG.info("batch_upload_complete", extra={"gcs_uri": gcs_input_uri})
 
     # Prepare output prefix
     if output_uri and output_uri.startswith("gs://"):
-        output_prefix = output_uri.rstrip('/') + '/'
+        output_prefix = output_uri.rstrip("/") + "/"
     else:
         unique_prefix = f"batch/{time.strftime('%Y%m%d')}/{uuid.uuid4().hex}/"
         output_prefix = _gcs_uri(output_bucket, unique_prefix)
@@ -184,7 +196,10 @@ def batch_process_documents_gcs(
             }
         },
         "document_output_config": {
-            "gcs_output_config": {"gcs_uri": output_prefix, **({"kms_key_name": kms_key} if kms_key else {})}
+            "gcs_output_config": {
+                "gcs_uri": output_prefix,
+                **({"kms_key_name": kms_key} if kms_key else {}),
+            }
         },
     }
     if kms_key:
@@ -213,7 +228,12 @@ def batch_process_documents_gcs(
             raise OCRServiceError("Batch operation timeout exceeded")
         _LOG.info(
             "batch_poll",
-            extra={"operation": getattr(operation, 'operation', getattr(operation, 'name', 'unknown')), "elapsed_s": round(elapsed, 1)},
+            extra={
+                "operation": getattr(
+                    operation, "operation", getattr(operation, "name", "unknown")
+                ),
+                "elapsed_s": round(elapsed, 1),
+            },
         )
         time.sleep(POLL_INTERVAL_SECONDS)
 
@@ -225,8 +245,8 @@ def batch_process_documents_gcs(
 
     # Attempt to derive pages processed from metadata
     pages_processed = None
-    meta = getattr(operation, 'metadata', None)
-    if meta and hasattr(meta, 'individual_process_statuses'):
+    meta = getattr(operation, "metadata", None)
+    if meta and hasattr(meta, "individual_process_statuses"):
         try:  # pragma: no cover - best effort
             pages_processed = len(meta.individual_process_statuses)
         except Exception:
@@ -239,7 +259,7 @@ def batch_process_documents_gcs(
         "status": "succeeded",
         "output_uri": output_prefix,
         "pages_processed": pages_processed or len(normalised.get("pages", [])),
-        "operation_name": getattr(operation, 'name', None),
+        "operation_name": getattr(operation, "name", None),
     }
 
     _LOG.info(

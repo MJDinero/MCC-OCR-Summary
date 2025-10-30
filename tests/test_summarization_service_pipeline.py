@@ -13,7 +13,9 @@ class FakePublisher:
     def __init__(self) -> None:
         self.messages = []
 
-    async def publish(self, topic: str, data: bytes, attributes: dict[str, str] | None = None) -> str:
+    async def publish(
+        self, topic: str, data: bytes, attributes: dict[str, str] | None = None
+    ) -> str:
         self.messages.append((topic, data, attributes or {}))
         return "msg"
 

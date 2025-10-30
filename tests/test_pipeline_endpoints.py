@@ -12,7 +12,9 @@ class StubWorkflowLauncher:
         self.calls: list[dict] = []
 
     def launch(self, *, job, parameters=None, trace_context=None):
-        self.calls.append({"job_id": job.job_id, "parameters": parameters, "trace": trace_context})
+        self.calls.append(
+            {"job_id": job.job_id, "parameters": parameters, "trace": trace_context}
+        )
         return "executions/mock"
 
 
@@ -111,7 +113,9 @@ def test_internal_event_updates_status(monkeypatch):
         "extra": {"segments": 3},
         "metadataPatch": {"summary_uri": "gs://bucket/summary.json"},
     }
-    resp = client.post(f"/ingest/internal/jobs/{job_id}/events", headers=headers, json=update_payload)
+    resp = client.post(
+        f"/ingest/internal/jobs/{job_id}/events", headers=headers, json=update_payload
+    )
     assert resp.status_code == 200
     job = app.state.state_store.get_job(job_id)
     assert job.status is PipelineStatus.SUMMARY_DONE
@@ -150,7 +154,10 @@ def test_ingest_accepts_pubsub_envelope(monkeypatch):
     body = resp.json()
     assert body["duplicate"] is False
     assert body["request_id"] == "ce-evt-123"
-    assert launcher.calls and launcher.calls[0]["parameters"]["object_name"] == "drive/event.pdf"
+    assert (
+        launcher.calls
+        and launcher.calls[0]["parameters"]["object_name"] == "drive/event.pdf"
+    )
     job = app.state.state_store.get_job(body["job_id"])
     assert job is not None
     assert job.object_uri.endswith("drive/event.pdf")

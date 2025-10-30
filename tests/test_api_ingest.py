@@ -15,7 +15,9 @@ class _StubExecutionsClient:
 
     def create_execution(self, request: Dict[str, Any], retry=None):
         self.requests.append({"request": request, "retry": retry})
-        return SimpleNamespace(name="projects/test/locations/test/workflows/docai/executions/123")
+        return SimpleNamespace(
+            name="projects/test/locations/test/workflows/docai/executions/123"
+        )
 
 
 def _setup_env(monkeypatch):
@@ -43,7 +45,10 @@ def test_ingest_builds_argument_and_launches_workflow(monkeypatch):
     monkeypatch.setattr(api_ingest, "uuid4", lambda: next(uuid_values))
 
     client = TestClient(api_ingest.app)
-    payload = {"id": "event-123", "data": {"bucket": "sample-bucket", "name": "docs/file.pdf"}}
+    payload = {
+        "id": "event-123",
+        "data": {"bucket": "sample-bucket", "name": "docs/file.pdf"},
+    }
 
     resp = client.post("/ingest", headers={"ce-id": "ce-abc"}, json=payload)
     assert resp.status_code == 200
@@ -52,11 +57,17 @@ def test_ingest_builds_argument_and_launches_workflow(monkeypatch):
     assert body["ok"] is True
     assert body["job_id"] == "00000000-0000-4000-8000-000000000001"
     assert body["object_uri"] == "gs://sample-bucket/docs/file.pdf"
-    assert body["execution"] == "projects/test/locations/test/workflows/docai/executions/123"
+    assert (
+        body["execution"]
+        == "projects/test/locations/test/workflows/docai/executions/123"
+    )
 
     assert stub.requests, "Expected workflow execution request to be recorded"
     execution_request = stub.requests[0]["request"]
-    assert execution_request["parent"] == "projects/proj-123/locations/us-test1/workflows/wf-test"
+    assert (
+        execution_request["parent"]
+        == "projects/proj-123/locations/us-test1/workflows/wf-test"
+    )
     execution_argument = json.loads(execution_request["execution"]["argument"])
     assert execution_argument["job_id"] == "00000000-0000-4000-8000-000000000001"
     assert execution_argument["trace_id"] == "ce-abc"
@@ -93,13 +104,18 @@ def test_ingest_propagates_trace_context_header(monkeypatch):
     monkeypatch.setattr(api_ingest, "uuid4", lambda: next(uuid_values))
 
     client = TestClient(api_ingest.app)
-    headers = {"ce-id": "event-xyz", "X-Cloud-Trace-Context": "abcd1234ef567890/123456;o=1"}
+    headers = {
+        "ce-id": "event-xyz",
+        "X-Cloud-Trace-Context": "abcd1234ef567890/123456;o=1",
+    }
     payload = {"data": {"bucket": "trace-bucket", "name": "item.pdf"}}
 
     resp = client.post("/ingest", headers=headers, json=payload)
     assert resp.status_code == 200
 
-    execution_argument = json.loads(stub.requests[0]["request"]["execution"]["argument"])
+    execution_argument = json.loads(
+        stub.requests[0]["request"]["execution"]["argument"]
+    )
     assert execution_argument["trace_context"] == "abcd1234ef567890/123456;o=1"
     assert execution_argument["trace_id"] == "abcd1234ef567890"
     assert execution_argument["job_id"] == "00000000-0000-4000-8000-000000000100"
@@ -127,8 +143,13 @@ def test_ingest_translates_traceparent_header(monkeypatch):
     resp = client.post("/ingest", headers=headers, json=payload)
     assert resp.status_code == 200
 
-    execution_argument = json.loads(stub.requests[0]["request"]["execution"]["argument"])
-    assert execution_argument["trace_context"] == f"4bf92f3577b34da6a3ce929d0e0e4736/{expected_span};o=1"
+    execution_argument = json.loads(
+        stub.requests[0]["request"]["execution"]["argument"]
+    )
+    assert (
+        execution_argument["trace_context"]
+        == f"4bf92f3577b34da6a3ce929d0e0e4736/{expected_span};o=1"
+    )
     assert execution_argument["trace_id"] == "4bf92f3577b34da6a3ce929d0e0e4736"
 
 
@@ -151,7 +172,9 @@ def test_ingest_passes_pipeline_service_base_url(monkeypatch):
     resp = client.post("/ingest", headers={"ce-id": "event-base"}, json=payload)
     assert resp.status_code == 200
 
-    execution_argument = json.loads(stub.requests[0]["request"]["execution"]["argument"])
+    execution_argument = json.loads(
+        stub.requests[0]["request"]["execution"]["argument"]
+    )
     assert execution_argument["pipeline_service_base_url"] == "https://pipeline.test"
 
 
@@ -171,14 +194,19 @@ def test_ingest_extracts_bucket_from_message_attributes(monkeypatch):
     client = TestClient(api_ingest.app)
     payload = {
         "message": {
-            "attributes": {"bucketId": "attr-bucket", "objectId": "nested/path/report.pdf"},
+            "attributes": {
+                "bucketId": "attr-bucket",
+                "objectId": "nested/path/report.pdf",
+            },
         }
     }
 
     resp = client.post("/ingest", headers={"ce-id": "event-attr"}, json=payload)
     assert resp.status_code == 200
 
-    execution_argument = json.loads(stub.requests[0]["request"]["execution"]["argument"])
+    execution_argument = json.loads(
+        stub.requests[0]["request"]["execution"]["argument"]
+    )
     assert execution_argument["object_uri"] == "gs://attr-bucket/nested/path/report.pdf"
     assert execution_argument["intake_bucket"] == "attr-bucket"
     assert execution_argument["gcs_uri"] == "gs://attr-bucket/nested/path/report.pdf"
@@ -198,7 +226,9 @@ def test_ingest_extracts_bucket_from_base64_message(monkeypatch):
     monkeypatch.setattr(api_ingest, "uuid4", lambda: next(uuid_values))
 
     client = TestClient(api_ingest.app)
-    inner = json.dumps({"bucket": "encoded-bucket", "name": "from-data.pdf"}).encode("utf-8")
+    inner = json.dumps({"bucket": "encoded-bucket", "name": "from-data.pdf"}).encode(
+        "utf-8"
+    )
     payload = {
         "message": {
             "data": base64.b64encode(inner).decode("ascii"),
@@ -208,7 +238,9 @@ def test_ingest_extracts_bucket_from_base64_message(monkeypatch):
     resp = client.post("/ingest", headers={"ce-id": "event-data"}, json=payload)
     assert resp.status_code == 200
 
-    execution_argument = json.loads(stub.requests[0]["request"]["execution"]["argument"])
+    execution_argument = json.loads(
+        stub.requests[0]["request"]["execution"]["argument"]
+    )
     assert execution_argument["object_uri"] == "gs://encoded-bucket/from-data.pdf"
     assert execution_argument["intake_bucket"] == "encoded-bucket"
     assert execution_argument["gcs_uri"] == "gs://encoded-bucket/from-data.pdf"
@@ -243,7 +275,9 @@ def test_ingest_accepts_cloudevent_payload(monkeypatch):
         "data": event_data,
     }
 
-    monkeypatch.setattr(api_ingest, "ce_from_http", lambda headers, body: _CloudEventStub(ce_dict))
+    monkeypatch.setattr(
+        api_ingest, "ce_from_http", lambda headers, body: _CloudEventStub(ce_dict)
+    )
 
     client = TestClient(api_ingest.app)
     headers = {
@@ -257,7 +291,9 @@ def test_ingest_accepts_cloudevent_payload(monkeypatch):
     resp = client.post("/ingest", data=json.dumps(event_data), headers=headers)
     assert resp.status_code == 200
 
-    execution_argument = json.loads(stub.requests[0]["request"]["execution"]["argument"])
+    execution_argument = json.loads(
+        stub.requests[0]["request"]["execution"]["argument"]
+    )
     assert execution_argument["object_uri"] == "gs://cloudevent-bucket/source.pdf"
     assert execution_argument["request_id"] == "ce-event-1"
     assert execution_argument["trace_id"] == "ce-event-1"
@@ -269,6 +305,8 @@ def test_ingest_returns_422_for_invalid_payload(monkeypatch):
     monkeypatch.setattr(api_ingest, "_wf_client", stub)
 
     client = TestClient(api_ingest.app)
-    resp = client.post("/ingest", data="not-json", headers={"Content-Type": "text/plain"})
+    resp = client.post(
+        "/ingest", data="not-json", headers={"Content-Type": "text/plain"}
+    )
     assert resp.status_code == 422
     assert stub.requests == []

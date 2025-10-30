@@ -1,221 +1,31 @@
-apiVersion: mcc.dev/v1
-kind: PipelineManifest
+apiVersion: serving.knative.dev/v1
+kind: Service
 metadata:
   name: mcc-ocr-summary
-  schemaVersion: 2025-10-01
-  description: >
-    Documentation manifest describing the production pipeline components for
-    MCC OCR Summary (ingest → DocAI → summariser → PDF → Drive/GCS).
-  owners:
-    - platform@mcc.dev
-
-services:
-  ingest-api:
-    type: cloud_run_service
-    source: src/main.py
-    image: gcr.io/${PROJECT_ID}/mcc-ocr-summary:${IMAGE_TAG}
-    region: ${REGION}
-    serviceAccount: ${OCR_SA_NAME}@${PROJECT_ID}.iam.gserviceaccount.com
-    minInstances: 0
-    concurrency: 4
-    cpu: 2
-    memory: 2Gi
-    timeoutSeconds: 900
-    environment:
-      - PROJECT_ID=${PROJECT_ID}
-      - REGION=${REGION}
-      - DOC_AI_PROCESSOR_ID=${DOC_AI_PROCESSOR_ID}
-      - DOC_AI_SPLITTER_PROCESSOR_ID=${DOC_AI_SPLITTER_PROCESSOR_ID}
-      - INTAKE_BUCKET=${INTAKE_BUCKET}
-      - OUTPUT_BUCKET=${OUTPUT_BUCKET}
-      - SUMMARY_BUCKET=${SUMMARY_BUCKET}
-      - CMEK_KEY_NAME=${CMEK_KEY_NAME}
-      - PIPELINE_STATE_BACKEND=gcs
-      - PIPELINE_STATE_BUCKET=${STATE_BUCKET}
-      - PIPELINE_STATE_PREFIX=${STATE_PREFIX}
-      - PIPELINE_DLQ_TOPIC=${PIPELINE_DLQ_TOPIC}
-      - PIPELINE_WORKFLOW_NAME=${WORKFLOW_NAME}
-      - SUMMARISER_JOB_NAME=${SUMMARISER_JOB_NAME}
-      - PDF_JOB_NAME=${PDF_JOB_NAME}
-      - SUMMARY_SCHEMA_VERSION=${SUMMARY_SCHEMA_VERSION}
-    ingress: internal
-    authentication: workload-identity
-
-jobs:
-  summariser:
-    type: cloud_run_job
-    image: gcr.io/${PROJECT_ID}/mcc-ocr-summary:${IMAGE_TAG}
-    region: ${REGION}
-    serviceAccount: ${SUMMARISER_SA_NAME}@${PROJECT_ID}.iam.gserviceaccount.com
-    taskCount: 1
-    maxRetries: 3
-    timeoutSeconds: 900
-    concurrency: 1
-    cpu: 1
-    environment:
-      - PIPELINE_STATE_BACKEND=gcs
-      - PIPELINE_STATE_BUCKET=${STATE_BUCKET}
-      - PIPELINE_STATE_PREFIX=${STATE_PREFIX}
-      - SUMMARY_BUCKET=${SUMMARY_BUCKET}
-      - OUTPUT_BUCKET=${OUTPUT_BUCKET}
-      - SUMMARY_SCHEMA_VERSION=${SUMMARY_SCHEMA_VERSION}
-      - CMEK_KEY_NAME=${CMEK_KEY_NAME}
-
-  pdf-writer:
-    type: cloud_run_job
-    image: gcr.io/${PROJECT_ID}/mcc-ocr-summary:${IMAGE_TAG}
-    region: ${REGION}
-    serviceAccount: ${STORAGE_SA_NAME}@${PROJECT_ID}.iam.gserviceaccount.com
-    taskCount: 1
-    maxRetries: 3
-    timeoutSeconds: 900
-    concurrency: 1
-    cpu: 1
-    environment:
-      - PIPELINE_STATE_BACKEND=gcs
-      - PIPELINE_STATE_BUCKET=${STATE_BUCKET}
-      - PIPELINE_STATE_PREFIX=${STATE_PREFIX}
-      - SUMMARY_BUCKET=${SUMMARY_BUCKET}
-      - OUTPUT_BUCKET=${OUTPUT_BUCKET}
-      - CMEK_KEY_NAME=${CMEK_KEY_NAME}
-
-workflows:
-  pipeline:
-    type: google_workflows
-    location: ${REGION}
-    source: workflows/pipeline.yaml
-    serviceAccount: ${WORKFLOW_SA_NAME}@${PROJECT_ID}.iam.gserviceaccount.com
-    rollout:
-      concurrencyLimit: ${MAX_SHARD_CONCURRENCY}
-      ifGenerationMatch: enforced
-      fanout:
-        ocr:
-          maxConcurrency: ${MAX_SHARD_CONCURRENCY}
-        summariser:
-          args:
-            - --gcs-if-generation
-            - "0"
-        pdf-writer:
-          args:
-            - --if-generation-match
-            - "0"
-
-storage:
-  buckets:
-    intake:
-      name: ${INTAKE_BUCKET}
-      purpose: drive-sync-intake
-      location: ${REGION}
-      encryptionKey: ${CMEK_KEY_NAME}
-      lifecycle:
-        - action: Delete
-          condition:
-            age: 30
-    output:
-      name: ${OUTPUT_BUCKET}
-      purpose: ocr-results
-      encryptionKey: ${CMEK_KEY_NAME}
-    summary:
-      name: ${SUMMARY_BUCKET}
-      purpose: summarised-json-and-pdf
-      encryptionKey: ${CMEK_KEY_NAME}
-    state:
-      name: ${STATE_BUCKET}
-      purpose: pipeline-state-store
-      encryptionKey: ${CMEK_KEY_NAME}
-  bigquery:
-    datasets:
-      summary:
-        datasetId: ${SUMMARY_BIGQUERY_DATASET}
-        defaultEncryptionKey: ${CMEK_KEY_NAME}
-        tables:
-          - tableId: ${SUMMARY_BIGQUERY_TABLE}
-            encryptionKey: ${CMEK_KEY_NAME}
-
-pubsub:
-  topics:
-    dlq:
-      name: ${PIPELINE_DLQ_TOPIC}
-      subscription: ${PIPELINE_DLQ_TOPIC}-sub
-      retention: 7d
-
-iam:
-  serviceAccounts:
-    ocr:
-      id: ${OCR_SA_NAME}
-      roles:
-        - roles/documentai.apiUser
-        - roles/storage.objectViewer (gs://${INTAKE_BUCKET})
-        - roles/storage.objectCreator (gs://${OUTPUT_BUCKET})
-        - roles/logging.logWriter
-        - roles/monitoring.metricWriter
-    summariser:
-      id: ${SUMMARISER_SA_NAME}
-      roles:
-        - roles/secretmanager.secretAccessor
-        - roles/storage.objectViewer (gs://${OUTPUT_BUCKET})
-        - roles/storage.objectCreator (gs://${SUMMARY_BUCKET})
-        - roles/logging.logWriter
-        - roles/monitoring.metricWriter
-    storage:
-      id: ${STORAGE_SA_NAME}
-      roles:
-        - roles/storage.objectAdmin (gs://${SUMMARY_BUCKET})
-        - roles/bigquery.dataEditor (${SUMMARY_BIGQUERY_DATASET})
-        - roles/logging.logWriter
-        - roles/monitoring.metricWriter
-    workflow:
-      id: ${WORKFLOW_SA_NAME}
-      roles:
-        - roles/run.invoker
-        - roles/documentai.apiUser
-        - roles/storage.objectViewer (gs://${INTAKE_BUCKET})
-        - roles/storage.objectCreator (gs://${OUTPUT_BUCKET})
-        - roles/pubsub.publisher
-
-observability:
-  logMarkers:
-    - ingest_received
-    - split_done
-    - ocr_lro_started
-    - ocr_lro_finished
-    - summary_done
-    - pdf_writer_complete
-    - drive_upload_complete
-  dashboards:
-    - infra/monitoring/dashboard_pipeline_latency.json
-    - infra/monitoring/dashboard_throughput_cpu_mem.json
-  alertPolicies:
-    - infra/monitoring/alert_dlq_backlog.json
-    - infra/monitoring/alert_5xx_rate.json
-    - infra/monitoring/alert_slo_breach.json
-
-testing:
-  smoke:
-    script: scripts/e2e_smoke.sh
-    expects:
-      status: UPLOADED
-      duplicateStatus: 412
-      logSequence:
-        - ingest_received
-        - split_done
-        - ocr_lro_finished
-        - summary_done
-        - pdf_writer_complete
-        - drive_upload_complete
-
-ci:
-  cloudBuild: cloudbuild.yaml
-  coverageThreshold: 90
-  stages:
-    - lint-and-type
-    - unit-tests
-    - integration-tests
-    - build-image
-    - deploy-service-canary
-    - deploy-summariser-job
-    - deploy-pdf-job
-    - deploy-workflow
-    - e2e-smoke
-    - promote-traffic
-    - record-rollback-info
+  namespace: default
+spec:
+  template:
+    metadata:
+      annotations:
+        run.googleapis.com/client-name: "gcloud"
+    spec:
+      containers:
+        # App container
+        - name: app
+          image: us-central1-docker.pkg.dev/quantify-agent/mcc/mcc-orchestrator:latest
+          ports:
+            - name: http1
+              containerPort: 8080
+          env:
+            - name: PORT
+              value: "8080"
+        # Managed Service for Prometheus sidecar
+        - name: gmp-sidecar
+          image: gcr.io/cloudrun/managed-prometheus-sidecar:latest
+          env:
+            - name: TARGET
+              value: "http://localhost:8080/metrics"
+            - name: PROJECT_ID
+              value: "quantify-agent"
+      containerConcurrency: 4
+      timeoutSeconds: 1200

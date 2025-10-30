@@ -1,6 +1,7 @@
 """
 Thin FastAPI surface for Eventarc-triggered ingestion of MCC OCR workflow jobs.
 """
+
 from __future__ import annotations
 
 import base64
@@ -66,7 +67,9 @@ def _optional_secret(name: str, project_id: Optional[str]) -> Optional[str]:
 if hasattr(workflows_v1, "ExecutionsClient"):
     _ExecutionsClient = workflows_v1.ExecutionsClient  # type: ignore[attr-defined]
 else:  # pragma: no cover - fallback for older client libraries
-    from google.cloud.workflows.executions_v1 import ExecutionsClient as _ExecutionsClient
+    from google.cloud.workflows.executions_v1 import (
+        ExecutionsClient as _ExecutionsClient,
+    )
 
 _wf_client = _ExecutionsClient()
 
@@ -81,7 +84,9 @@ def _truncate_event(event: Any, limit: int = 512) -> str:
     return serialized[:limit]
 
 
-def _extract_object_info(event: Dict[str, Any], raw_event: Dict[str, Any]) -> Tuple[Optional[str], Optional[str]]:
+def _extract_object_info(
+    event: Dict[str, Any], raw_event: Dict[str, Any]
+) -> Tuple[Optional[str], Optional[str]]:
     """Derive bucket/name from CloudEvent or Pub/Sub style payloads."""
 
     bucket: Optional[str] = None
@@ -92,19 +97,33 @@ def _extract_object_info(event: Dict[str, Any], raw_event: Dict[str, Any]) -> Tu
             continue
 
         bucket = bucket or candidate.get("bucket")
-        name = name or candidate.get("name") or candidate.get("object") or candidate.get("objectId")
+        name = (
+            name
+            or candidate.get("name")
+            or candidate.get("object")
+            or candidate.get("objectId")
+        )
 
         data = candidate.get("data")
         if isinstance(data, dict):
             bucket = bucket or data.get("bucket") or data.get("bucketId")
-            name = name or data.get("name") or data.get("object") or data.get("objectId")
+            name = (
+                name or data.get("name") or data.get("object") or data.get("objectId")
+            )
 
         message = candidate.get("message")
         if isinstance(message, dict):
             attributes = message.get("attributes")
             if isinstance(attributes, dict):
-                bucket = bucket or attributes.get("bucket") or attributes.get("bucketId")
-                name = name or attributes.get("name") or attributes.get("object") or attributes.get("objectId")
+                bucket = (
+                    bucket or attributes.get("bucket") or attributes.get("bucketId")
+                )
+                name = (
+                    name
+                    or attributes.get("name")
+                    or attributes.get("object")
+                    or attributes.get("objectId")
+                )
 
             encoded = message.get("data")
             if isinstance(encoded, str):
@@ -116,13 +135,24 @@ def _extract_object_info(event: Dict[str, Any], raw_event: Dict[str, Any]) -> Tu
                     continue
 
                 if isinstance(decoded_json, dict):
-                    bucket = bucket or decoded_json.get("bucket") or decoded_json.get("bucketId")
-                    name = name or decoded_json.get("name") or decoded_json.get("object") or decoded_json.get("objectId")
+                    bucket = (
+                        bucket
+                        or decoded_json.get("bucket")
+                        or decoded_json.get("bucketId")
+                    )
+                    name = (
+                        name
+                        or decoded_json.get("name")
+                        or decoded_json.get("object")
+                        or decoded_json.get("objectId")
+                    )
 
     return bucket, name
 
 
-def _derive_trace_context(headers: Mapping[str, str]) -> Tuple[Optional[str], Optional[str]]:
+def _derive_trace_context(
+    headers: Mapping[str, str],
+) -> Tuple[Optional[str], Optional[str]]:
     """Extract Cloud Trace context header and trace id variants."""
 
     trace_header = headers.get("x-cloud-trace-context")
@@ -206,13 +236,17 @@ async def ingest(request: Request) -> Dict[str, Any]:
             raw_event = json.loads(body_bytes.decode("utf-8"))
         except (ValueError, UnicodeDecodeError) as exc:
             logger.exception("Invalid CloudEvent or JSON payload: %s", exc)
-            raise HTTPException(status_code=422, detail="Invalid CloudEvent or JSON payload") from exc
+            raise HTTPException(
+                status_code=422, detail="Invalid CloudEvent or JSON payload"
+            ) from exc
 
     try:
         payload = IngestPayload.model_validate(raw_event)
     except ValidationError as exc:
         logger.exception("Invalid event payload: %s", exc)
-        raise HTTPException(status_code=422, detail="Invalid CloudEvent or JSON payload") from exc
+        raise HTTPException(
+            status_code=422, detail="Invalid CloudEvent or JSON payload"
+        ) from exc
 
     event = payload.model_dump(mode="python")
     bucket, name = _extract_object_info(event, raw_event)
@@ -230,9 +264,7 @@ async def ingest(request: Request) -> Dict[str, Any]:
     job_id = str(uuid4())
 
     intake_bucket = (
-        os.getenv("INTAKE_GCS_BUCKET")
-        or os.getenv("INTAKE_BUCKET")
-        or bucket
+        os.getenv("INTAKE_GCS_BUCKET") or os.getenv("INTAKE_BUCKET") or bucket
     )
     output_bucket = os.getenv("OUTPUT_GCS_BUCKET") or os.getenv("OUTPUT_BUCKET")
     summary_bucket = os.getenv("SUMMARY_BUCKET") or output_bucket
@@ -261,7 +293,9 @@ async def ingest(request: Request) -> Dict[str, Any]:
     region = _env("REGION", "us-central1")
     optional_fields = {
         "doc_ai_processor_id": _optional_secret("DOC_AI_PROCESSOR_ID", project),
-        "doc_ai_splitter_processor_id": _optional_secret("DOC_AI_SPLITTER_PROCESSOR_ID", project),
+        "doc_ai_splitter_processor_id": _optional_secret(
+            "DOC_AI_SPLITTER_PROCESSOR_ID", project
+        ),
         "summariser_job_name": os.getenv("SUMMARISER_JOB_NAME"),
         "pdf_job_name": os.getenv("PDF_JOB_NAME"),
         "pipeline_dlq_topic": os.getenv("PIPELINE_DLQ_TOPIC"),

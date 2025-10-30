@@ -4,6 +4,7 @@ Provides a JSON formatter and a request_id context variable. The FastAPI app
 should call `configure_logging()` at startup. Use `with request_context(id)` or
 `set_request_id(id)` to propagate correlation across inner service calls.
 """
+
 from __future__ import annotations
 
 import json
@@ -64,7 +65,9 @@ def configure_logging(level: int = logging.INFO, force: bool = False) -> None:
     if force:
         for handler in list(root.handlers):
             root.removeHandler(handler)
-    elif any(isinstance(h, logging.StreamHandler) for h in root.handlers):  # already configured
+    elif any(
+        isinstance(h, logging.StreamHandler) for h in root.handlers
+    ):  # already configured
         root.setLevel(level)
         for handler in root.handlers:
             handler.setLevel(level)

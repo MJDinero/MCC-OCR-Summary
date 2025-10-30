@@ -37,7 +37,9 @@ def _normalise_secret_path(raw: str, project_id: str | None) -> str:
         return raw
 
     if not project_id:
-        raise SecretResolutionError("project_id is required for shorthand sm:// references")
+        raise SecretResolutionError(
+            "project_id is required for shorthand sm:// references"
+        )
     secret_id, sep, version = raw.partition(":")
     secret_id = secret_id.strip()
     if not secret_id:
@@ -70,7 +72,9 @@ def resolve_secret(value: str | None, *, project_id: str | None = None) -> str |
         client = secretmanager.SecretManagerServiceClient()
         response = client.access_secret_version(name=secret_path)
     except Exception as exc:  # pragma: no cover - wrapped for consistent error surface
-        raise SecretResolutionError(f"Failed to access secret {secret_path}: {exc}") from exc
+        raise SecretResolutionError(
+            f"Failed to access secret {secret_path}: {exc}"
+        ) from exc
 
     payload = getattr(response, "payload", None)
     data: Optional[bytes] = None

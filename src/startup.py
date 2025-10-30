@@ -22,23 +22,36 @@ def hydrate_google_credentials_file() -> None:
     if not trimmed:
         return
 
+    payload = trimmed
+    if not trimmed.startswith(("{", "[")):
+        try:
+            secret_path = Path(trimmed)
+            if secret_path.exists():
+                payload = secret_path.read_text(encoding="utf-8")
+        except OSError as exc:
+            _LOG.warning(
+                "SERVICE_ACCOUNT_JSON path could not be read; skipping credential file hydration",
+                extra={"error": str(exc)},
+            )
+            return
     try:
-        json.loads(trimmed)
-    except json.JSONDecodeError:
-        _LOG.warning("SERVICE_ACCOUNT_JSON is not valid JSON; skipping credential file hydration")
+        json.loads(payload)
+    except json.JSONDecodeError as exc:
+        _LOG.warning(
+            "SERVICE_ACCOUNT_JSON is not valid JSON; skipping credential file hydration",
+            extra={"error": str(exc)},
+        )
         return
 
     path = Path(target_path)
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(trimmed, encoding="utf-8")
+        path.write_text(payload, encoding="utf-8")
         os.chmod(path, 0o600)
         os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = str(path)
     except Exception as exc:  # pragma: no cover - defensive logging
         _LOG.error("Failed to materialise GOOGLE_APPLICATION_CREDENTIALS file: %s", exc)
         return
-    finally:
-        os.environ.pop("SERVICE_ACCOUNT_JSON", None)
 
 
 __all__ = ["hydrate_google_credentials_file"]
