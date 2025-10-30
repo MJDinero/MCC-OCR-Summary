@@ -1,0 +1,6 @@
+************* Module docai_request_builder
+src/utils/docai_request_builder.py:48:0: R0913: Too many arguments (7/5) (too-many-arguments)
+
+------------------------------------------------------------------
+Your code has been rated at 9.82/10 (previous run: 9.82/10, +0.00)
+

@@ -1,0 +1,13 @@
+************* Module summariser_refactored
+src/services/summariser_refactored.py:1:0: C0302: Too many lines in module (1688/1000) (too-many-lines)
+src/services/summariser_refactored.py:158:23: E1123: Unexpected keyword argument 'response_format' in method call (unexpected-keyword-arg)
+src/services/summariser_refactored.py:138:8: W0201: Attribute '_fallback_used' defined outside __init__ (attribute-defined-outside-init)
+src/services/summariser_refactored.py:178:12: W0201: Attribute '_fallback_used' defined outside __init__ (attribute-defined-outside-init)
+src/services/summariser_refactored.py:680:12: E1111: Assigning result of a function call, where the function has no return (assignment-from-no-return)
+src/services/summariser_refactored.py:826:4: R0911: Too many return statements (11/6) (too-many-return-statements)
+src/services/summariser_refactored.py:964:4: R0913: Too many arguments (6/5) (too-many-arguments)
+src/services/summariser_refactored.py:1619:35: C0201: Consider iterating the dictionary directly instead of calling .keys() (consider-iterating-dictionary)
+
+------------------------------------------------------------------
+Your code has been rated at 9.77/10 (previous run: 9.77/10, +0.00)
+

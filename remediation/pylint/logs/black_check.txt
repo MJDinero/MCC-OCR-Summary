@@ -1,0 +1,95 @@
+--- src/services/pdf_writer.py	2025-10-30 06:21:06.418151+00:00
++++ src/services/pdf_writer.py	2025-10-30 12:52:39.071684+00:00
+@@ -115,15 +115,11 @@
+     # This is a very naive PDF writer for testing; ensures %PDF header
+     # Reference: simplest possible PDF with one page & one text object.
+     lines = text.splitlines() or [text]
+     escaped_lines = []
+     for line in lines:
+-        escaped = (
+-            line.replace("\\", "\\\\")
+-            .replace("(", "\\(")
+-            .replace(")", "\\)")
+-        )
++        escaped = line.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
+         escaped_lines.append(escaped)
+     content_ops = [
+         "BT",
+         "/F1 12 Tf",
+         "1 0 0 1 72 720 Tm",
+--- src/services/summariser_refactored.py	2025-10-30 06:21:06.418384+00:00
++++ src/services/summariser_refactored.py	2025-10-30 12:52:39.605621+00:00
+@@ -945,11 +945,13 @@
+         low = text.lower()
+         letters = sum(ch.isalpha() for ch in text)
+         digits = sum(ch.isdigit() for ch in text)
+         keyword_hits = sum(1 for kw in keywords if kw in low)
+         length_penalty = max(0, len(text) - 220) / 160
+-        risk_penalty = 4 if "risk" in low or "hazard" in low or "complication" in low else 0
++        risk_penalty = (
++            4 if "risk" in low or "hazard" in low or "complication" in low else 0
++        )
+         instruction_penalty = 3 if "instruction" in low or "education" in low else 0
+         return (
+             keyword_hits * 6
+             + letters / 140
+             - digits * 0.2
+@@ -1015,23 +1017,19 @@
+         doc_metadata: Optional[Dict[str, Any]] = None,
+     ) -> str:
+         overview_lines = self._dedupe_ordered(
+             aggregated["overview"],
+             limit=self.max_overview_lines,
+-            require_tokens=(
+-                "patient",
+-            ),
++            require_tokens=("patient",),
+         ) or [
+             "The provided medical record segments were analysed to extract clinically relevant information."
+         ]
+         key_points = self._dedupe_ordered(
+             aggregated["key_points"],
+             limit=self.max_key_points,
+             keywords=self._KEY_POINT_TOKENS,
+-            require_tokens=(
+-                "patient",
+-            ),
++            require_tokens=("patient",),
+         )
+         clinical_details = self._dedupe_ordered(
+             aggregated["clinical_details"],
+             limit=self.max_clinical_details,
+             keywords=self._DETAIL_TOKENS,
+@@ -1124,23 +1122,19 @@
+             section.strip() for section in sections if section.strip()
+         )
+         summary_text = _strip_noise_lines(summary_text)
+         if len(summary_text) < self.min_summary_chars:
+             # Append additional detail to satisfy supervisor minimums while maintaining factuality.
+-            supplemental_lines = (
+-                [
+-                    line
+-                    for line in (
+-                        clinical_details + care_plan + key_points + overview_lines
+-                    )
+-                    if line
+-                    and not _contains_noise_phrase(line)
+-                    and not any(
+-                        fragment in line.lower() for fragment in _FINAL_NOISE_FRAGMENTS
+-                    )
+-                ]
+-            )
++            supplemental_lines = [
++                line
++                for line in (clinical_details + care_plan + key_points + overview_lines)
++                if line
++                and not _contains_noise_phrase(line)
++                and not any(
++                    fragment in line.lower() for fragment in _FINAL_NOISE_FRAGMENTS
++                )
++            ]
+             if supplemental_lines:
+                 needed = max(0, self.min_summary_chars - len(summary_text))
+                 filler_fragment = " ".join(supplemental_lines).strip()
+                 if filler_fragment:
+                     repeats = (needed // max(len(filler_fragment), 1)) + 1

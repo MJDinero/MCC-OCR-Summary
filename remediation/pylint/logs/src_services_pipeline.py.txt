@@ -1,0 +1,11 @@
+************* Module pipeline
+src/services/pipeline.py:114:46: W0108: Lambda may not be necessary (unnecessary-lambda)
+src/services/pipeline.py:115:46: W0108: Lambda may not be necessary (unnecessary-lambda)
+src/services/pipeline.py:150:4: R0913: Too many arguments (7/5) (too-many-arguments)
+src/services/pipeline.py:291:4: R0913: Too many arguments (7/5) (too-many-arguments)
+src/services/pipeline.py:494:4: R0913: Too many arguments (7/5) (too-many-arguments)
+src/services/pipeline.py:672:4: R1711: Useless return at end of function or method (useless-return)
+
+------------------------------------------------------------------
+Your code has been rated at 9.86/10 (previous run: 9.86/10, +0.00)
+

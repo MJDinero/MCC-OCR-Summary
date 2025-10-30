@@ -1,0 +1,10 @@
+************* Module docai_helper
+src/services/docai_helper.py:1:0: C0302: Too many lines in module (1355/1000) (too-many-lines)
+src/services/docai_helper.py:169:16: W0212: Access to a protected member _pb of a client class (protected-access)
+src/services/docai_helper.py:256:0: R0911: Too many return statements (7/6) (too-many-return-statements)
+src/services/docai_helper.py:309:0: R0913: Too many arguments (6/5) (too-many-arguments)
+src/services/docai_helper.py:641:4: R0913: Too many arguments (7/5) (too-many-arguments)
+
+------------------------------------------------------------------
+Your code has been rated at 9.92/10 (previous run: 9.92/10, +0.00)
+
