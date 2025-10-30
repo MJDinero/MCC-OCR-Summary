@@ -164,3 +164,11 @@
 - latestReadyRevisionName: mcc-ocr-summary-00292-j76
 - commit: 4c706d9
 - validator: (printed above)
+
+### 2025-10-30T00:46:02Z — Final Verification (mcc-ocr-summary)
+- revision: `mcc-ocr-summary-00294-sdk`  commit: `36c28a677784`
+- run.json:
+{"detail":"Document AI processing failed"}
+- validator.json:
+{"ok":false,"sections_ok":false,"noise_found":false,"length":0}
+- metrics: GMP sidecar scraping internally; service remains private.
