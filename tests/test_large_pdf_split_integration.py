@@ -88,6 +88,11 @@ def test_large_pdf_uses_async_batch_path(large_pdf, patch_batch, monkeypatch):
     cfg = get_config()
     monkeypatch.setattr(cfg, "project_id", "proj")
     monkeypatch.setattr(cfg, "region", "us")
+    monkeypatch.setattr(cfg, "doc_ai_splitter_id", None)
+    monkeypatch.setattr(cfg, "doc_ai_force_split_min_pages", 9999)
+    monkeypatch.setattr(
+        "src.services.docai_helper._get_page_count", lambda _pdf: 0
+    )
     service = OCRService(
         processor_id="processor123", config=cfg, client_factory=lambda endpoint: None
     )  # client unused in batch path

@@ -296,68 +296,83 @@ class PDFWriter:
     backend: PDFBackend
     title: str = "Document Summary"
 
-    def build(self, summary: Dict[str, str] | str) -> bytes:
-        # Accept legacy string but prefer dict
-        if isinstance(summary, str):
-            if not summary.strip():
-                raise PDFGenerationError("Summary text empty")
-            sections_seq = [("Summary", summary.strip())]
-        else:
-            if not summary:
-                raise PDFGenerationError("Summary structure empty")
-            # Preserve deterministic ordering
-            order = [
-                "Patient Information",
-                "Medical Summary",
-                "Billing Highlights",
-                "Legal / Notes",
-            ]
+    def build(
+        self,
+        summary_or_title: Dict[str, str] | str,
+        sections: Sequence[tuple[str, str]] | None = None,
+    ) -> bytes:
+        if sections is not None:
+            title = str(summary_or_title or "").strip() or self.title
             sections_seq = []
-            for key in order:
-                if key in summary:
-                    val = (summary[key] or "").strip() or "N/A"
-                    sections_seq.append((key, val))
-            # Add any extra keys deterministically
-            for k in sorted(
-                k for k in summary.keys() if k not in {o for o, _ in sections_seq}
-            ):
-                sections_seq.append((k, (summary[k] or "").strip()))
-        # Detect structured lists via side-channel keys injected by Summariser
-        if isinstance(summary, dict):
-            diag_list = [
-                s
-                for s in (summary.get("_diagnoses_list", "").splitlines())
-                if s.strip()
-            ]
-            prov_list = [
-                s
-                for s in (summary.get("_providers_list", "").splitlines())
-                if s.strip()
-            ]
-            med_list = [
-                s
-                for s in (summary.get("_medications_list", "").splitlines())
-                if s.strip()
-            ]
-            any_lists = any([diag_list, prov_list, med_list])
-            if any_lists:
-                sections_seq.append(
-                    (
-                        "Summary Lists",
-                        "Diagnoses, providers, and medications referenced in the document are enumerated below.",
+            for heading, body in sections:
+                heading_text = str(heading or "").strip() or "Section"
+                body_text = str(body or "").strip() or "N/A"
+                sections_seq.append((heading_text, body_text))
+            if not sections_seq:
+                raise PDFGenerationError("Summary structure empty")
+        else:
+            title = self.title
+            if isinstance(summary_or_title, str):
+                summary_text = summary_or_title.strip()
+                if not summary_text:
+                    raise PDFGenerationError("Summary text empty")
+                sections_seq = [("Summary", summary_text)]
+            else:
+                summary = summary_or_title
+                if not summary:
+                    raise PDFGenerationError("Summary structure empty")
+                order = [
+                    "Patient Information",
+                    "Medical Summary",
+                    "Billing Highlights",
+                    "Legal / Notes",
+                ]
+                sections_seq = []
+                for key in order:
+                    if key in summary:
+                        val = (summary[key] or "").strip() or "N/A"
+                        sections_seq.append((key, val))
+                for k in sorted(
+                    k for k in summary.keys() if k not in {o for o, _ in sections_seq}
+                ):
+                    sections_seq.append((k, (summary[k] or "").strip()))
+                diag_list = [
+                    s
+                    for s in (summary.get("_diagnoses_list", "").splitlines())
+                    if s.strip()
+                ]
+                prov_list = [
+                    s
+                    for s in (summary.get("_providers_list", "").splitlines())
+                    if s.strip()
+                ]
+                med_list = [
+                    s
+                    for s in (summary.get("_medications_list", "").splitlines())
+                    if s.strip()
+                ]
+                any_lists = any([diag_list, prov_list, med_list])
+                if any_lists:
+                    sections_seq.append(
+                        (
+                            "Structured Indices",
+                            "=" * 48,
+                        )
                     )
-                )
 
-                def _fmt_block(title: str, items: list[str]) -> str:
-                    if not items:
-                        return f"{title}:\nN/A"
-                    return f"{title}:\n" + "\n".join(f"• {i}" for i in items)
+                    def _fmt_block(title: str, items: list[str]) -> str:
+                        if not items:
+                            return f"{title}:\nN/A"
+                        return f"{title}:\n" + "\n".join(f"• {i}" for i in items)
 
-                sections_seq.append(("Diagnoses", _fmt_block("Diagnoses", diag_list)))
-                sections_seq.append(("Providers", _fmt_block("Providers", prov_list)))
-                sections_seq.append(
-                    ("Medications", _fmt_block("Medications / Prescriptions", med_list))
-                )
+                    sections_seq.append(("Diagnoses", _fmt_block("Diagnoses", diag_list)))
+                    sections_seq.append(("Providers", _fmt_block("Providers", prov_list)))
+                    sections_seq.append(
+                        (
+                            "Medications",
+                            _fmt_block("Medications / Prescriptions", med_list),
+                        )
+                    )
         _LOG.info(
             "pdf_writer_started",
             extra={
@@ -372,7 +387,7 @@ class PDFWriter:
             },
         )
         try:
-            result = self.backend.build(self.title, sections_seq)
+            result = self.backend.build(title, sections_seq)
             if _PDF_CALLS:
                 _PDF_CALLS.labels(status="success").inc()
             _LOG.info(

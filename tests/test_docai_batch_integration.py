@@ -100,6 +100,7 @@ class BatchAwareOCR(OCRService):  # type: ignore[misc]
         self._client_factory = lambda endpoint: None  # unused in batch path
         self._endpoint = "us-documentai.googleapis.com"
         self._client = None
+        self.force_split_min_pages = 9999
 
 
 @pytest.fixture

@@ -152,9 +152,9 @@ def _build_summariser(stub_mode: bool, *, cfg) -> Any:
     return RefactoredSummariser(backend=refactored_backend)
 
 
-def _build_pdf_writer(*, cfg) -> tuple[str, PDFWriter, str]:
+def _build_pdf_writer(*, cfg, override_mode: str | None = None) -> tuple[str, PDFWriter, str]:
     writer_mode = _normalise_mode(
-        getattr(cfg, "pdf_writer_mode", None),
+        override_mode or getattr(cfg, "pdf_writer_mode", None),
         default="rich",
         allowed={"minimal", "rich", "reportlab"},
     )
@@ -209,18 +209,39 @@ def create_app() -> FastAPI:
 
         app.state.ocr_service = _StubOCRService()
     else:
-        app.state.ocr_service = OCRService(processor_id=cfg.doc_ai_processor_id, config=cfg)  # type: ignore[assignment]
+        app.state.ocr_service = OCRService(  # type: ignore[assignment]
+            processor_id=cfg.doc_ai_processor_id,
+            doc_ai_splitter_id=cfg.doc_ai_splitter_id,
+            doc_ai_location=cfg.doc_ai_location,
+            force_split_min_pages=cfg.doc_ai_force_split_min_pages,
+            config=cfg,
+        )
 
+    compose_override = os.getenv("SUMMARY_COMPOSE_MODE", "").strip().lower()
     compose_mode = _normalise_mode(
-        getattr(cfg, "summary_compose_mode", None),
+        compose_override or getattr(cfg, "summary_compose_mode", None),
         default="refactored",
         allowed={"legacy", "refactored"},
     )
     app.state.summary_compose_mode = compose_mode
-    app.state.enable_noise_filters = bool(getattr(cfg, "enable_noise_filters", True))
+
+    noise_override = os.getenv("ENABLE_NOISE_FILTERS")
+    if noise_override is None:
+        enable_noise_filters = bool(getattr(cfg, "enable_noise_filters", True))
+    else:
+        enable_noise_filters = noise_override.strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
+    app.state.enable_noise_filters = enable_noise_filters
 
     app.state.summariser = _build_summariser(stub_mode, cfg=cfg)
-    writer_mode, pdf_writer, writer_backend = _build_pdf_writer(cfg=cfg)
+    writer_override = os.getenv("PDF_WRITER_MODE", "").strip().lower() or None
+    writer_mode, pdf_writer, writer_backend = _build_pdf_writer(
+        cfg=cfg, override_mode=writer_override
+    )
     app.state.pdf_writer = pdf_writer
     app.state.pdf_writer_mode = writer_mode
     app.state.writer_backend = writer_backend

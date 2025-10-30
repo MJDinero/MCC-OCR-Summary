@@ -6,9 +6,9 @@ import inspect
 import logging
 import os
 import uuid
-from typing import Any, Dict, Tuple
+from typing import Any, Dict, Tuple, List
 
-from fastapi import APIRouter, HTTPException, Query, Request, UploadFile
+from fastapi import APIRouter, HTTPException, Query, Request, UploadFile, status
 from fastapi.responses import JSONResponse, Response
 
 from src.errors import (
@@ -66,9 +66,7 @@ async def _execute_pipeline(
             source=source,
             error=str(exc),
         )
-        raise HTTPException(
-            status_code=502, detail="Document AI processing failed"
-        ) from exc
+        raise
     ocr_text = (ocr_result.get("text") or "").strip()
     ocr_len = len(ocr_text)
     pages = ocr_result.get("pages") or []
@@ -155,8 +153,92 @@ async def _execute_pipeline(
             **validation,
         )
 
+    summarised: Dict[str, Any] = dict(summary_dict)
+
+    def _to_text(value: Any, *, bullet: bool = False) -> str:
+        if isinstance(value, list):
+            cleaned = [str(item).strip() for item in value if str(item).strip()]
+            if not cleaned:
+                return ""
+            if bullet:
+                return "\n".join(f"- {item}" for item in cleaned)
+            return "\n".join(cleaned)
+        if value is None:
+            return ""
+        return str(value).strip()
+
+    def _section(
+        heading: str,
+        value: Any,
+        *,
+        bullet: bool = False,
+        fallback: str = "N/A",
+    ) -> Tuple[str, str]:
+        text = _to_text(value, bullet=bullet)
+        text = text or fallback
+        return heading, text
+
+    title = (
+        ocr_result.get("title")
+        or summarised.get("title")
+        or summarised.get("document_title")
+        or "Medical Summary"
+    )
+    sections: List[Tuple[str, str]] = []
+    sections.append(
+        _section(
+            "Intro Overview",
+            summarised.get("intro_overview")
+            or summarised.get("overview")
+            or summary_text,
+        )
+    )
+    sections.append(
+        _section(
+            "Key Points",
+            summarised.get("key_points"),
+            bullet=True,
+        )
+    )
+    sections.append(
+        _section(
+            "Detailed Findings",
+            summarised.get("detailed_findings") or summarised.get("clinical_details"),
+        )
+    )
+    sections.append(
+        _section(
+            "Care Plan & Follow-Up",
+            summarised.get("care_plan"),
+            bullet=True,
+        )
+    )
+
+    optional_lists = [
+        (
+            "Diagnoses",
+            summarised.get("_diagnoses_list") or summarised.get("diagnoses", []),
+        ),
+        (
+            "Providers",
+            summarised.get("_providers_list") or summarised.get("providers", []),
+        ),
+        (
+            "Medications / Prescriptions",
+            summarised.get("_medications_list") or summarised.get("medications", []),
+        ),
+    ]
+    for heading, raw_value in optional_lists:
+        formatted = _to_text(raw_value, bullet=True)
+        if formatted:
+            sections.append((heading, formatted))
+
+    # Ensure at least one meaningful section before rendering
+    if not any(body.strip() for _heading, body in sections):
+        sections = [("Summary", summary_text or "N/A")]
+
     try:
-        pdf_payload = app.state.pdf_writer.build(dict(summary_dict))
+        pdf_payload = app.state.pdf_writer.build(title, sections)
     except PDFGenerationError as exc:
         structured_log(
             _API_LOG,
@@ -214,9 +296,15 @@ async def health_check(_: Request) -> JSONResponse:
 @router.post("", tags=["process"])
 async def process_pdf(request: Request, file: UploadFile) -> Response:
     pdf_bytes = await file.read()
-    payload, _validation, _drive_id = await _execute_pipeline(
-        request, pdf_bytes=pdf_bytes, source="upload"
-    )
+    try:
+        payload, _validation, _drive_id = await _execute_pipeline(
+            request, pdf_bytes=pdf_bytes, source="upload"
+        )
+    except OCRServiceError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Document AI processing failed",
+        ) from exc
     return Response(payload, media_type="application/pdf")
 
 
@@ -247,25 +335,43 @@ async def process_drive(
             status_code=502, detail="Failed to download file from Drive"
         ) from exc
 
-    _payload, validation, drive_file_id = await _execute_pipeline(
-        request, pdf_bytes=pdf_bytes, source="drive"
-    )
+    try:
+        _payload, validation, drive_file_id = await _execute_pipeline(
+            request, pdf_bytes=pdf_bytes, source="drive"
+        )
+    except OCRServiceError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Document AI processing failed",
+        ) from exc
     if drive_file_id is None:
         raise HTTPException(status_code=503, detail="Drive upload disabled")
 
     request_id = uuid.uuid4().hex
+    response_payload: Dict[str, Any] = {
+        "report_file_id": drive_file_id,
+        "supervisor_passed": bool(validation.get("supervisor_passed")),
+        "request_id": request_id,
+        "compose_mode": getattr(request.app.state, "summary_compose_mode", "unknown"),
+    }
     writer_backend = getattr(
         request.app.state,
         "writer_backend",
-        getattr(request.app.state, "pdf_writer_mode", "unknown"),
+        getattr(request.app.state, "pdf_writer_mode", None),
     )
-    compose_mode = getattr(request.app.state, "summary_compose_mode", "unknown")
-    return JSONResponse(
-        {
-            "report_file_id": drive_file_id,
-            "supervisor_passed": bool(validation.get("supervisor_passed")),
-            "request_id": request_id,
-            "writer_backend": writer_backend,
-            "compose_mode": compose_mode,
-        }
-    )
+    if writer_backend:
+        response_payload["writer_backend"] = writer_backend
+
+    # Diagnostics to confirm compose/writer at runtime - errors must not break API
+    try:
+        if "writer_backend" not in response_payload:
+            backend_cls = getattr(
+                request.app.state.pdf_writer.backend,
+                "__class__",
+                type("Unknown", (), {}),
+            )
+            response_payload["writer_backend"] = backend_cls.__name__
+    except Exception:  # pragma: no cover
+        pass
+
+    return JSONResponse(response_payload)

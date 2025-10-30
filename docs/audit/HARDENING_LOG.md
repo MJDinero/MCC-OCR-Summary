@@ -186,3 +186,41 @@
 - coverage: 97.18%
 - validator: {"ok":true,"sections_ok":true,"noise_found":false,"length":4637}
 
+### 2025-10-30T15:45:55Z — Manual Intake Verification (mcc-ocr-summary)
+- revision: ``  commit: `af74125076e4`  intake_file: ``
+- validator: $(jq -c . validator.json || cat validator.json)
+
+### 2025-10-30T15:46:05Z — Manual Intake Verification (mcc-ocr-summary)
+- revision: ``  commit: `af74125076e4`  intake_file: ``
+- validator: $(jq -c . validator.json || cat validator.json)
+
+### 2025-10-30T18:57:10Z — Summary Fix Verification (mcc-ocr-summary)
+- revision: `mcc-ocr-summary-00321-nn8`  commit: *(pending squash commit)*
+- run.json:
+{"report_file_id":"1-nQTt9H1py8i4HN81Sh_P3ZY_uEODc2H","supervisor_passed":true,"request_id":"25b5a7395dd94062937a2234c5acaefd"}
+- report_metadata.json:
+{"id":"1-nQTt9H1py8i4HN81Sh_P3ZY_uEODc2H","name":"summary-f57da7f096c9e613.pdf","driveId":"0AFPP3mbSAh_oUk9PVA"}
+- validator:
+{"ok":true,"sections_ok":true,"noise_found":false,"length":5320}
+
+### 2025-10-30T21:36:43Z — Large PDF Split Verification (mcc-ocr-summary)
+- revision: `mcc-ocr-summary-00329-s7c`  commit: `141e93412ca457247cdc8d8fba3209a8c74dfd02`
+- run.json:
+{"report_file_id":"1KaQ5RWGx8qIpmlWjDNXEbWxIgyd9qhQR","supervisor_passed":true,"request_id":"46293094cf6b440eb184b27d9071b53e"}
+- validator.json:
+{"ok": false, "sections_ok": false, "noise_found": false, "length": 4667}
+- pages: 1
+- docai_decision:
+{"decision":"local_pypdf_split","pages_total":263,"retry_on_page_limit":false,"request_id":"83b10848ba1548f8ac1fd7aa45ccf0b9","location":"us","processor_id":"21c8becfabc49de6","splitter_processor_id":null,"ts":"2025-10-30T21:35:05.404144+00:00"}
+- metrics: /metrics scraped internally via Prometheus sidecar; service remains private.
+
+### 2025-10-30T22:42:27Z — Large PDF OCR unblock verification (mcc-ocr-summary)
+- revision: `mcc-ocr-summary-00332-xww`  commit: `141e93412ca457247cdc8d8fba3209a8c74dfd02`
+- run.json:
+{"report_file_id":"1oxKjYOyNuu4BviM4It4Vl0HuKP5QpVqK","supervisor_passed":true,"request_id":"f96002a7ba8048b29d2a326adc03b270"}
+- validator.json:
+{"ok": true, "sections_ok": true, "noise_found": false, "length": 22616}
+- pages: 6
+- docai_decision:
+{"decision":"local_pypdf_split","pages_total":263,"retry_on_page_limit":false,"processor_id":"21c8becfabc49de6","splitter_processor_id":null,"location":"us","request_id":"1617c98380bf4878bb01074a5070076e"}
+- metrics: /metrics scraped internally via Prometheus sidecar; service remains private.
