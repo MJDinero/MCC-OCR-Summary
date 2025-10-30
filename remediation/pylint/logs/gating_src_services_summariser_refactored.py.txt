@@ -1,0 +1,13 @@
+[7;33m************* Module summariser_refactored[0m
+src/services/summariser_refactored.py:1:0: C0302: [1mToo many lines in module (1688/1000)[0m ([1mtoo-many-lines[0m)
+src/services/summariser_refactored.py:158:23: E1123: [1;31mUnexpected keyword argument 'response_format' in method call[0m ([1;31munexpected-keyword-arg[0m)
+src/services/summariser_refactored.py:138:8: W0201: [35mAttribute '_fallback_used' defined outside __init__[0m ([35mattribute-defined-outside-init[0m)
+src/services/summariser_refactored.py:178:12: W0201: [35mAttribute '_fallback_used' defined outside __init__[0m ([35mattribute-defined-outside-init[0m)
+src/services/summariser_refactored.py:680:12: E1111: [1;31mAssigning result of a function call, where the function has no return[0m ([1;31massignment-from-no-return[0m)
+src/services/summariser_refactored.py:826:4: R0911: [1;3;35mToo many return statements (11/6)[0m ([1;3;35mtoo-many-return-statements[0m)
+src/services/summariser_refactored.py:964:4: R0913: [1;3;35mToo many arguments (6/5)[0m ([1;3;35mtoo-many-arguments[0m)
+src/services/summariser_refactored.py:1619:35: C0201: [1mConsider iterating the dictionary directly instead of calling .keys()[0m ([1mconsider-iterating-dictionary[0m)
+
+------------------------------------------------------------------
+Your code has been rated at 9.77/10 (previous run: 9.77/10, +0.00)
+

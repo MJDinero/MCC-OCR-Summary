@@ -1,0 +1,140 @@
+diff --git a/src/services/metrics.py b/src/services/metrics.py
+index a233663..7e297a9 100644
+--- a/src/services/metrics.py
++++ b/src/services/metrics.py
+@@ -10,7 +10,7 @@ from typing import Any, ClassVar, Iterator
+ from prometheus_client import Counter, Histogram
+ from starlette.responses import PlainTextResponse
+ 
+-from .interfaces import MetricsClient
++from src.services.interfaces import MetricsClient
+ 
+ LOG = logging.getLogger(__name__)
+ 
+@@ -59,7 +59,10 @@ class PrometheusMetrics(MetricsClient):
+         if getattr(app.state, "_prometheus_instrumented", False):
+             return metrics
+         try:
+-            from prometheus_client import CONTENT_TYPE_LATEST, generate_latest  # type: ignore
++            from prometheus_client import (  # type: ignore
++                CONTENT_TYPE_LATEST,
++                generate_latest,
++            )
+         except Exception:  # pragma: no cover - optional dependency
+             LOG.warning("prometheus_client not installed; metrics endpoint disabled")
+             return metrics
+@@ -71,8 +74,8 @@ class PrometheusMetrics(MetricsClient):
+                 data.decode("utf-8"), media_type=CONTENT_TYPE_LATEST
+             )
+ 
+-        app.state._prometheus_instrumented = True
+-        app.state.metrics = metrics
++        setattr(app.state, "_prometheus_instrumented", True)
++        setattr(app.state, "metrics", metrics)
+         return metrics
+ 
+ 
+diff --git a/src/services/pdf_writer.py b/src/services/pdf_writer.py
+index 78da69a..6b81a46 100644
+--- a/src/services/pdf_writer.py
++++ b/src/services/pdf_writer.py
+@@ -7,10 +7,11 @@ module works without optional dependencies during early development.
+ 
+ from __future__ import annotations
+ 
++import importlib
++import logging
+ from dataclasses import dataclass
+-from typing import Protocol, Sequence, Dict
+ from io import BytesIO
+-import logging
++from typing import Dict, Protocol, Sequence
+ 
+ from src.errors import PDFGenerationError
+ 
+@@ -37,14 +38,18 @@ class ReportLabBackend:
+     def build(
+         self, title: str, sections: Sequence[tuple[str, str]]
+     ) -> bytes:  # pragma: no cover - depends on external lib
+-        try:  # noqa: WPS501
+-            from reportlab.lib.pagesizes import LETTER  # type: ignore
+-            from reportlab.pdfgen import canvas  # type: ignore
++        try:
++            pagesizes = importlib.import_module("reportlab.lib.pagesizes")  # type: ignore
++            canvas_module = importlib.import_module(
++                "reportlab.pdfgen.canvas"
++            )  # type: ignore
++            letter = getattr(pagesizes, "LETTER")
++            canvas_cls = getattr(canvas_module, "Canvas")
+         except Exception as exc:  # pragma: no cover
+             raise PDFGenerationError(f"reportlab not installed: {exc}") from exc
+         buf = BytesIO()
+-        c = canvas.Canvas(buf, pagesize=LETTER)
+-        _width, height = LETTER
++        c = canvas_cls(buf, pagesize=letter)
++        _width, height = letter
+         y = height - 72
+         c.setFont("Helvetica-Bold", 16)
+         c.drawString(72, y, title)
+@@ -117,11 +122,7 @@ def _simple_pdf(text: str) -> bytes:
+     lines = text.splitlines() or [text]
+     escaped_lines = []
+     for line in lines:
+-        escaped = (
+-            line.replace("\\", "\\\\")
+-            .replace("(", "\\(")
+-            .replace(")", "\\)")
+-        )
++        escaped = line.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
+         escaped_lines.append(escaped)
+     content_ops = [
+         "BT",
+@@ -250,7 +251,7 @@ class PDFWriter:
+             },
+         )
+         try:
+-            result = self.backend.build(self.title, sections_seq)
++            result: bytes = self.backend.build(self.title, sections_seq)
+             if _PDF_CALLS:
+                 _PDF_CALLS.labels(status="success").inc()
+             _LOG.info(
+diff --git a/tests/test_config.py b/tests/test_config.py
+index 47a3558..59f8418 100644
+--- a/tests/test_config.py
++++ b/tests/test_config.py
+@@ -14,6 +14,7 @@ REQUIRED_KEYS = [
+     "OPENAI_API_KEY",
+     "DRIVE_INPUT_FOLDER_ID",
+     "DRIVE_REPORT_FOLDER_ID",
++    "INTERNAL_EVENT_TOKEN",
+ ]
+ 
+ 
+@@ -40,6 +41,7 @@ def test_config_success():
+             "OPENAI_API_KEY": "k",
+             "DRIVE_INPUT_FOLDER_ID": "in",
+             "DRIVE_REPORT_FOLDER_ID": "out",
++            "INTERNAL_EVENT_TOKEN": "token",
+         }
+     )
+     cfg = AppConfig()
+diff --git a/tests/test_config_module.py b/tests/test_config_module.py
+index d209d97..6140fcc 100644
+--- a/tests/test_config_module.py
++++ b/tests/test_config_module.py
+@@ -23,6 +23,7 @@ def test_app_config_properties_and_validation(monkeypatch):
+         "INTAKE_GCS_BUCKET": "bucket-intake",
+         "OUTPUT_GCS_BUCKET": "bucket-output",
+         "SUMMARY_BUCKET": "bucket-output",
++        "INTERNAL_EVENT_TOKEN": "token",
+     }
+     for key, value in required_env.items():
+         monkeypatch.setenv(key, value)
+@@ -61,6 +62,7 @@ def test_get_config_cache(monkeypatch):
+     monkeypatch.setenv("INTAKE_GCS_BUCKET", "intake")
+     monkeypatch.setenv("OUTPUT_GCS_BUCKET", "output")
+     monkeypatch.setenv("SUMMARY_BUCKET", "output")
++    monkeypatch.setenv("INTERNAL_EVENT_TOKEN", "token")
+ 
+     get_config.cache_clear()
+     first = get_config()

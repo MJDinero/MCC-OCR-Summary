@@ -1,0 +1,6 @@
+************* Module docai_batch_helper
+src/services/docai_batch_helper.py:116:0: R0913: Too many arguments (6/5) (too-many-arguments)
+
+------------------------------------------------------------------
+Your code has been rated at 9.93/10 (previous run: 9.93/10, +0.00)
+

@@ -1,0 +1,20 @@
+src/services/docai_helper.py:192: error: Generator has incompatible item type
+"object"; expected "str"  [misc]
+    ...  full_text_source = doc.get("text") or " ".join(pg["text"] for pg in ...
+                                                        ^~~~~~~~~~
+src/api/ingest.py:344: error: Argument 1 to "launch" of "WorkflowLauncher" has
+incompatible type "**dict[str, object]"; expected "PipelineJob"  [arg-type]
+                launch_result = dispatcher.launch(**launch_kwargs)
+                                                    ^~~~~~~~~~~~~
+src/api/ingest.py:344: error: Argument 1 to "launch" of "WorkflowLauncher" has
+incompatible type "**dict[str, object]"; expected "dict[str, Any] | None" 
+[arg-type]
+                launch_result = dispatcher.launch(**launch_kwargs)
+                                                    ^~~~~~~~~~~~~
+src/api/ingest.py:344: note: "dict" is invariant -- see https://mypy.readthedocs.io/en/stable/common_issues.html#variance
+src/api/ingest.py:344: note: Consider using "Mapping" instead, which is covariant in the value type
+src/api/ingest.py:344: error: Argument 1 to "launch" of "WorkflowLauncher" has
+incompatible type "**dict[str, object]"; expected "str | None"  [arg-type]
+                launch_result = dispatcher.launch(**launch_kwargs)
+                                                    ^~~~~~~~~~~~~
+Found 4 errors in 2 files (checked 24 source files)

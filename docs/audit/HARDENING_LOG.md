@@ -180,3 +180,9 @@
 - validator.json:
 {"ok": true, "sections_ok": true, "noise_found": false, "length": 4637}
 - metrics: /metrics scraped internally via Prometheus sidecar; Cloud Run service remains private.
+### 2025-10-30T15:12:57Z — Pylint ≥ 9.5 + Final Verification (mcc-ocr-summary)
+- revision: `mcc-ocr-summary-00319-f7r`  commit: `af74125076e4`
+- pylint: {"min": 9.77, "mean": 9.959999999999999, "max": 10.0}
+- coverage: 97.18%
+- validator: {"ok":true,"sections_ok":true,"noise_found":false,"length":4637}
+

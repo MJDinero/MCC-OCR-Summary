@@ -1,0 +1,103 @@
+{
+  "files": [
+    {
+      "path": "src/api/ingest.py",
+      "score": 10.0
+    },
+    {
+      "path": "src/api/process.py",
+      "score": 10.0
+    },
+    {
+      "path": "src/api_ingest.py",
+      "score": 10.0
+    },
+    {
+      "path": "src/config.py",
+      "score": 10.0
+    },
+    {
+      "path": "src/errors.py",
+      "score": 10.0
+    },
+    {
+      "path": "src/logging_setup.py",
+      "score": 10.0
+    },
+    {
+      "path": "src/main.py",
+      "score": 10.0
+    },
+    {
+      "path": "src/runtime_server.py",
+      "score": 10.0
+    },
+    {
+      "path": "src/services/docai_batch_helper.py",
+      "score": 9.93
+    },
+    {
+      "path": "src/services/docai_helper.py",
+      "score": 9.92
+    },
+    {
+      "path": "src/services/drive_client.py",
+      "score": 10.0
+    },
+    {
+      "path": "src/services/interfaces.py",
+      "score": 10.0
+    },
+    {
+      "path": "src/services/metrics.py",
+      "score": 10.0
+    },
+    {
+      "path": "src/services/pdf_writer.py",
+      "score": 10.0
+    },
+    {
+      "path": "src/services/pipeline.py",
+      "score": 9.86
+    },
+    {
+      "path": "src/services/summariser_refactored.py",
+      "score": 9.77
+    },
+    {
+      "path": "src/services/supervisor.py",
+      "score": 9.87
+    },
+    {
+      "path": "src/startup.py",
+      "score": 10.0
+    },
+    {
+      "path": "src/utils/docai_request_builder.py",
+      "score": 9.82
+    },
+    {
+      "path": "src/utils/logging_utils.py",
+      "score": 10.0
+    },
+    {
+      "path": "src/utils/mode_manager.py",
+      "score": 10.0
+    },
+    {
+      "path": "src/utils/pipeline_failures.py",
+      "score": 10.0
+    },
+    {
+      "path": "src/utils/secrets.py",
+      "score": 9.87
+    },
+    {
+      "path": "src/utils/summary_thresholds.py",
+      "score": 10.0
+    }
+  ],
+  "min": 9.77,
+  "mean": 9.959999999999999,
+  "max": 10.0
+}
