@@ -36,9 +36,15 @@ def test_escalation_triggers_batch(monkeypatch):
     called = {}
     import src.services.docai_batch_helper as batch_mod
 
-    def fake_batch(src, out, processor_id, region, project_id=None, clients=None):  # noqa: D401
+    def fake_batch(
+        src, out, processor_id, region, project_id=None, clients=None
+    ):  # noqa: D401
         called["args"] = (src, out, processor_id, region, project_id)
-        return {"text": "batched", "pages": [{"text": "p1"}], "batch_metadata": {"status": "succeeded"}}
+        return {
+            "text": "batched",
+            "pages": [{"text": "p1"}],
+            "batch_metadata": {"status": "succeeded"},
+        }
 
     monkeypatch.setattr(batch_mod, "batch_process_documents_gcs", fake_batch)
     if hasattr(doc_helper_mod, "batch_process_documents_gcs"):

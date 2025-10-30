@@ -86,7 +86,9 @@ class Chunker:
                             token_count=chunk_tokens,
                         )
                         index += 1
-                        buffer_tokens = sum(estimate_token_count(seg) for seg, _ in buffer)
+                        buffer_tokens = sum(
+                            estimate_token_count(seg) for seg, _ in buffer
+                        )
 
                     yield Chunk(
                         text=segment.strip(),
@@ -98,7 +100,10 @@ class Chunker:
                     index += 1
                     continue
 
-                if buffer_tokens + tokens > self.max_tokens and buffer_tokens >= self.min_tokens:
+                if (
+                    buffer_tokens + tokens > self.max_tokens
+                    and buffer_tokens >= self.min_tokens
+                ):
                     (
                         chunk_text,
                         chunk_tokens,
@@ -177,7 +182,9 @@ class PDFChunker:
         artifact_prefix: str = "artifacts/pdf-chunks",
         tmp_dir: str | None = None,
     ) -> None:
-        if PdfReader is None or PdfWriter is None:  # pragma: no cover - dependency validated in tests
+        if (
+            PdfReader is None or PdfWriter is None
+        ):  # pragma: no cover - dependency validated in tests
             raise RuntimeError("PyPDF2 must be installed to use PDFChunker")
         if max_pages <= 0:
             raise ValueError("max_pages must be positive")
@@ -207,13 +214,17 @@ class PDFChunker:
         """Stream PDF chunks to GCS, yielding metadata for each uploaded artifact."""
 
         if not job_id:
-            raise ValueError("job_id is required to produce deterministic artifact paths")
+            raise ValueError(
+                "job_id is required to produce deterministic artifact paths"
+            )
         bucket_name, object_name = _parse_gcs_uri(source_uri)
         dest_bucket_name = destination_bucket or self._artifact_bucket or bucket_name
         dest_prefix = destination_prefix or f"{self._artifact_prefix}/{job_id}"
         dest_prefix = dest_prefix.strip("/")
         created_at = _isoformat(datetime.now(timezone.utc))
-        expires_at = _isoformat(datetime.now(timezone.utc) + timedelta(days=self.retention_days))
+        expires_at = _isoformat(
+            datetime.now(timezone.utc) + timedelta(days=self.retention_days)
+        )
         base_metadata = dict(metadata or {})
         source_bucket = self._storage.bucket(bucket_name)
         source_blob = source_bucket.blob(object_name)
@@ -225,7 +236,9 @@ class PDFChunker:
             reader = PdfReader(temp_pdf)
             total_pages = len(reader.pages)
             if total_pages == 0:
-                raise ValueError("PDF contains no pages; cannot chunk an empty document")
+                raise ValueError(
+                    "PDF contains no pages; cannot chunk an empty document"
+                )
             for index, start in enumerate(range(0, total_pages, self.max_pages)):
                 page_start = start + 1
                 page_end = min(total_pages, start + self.max_pages)
@@ -235,7 +248,9 @@ class PDFChunker:
                 with self._temp_path(suffix=".pdf") as chunk_path:
                     with open(chunk_path, "wb") as fh:
                         writer.write(fh)
-                    chunk_name = _compose_blob_name(dest_prefix, f"chunk-{index:04d}.pdf")
+                    chunk_name = _compose_blob_name(
+                        dest_prefix, f"chunk-{index:04d}.pdf"
+                    )
                     chunk_blob = dest_bucket.blob(chunk_name)
                     chunk_metadata = {
                         **base_metadata,
@@ -248,7 +263,9 @@ class PDFChunker:
                     }
                     chunk_blob.metadata = chunk_metadata
                     chunk_blob.cache_control = "no-store"
-                    chunk_blob.upload_from_filename(chunk_path, content_type="application/pdf")
+                    chunk_blob.upload_from_filename(
+                        chunk_path, content_type="application/pdf"
+                    )
                     size_bytes = os.path.getsize(chunk_path)
                     sha256 = _sha256_file(chunk_path)
                     artifact = PDFChunkArtifact(
@@ -363,7 +380,9 @@ class PDFChunker:
 
     @contextlib.contextmanager
     def _temp_path(self, *, suffix: str) -> Iterator[str]:
-        tmp = tempfile.NamedTemporaryFile(suffix=suffix, dir=self._tmp_dir, delete=False)
+        tmp = tempfile.NamedTemporaryFile(
+            suffix=suffix, dir=self._tmp_dir, delete=False
+        )
         try:
             tmp.close()
             yield tmp.name
@@ -409,7 +428,9 @@ def _sha256_file(path: str) -> str:
     return digest.hexdigest()
 
 
-async def _enumerate_async(iterator: AsyncIterator[str], start: int = 0) -> AsyncIterator[tuple[int, str]]:
+async def _enumerate_async(
+    iterator: AsyncIterator[str], start: int = 0
+) -> AsyncIterator[tuple[int, str]]:
     index = start
     async for item in iterator:
         yield index, item
@@ -424,7 +445,9 @@ def _split_segments(text: str) -> Sequence[str]:
     return tuple(part.strip() for part in parts if part.strip())
 
 
-def _flush_buffer(buffer: list[tuple[str, int]], overlap_tokens: int) -> tuple[str, int, int, int]:
+def _flush_buffer(
+    buffer: list[tuple[str, int]], overlap_tokens: int
+) -> tuple[str, int, int, int]:
     chunk_text = " ".join(segment for segment, _ in buffer).strip()
     chunk_tokens = sum(estimate_token_count(segment) for segment, _ in buffer)
     if not chunk_text:

@@ -40,14 +40,20 @@ class OCRService:
         self.dlq_topic = dlq_topic
         self.metrics = metrics or PrometheusMetrics.default()
         self.chunker = chunker or Chunker()
-        self._docai_client = docai_client or documentai.DocumentProcessorServiceAsyncClient()
+        self._docai_client = (
+            docai_client or documentai.DocumentProcessorServiceAsyncClient()
+        )
 
     async def handle_event(self, event: DocumentIngestionEvent) -> None:
         """Entry point for Pub/Sub triggered OCR execution."""
         start = time.perf_counter()
         LOG.info(
             "ocr_service_start",
-            extra={"job_id": event.job_id, "trace_id": event.trace_id, "bucket": event.bucket},
+            extra={
+                "job_id": event.job_id,
+                "trace_id": event.trace_id,
+                "bucket": event.bucket,
+            },
         )
         try:
             pages = self._iterate_pages(event)
@@ -55,11 +61,15 @@ class OCRService:
             chunk_count = 0
             async for chunk in self._chunk_document(pages):
                 if previous is not None:
-                    await self._publish_chunk(event, previous, is_last_chunk=False, total_chunks=None)
+                    await self._publish_chunk(
+                        event, previous, is_last_chunk=False, total_chunks=None
+                    )
                 previous = chunk
                 chunk_count += 1
             if previous is not None:
-                await self._publish_chunk(event, previous, is_last_chunk=True, total_chunks=chunk_count)
+                await self._publish_chunk(
+                    event, previous, is_last_chunk=True, total_chunks=chunk_count
+                )
             duration = time.perf_counter() - start
             if self.metrics:
                 self.metrics.observe_latency(
@@ -114,13 +124,20 @@ class OCRService:
             page_range=(chunk.page_start, chunk.page_end),
             text=chunk.text,
             shard_id=event.attributes.get("shard_id") if event.attributes else None,
-            source_event_id=event.attributes.get("message_id") if event.attributes else None,
+            source_event_id=(
+                event.attributes.get("message_id") if event.attributes else None
+            ),
             metadata={
                 "chunk_index": str(chunk.index),
                 "token_count": str(chunk.token_count),
                 "is_last_chunk": str(is_last_chunk).lower(),
-                **({"total_chunks": str(total_chunks)} if total_chunks is not None else {}),
-                "source_uri": event.gcs_uri or f"gs://{event.bucket}/{event.object_name}",
+                **(
+                    {"total_chunks": str(total_chunks)}
+                    if total_chunks is not None
+                    else {}
+                ),
+                "source_uri": event.gcs_uri
+                or f"gs://{event.bucket}/{event.object_name}",
             },
         )
         data, attributes = message.to_pubsub()
@@ -175,7 +192,9 @@ class OCRService:
         for page in document.pages:
             yield self._extract_page_text(document, page)
 
-    async def _process_with_retry(self, request: documentai.ProcessRequest) -> documentai.ProcessResponse:
+    async def _process_with_retry(
+        self, request: documentai.ProcessRequest
+    ) -> documentai.ProcessResponse:
         async for attempt in AsyncRetrying(
             stop=stop_after_attempt(5),
             wait=wait_random_exponential(multiplier=1, max=30),
@@ -197,7 +216,9 @@ class OCRService:
                 segments.append(_layout_to_text(paragraph.layout, text))
         elif page.layout:
             segments.append(_layout_to_text(page.layout, text))
-        return "\n".join(segment.strip() for segment in segments if segment.strip()).strip()
+        return "\n".join(
+            segment.strip() for segment in segments if segment.strip()
+        ).strip()
 
 
 def _layout_to_text(layout: documentai.Document.Page.Layout, text: str) -> str:

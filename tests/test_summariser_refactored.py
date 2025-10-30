@@ -39,7 +39,9 @@ class StubBackend(ChunkSummaryBackend):
             payload = self.responses[fallback_index]
         # Include a snippet of the chunk to ensure backend sees the same data across invocations.
         result = dict(payload)
-        result.setdefault("overview", f"Chunk {chunk_index} covers {len(chunk_text.split())} words.")
+        result.setdefault(
+            "overview", f"Chunk {chunk_index} covers {len(chunk_text.split())} words."
+        )
         return result
 
 
@@ -90,7 +92,9 @@ def test_refactored_summary_structure_and_length() -> None:
         }
     )
 
-    summariser = RefactoredSummariser(backend=backend, target_chars=300, max_chars=420, overlap_chars=60)
+    summariser = RefactoredSummariser(
+        backend=backend, target_chars=300, max_chars=420, overlap_chars=60
+    )
     summary = summariser.summarise(text, doc_metadata={"facility": "MCC Neurology"})
     medical_summary = summary["Medical Summary"]
 
@@ -160,10 +164,16 @@ def test_openai_backend_schema_mismatch_raises(monkeypatch):
             self.api_key = api_key
             self.responses = SimpleNamespace(create=_fake_create)
 
-    monkeypatch.setitem(sys.modules, "openai", SimpleNamespace(OpenAI=lambda api_key: _FakeClient(api_key)))
+    monkeypatch.setitem(
+        sys.modules,
+        "openai",
+        SimpleNamespace(OpenAI=lambda api_key: _FakeClient(api_key)),
+    )
 
     with pytest.raises(SummarizationError):
-        backend.summarise_chunk(chunk_text="data", chunk_index=1, total_chunks=1, estimated_tokens=500)
+        backend.summarise_chunk(
+            chunk_text="data", chunk_index=1, total_chunks=1, estimated_tokens=500
+        )
 
 
 def test_heuristic_backend_includes_schema_version():
@@ -226,7 +236,9 @@ def test_load_input_payload_variants(tmp_path):
     assert metadata["source"] == "unit-test"
     assert pages and pages[0]["text"] == "Example page 1"
 
-    payload_path.write_text(json.dumps({"pages": [{"text": "Only pages"}]}), encoding="utf-8")
+    payload_path.write_text(
+        json.dumps({"pages": [{"text": "Only pages"}]}), encoding="utf-8"
+    )
     rewritten_text, _, rewritten_pages = _load_input_payload(payload_path)
     assert rewritten_text.strip() == "Only pages"
     assert rewritten_pages and rewritten_pages[0]["text"] == "Only pages"
@@ -268,10 +280,15 @@ def test_load_input_payload_gcs_blob(monkeypatch):
         def bucket(self, _: str) -> _StubBucket:
             return _StubBucket(self._blobs)
 
-        def list_blobs(self, *_args, **_kwargs):  # pragma: no cover - not used in this scenario
+        def list_blobs(
+            self, *_args, **_kwargs
+        ):  # pragma: no cover - not used in this scenario
             return []
 
-    monkeypatch.setattr("google.cloud.storage.Client", lambda: _StubClient({"ocr/job/aggregate.json": blob_bytes}))
+    monkeypatch.setattr(
+        "google.cloud.storage.Client",
+        lambda: _StubClient({"ocr/job/aggregate.json": blob_bytes}),
+    )
 
     text, metadata, pages = _load_input_payload("gs://bucket/ocr/job/aggregate.json")
     assert text == "Remote text body"
@@ -340,7 +357,9 @@ def test_openai_backend_falls_back_to_heuristic(monkeypatch):
             def create(*_args, **_kwargs):
                 raise TypeError("unexpected keyword argument 'response_format'")
 
-    monkeypatch.setitem(sys.modules, "openai", SimpleNamespace(OpenAI=lambda api_key: _StubClient()))
+    monkeypatch.setitem(
+        sys.modules, "openai", SimpleNamespace(OpenAI=lambda api_key: _StubClient())
+    )
 
     result = backend.summarise_chunk(
         chunk_text="Patient reviewed for hypertension follow-up. Blood pressure improved with medication.",
@@ -377,7 +396,16 @@ def test_cli_fallback_to_heuristic_backend(monkeypatch, tmp_path):
         lambda self, **_: {"supervisor_passed": True},
     )
 
-    _cli(["--input", str(input_path), "--output", str(output_path), "--api-key", "dummy-key"])
+    _cli(
+        [
+            "--input",
+            str(input_path),
+            "--output",
+            str(output_path),
+            "--api-key",
+            "dummy-key",
+        ]
+    )
 
     summary_output = json.loads(output_path.read_text(encoding="utf-8"))
     assert summary_output["Medical Summary"]

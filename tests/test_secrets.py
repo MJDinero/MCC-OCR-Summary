@@ -28,7 +28,11 @@ def test_resolve_secret_no_prefix_returns_value():
 
 def test_resolve_secret_shorthand(monkeypatch):
     client = _FakeClient()
-    monkeypatch.setattr(secrets_mod, "secretmanager", SimpleNamespace(SecretManagerServiceClient=lambda: client))
+    monkeypatch.setattr(
+        secrets_mod,
+        "secretmanager",
+        SimpleNamespace(SecretManagerServiceClient=lambda: client),
+    )
     value = resolve_secret("sm://api-token", project_id="proj")
     assert value == "resolved-value"
     assert client.calls == ["projects/proj/secrets/api-token/versions/latest"]
@@ -36,7 +40,11 @@ def test_resolve_secret_shorthand(monkeypatch):
 
 def test_resolve_secret_full_path(monkeypatch):
     client = _FakeClient()
-    monkeypatch.setattr(secrets_mod, "secretmanager", SimpleNamespace(SecretManagerServiceClient=lambda: client))
+    monkeypatch.setattr(
+        secrets_mod,
+        "secretmanager",
+        SimpleNamespace(SecretManagerServiceClient=lambda: client),
+    )
     uri = "sm://projects/demo/secrets/service-key:42"
     value = resolve_secret(uri, project_id=None)
     assert value == "resolved-value"
@@ -45,14 +53,22 @@ def test_resolve_secret_full_path(monkeypatch):
 
 def test_resolve_secret_env_required(monkeypatch):
     client = _FakeClient()
-    monkeypatch.setattr(secrets_mod, "secretmanager", SimpleNamespace(SecretManagerServiceClient=lambda: client))
+    monkeypatch.setattr(
+        secrets_mod,
+        "secretmanager",
+        SimpleNamespace(SecretManagerServiceClient=lambda: client),
+    )
     monkeypatch.setenv("SECRET_EXAMPLE", "sm://token")
     value = resolve_secret_env("SECRET_EXAMPLE", project_id="proj", required=True)
     assert value == "resolved-value"
 
 
 def test_resolve_secret_missing_project_raises(monkeypatch):
-    monkeypatch.setattr(secrets_mod, "secretmanager", SimpleNamespace(SecretManagerServiceClient=lambda: _FakeClient()))
+    monkeypatch.setattr(
+        secrets_mod,
+        "secretmanager",
+        SimpleNamespace(SecretManagerServiceClient=lambda: _FakeClient()),
+    )
     with pytest.raises(SecretResolutionError):
         resolve_secret("sm://token")
 

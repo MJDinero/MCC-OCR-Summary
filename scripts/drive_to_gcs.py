@@ -104,7 +104,9 @@ def _download_pdf(service, file_id: str) -> bytes:  # pragma: no cover - externa
     return buffer.getvalue()
 
 
-def _upload_to_gcs(storage_client, bucket_name: str, object_name: str, data: bytes) -> str:
+def _upload_to_gcs(
+    storage_client, bucket_name: str, object_name: str, data: bytes
+) -> str:
     bucket = storage_client.bucket(bucket_name)
     blob = bucket.blob(object_name)
     blob.upload_from_string(
@@ -134,7 +136,9 @@ def poll_loop(cfg: DrivePollerConfig):  # pragma: no cover - long-running loop
                     pdf_bytes = _download_pdf(drive, fid)
                     prefix = cfg.prefix.rstrip("/") + "/" if cfg.prefix else "intake/"
                     object_name = f"{prefix}{fid}.pdf"
-                    gcs_uri = _upload_to_gcs(storage_client, cfg.intake_bucket, object_name, pdf_bytes)
+                    gcs_uri = _upload_to_gcs(
+                        storage_client, cfg.intake_bucket, object_name, pdf_bytes
+                    )
                     processed.add(fid)
                     print(f"[drive→gcs] Uploaded to {gcs_uri}")
                 except Exception as exc:  # noqa: BLE001
@@ -155,7 +159,9 @@ def main():  # pragma: no cover
     ap.add_argument("--folder", default=os.environ.get("DRIVE_INPUT_FOLDER_ID"))
     ap.add_argument("--intake-bucket", default=os.environ.get("INTAKE_GCS_BUCKET"))
     ap.add_argument("--prefix", default=os.environ.get("INTAKE_PREFIX"))
-    ap.add_argument("--interval", type=int, default=int(os.environ.get("POLL_INTERVAL", "60")))
+    ap.add_argument(
+        "--interval", type=int, default=int(os.environ.get("POLL_INTERVAL", "60"))
+    )
     ap.add_argument("--state-file", default=os.environ.get("STATE_FILE"))
     args = ap.parse_args()
     if not args.folder:

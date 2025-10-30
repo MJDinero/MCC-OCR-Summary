@@ -23,7 +23,9 @@ def test_pdf_writer_marks_uploaded_with_signed_url(monkeypatch):
         )
     )
 
-    monkeypatch.setattr("src.services.pdf_writer_refactored.create_state_store_from_env", lambda: store)
+    monkeypatch.setattr(
+        "src.services.pdf_writer_refactored.create_state_store_from_env", lambda: store
+    )
 
     uploads: list[bytes] = []
 
@@ -31,8 +33,13 @@ def test_pdf_writer_marks_uploaded_with_signed_url(monkeypatch):
         uploads.append(pdf_bytes)
         return _StubBlob()
 
-    monkeypatch.setattr("src.services.pdf_writer_refactored._upload_pdf_to_gcs", _fake_upload)
-    monkeypatch.setattr("src.services.pdf_writer_refactored._generate_signed_url", lambda blob, ttl_seconds, kms_key=None: "https://signed.example/pdfs")
+    monkeypatch.setattr(
+        "src.services.pdf_writer_refactored._upload_pdf_to_gcs", _fake_upload
+    )
+    monkeypatch.setattr(
+        "src.services.pdf_writer_refactored._generate_signed_url",
+        lambda blob, ttl_seconds, kms_key=None: "https://signed.example/pdfs",
+    )
 
     with TemporaryDirectory() as tmp_dir:
         summary_path = Path(tmp_dir) / "summary.json"

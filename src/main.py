@@ -20,8 +20,14 @@ from src.services import drive_client as drive_client_module
 from src.services.docai_helper import OCRService
 from src.services.metrics import PrometheusMetrics, NullMetrics
 from src.services.pdf_writer import MinimalPDFBackend, PDFWriter
-from src.services.pipeline import create_state_store_from_env, create_workflow_launcher_from_env
-from src.services.summariser_refactored import OpenAIResponsesBackend, RefactoredSummariser
+from src.services.pipeline import (
+    create_state_store_from_env,
+    create_workflow_launcher_from_env,
+)
+from src.services.summariser_refactored import (
+    OpenAIResponsesBackend,
+    RefactoredSummariser,
+)
 from src.startup import hydrate_google_credentials_file
 from src.utils.mode_manager import is_mvp
 from src.utils.secrets import resolve_secret_env
@@ -31,13 +37,17 @@ from src.utils.logging_utils import structured_log
 if TYPE_CHECKING:  # pragma: no cover - type checking only
     from src.services.pipeline import PipelineStateStore, WorkflowLauncher
 
-DEBUG_ENABLED = (
-    any(arg == "--debug" for arg in sys.argv)
-    or os.getenv("DEBUG", "false").strip().lower() in {"1", "true", "yes", "on"}
-)
+DEBUG_ENABLED = any(arg == "--debug" for arg in sys.argv) or os.getenv(
+    "DEBUG", "false"
+).strip().lower() in {"1", "true", "yes", "on"}
 LOG_LEVEL = logging.DEBUG if DEBUG_ENABLED else logging.INFO
 configure_logging(level=LOG_LEVEL, force=True)
-structured_log(logging.getLogger("startup"), logging.INFO, "service_bootstrap", debug_enabled=DEBUG_ENABLED)
+structured_log(
+    logging.getLogger("startup"),
+    logging.INFO,
+    "service_bootstrap",
+    debug_enabled=DEBUG_ENABLED,
+)
 
 hydrate_google_credentials_file()
 
@@ -84,7 +94,9 @@ class _DriveClientAdapter:
             log_context=(log_context or {}) | {"component": "process_api"},
         )
 
-    def __getattr__(self, item: str) -> Any:  # pragma: no cover - passthrough to legacy helpers
+    def __getattr__(
+        self, item: str
+    ) -> Any:  # pragma: no cover - passthrough to legacy helpers
         return getattr(drive_client_module, item)
 
 
@@ -137,7 +149,9 @@ def create_app() -> FastAPI:
 
     current_mvp = is_mvp()
     stub_mode = os.getenv("STUB_MODE", "false").strip().lower() == "true"
-    supervisor_simple = current_mvp or os.getenv("SUPERVISOR_MODE", "").strip().lower() == "simple"
+    supervisor_simple = (
+        current_mvp or os.getenv("SUPERVISOR_MODE", "").strip().lower() == "simple"
+    )
     app.state.mvp_mode = current_mvp
     app.state.stub_mode = stub_mode
     app.state.supervisor_simple = supervisor_simple
@@ -167,9 +181,13 @@ def create_app() -> FastAPI:
     app.state.pdf_writer = PDFWriter(MinimalPDFBackend())
     app.state.drive_client = _DriveClientAdapter(stub=stub_mode, config=cfg)
 
-    internal_token = resolve_secret_env("INTERNAL_EVENT_TOKEN", project_id=cfg.project_id)
+    internal_token = resolve_secret_env(
+        "INTERNAL_EVENT_TOKEN", project_id=cfg.project_id
+    )
     if not internal_token:
-        raise RuntimeError("INTERNAL_EVENT_TOKEN must be configured via Secret Manager or environment variable")
+        raise RuntimeError(
+            "INTERNAL_EVENT_TOKEN must be configured via Secret Manager or environment variable"
+        )
     app.state.internal_event_token = internal_token
 
     @app.exception_handler(ValidationError)
@@ -201,17 +219,28 @@ def create_app() -> FastAPI:
     async def _startup_diag():  # pragma: no cover
         cfg.validate_required()
         routes = [getattr(r, "path", str(r)) for r in app.router.routes]
-        _API_LOG.info("boot_canary", extra={"service": "mcc-ocr-summary", "routes": routes})
-        _API_LOG.info("service_startup_marker", extra={"phase": "post-config", "version": app.version})
+        _API_LOG.info(
+            "boot_canary", extra={"service": "mcc-ocr-summary", "routes": routes}
+        )
+        _API_LOG.info(
+            "service_startup_marker",
+            extra={"phase": "post-config", "version": app.version},
+        )
         try:
             import openai  # type: ignore
 
-            _API_LOG.info("openai_sdk_version", extra={"version": getattr(openai, "__version__", "unknown")})
+            _API_LOG.info(
+                "openai_sdk_version",
+                extra={"version": getattr(openai, "__version__", "unknown")},
+            )
         except Exception:
             _API_LOG.info("openai_sdk_version_unavailable")
         try:
             resolved_ip = socket.gethostbyname("api.openai.com")
-            _API_LOG.info("openai_dns_resolution", extra={"host": "api.openai.com", "ip": resolved_ip})
+            _API_LOG.info(
+                "openai_dns_resolution",
+                extra={"host": "api.openai.com", "ip": resolved_ip},
+            )
         except Exception as err:
             _API_LOG.error("openai_dns_resolution_failed", extra={"error": str(err)})
 

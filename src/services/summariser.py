@@ -18,6 +18,7 @@ multi-section medical narrative (including indices) is placed in the
 "Medical Summary" field; other legacy fields are preserved (or set to 'N/A')
 to avoid downstream breakage.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -30,7 +31,12 @@ import time
 import random
 import socket
 
-from tenacity import retry, wait_exponential, stop_after_attempt, retry_if_exception_type
+from tenacity import (
+    retry,
+    wait_exponential,
+    stop_after_attempt,
+    retry_if_exception_type,
+)
 
 from src.errors import SummarizationError
 import re
@@ -40,6 +46,7 @@ _LOG = logging.getLogger("summariser")
 
 try:  # pragma: no cover - optional metrics
     from prometheus_client import Counter, Histogram  # type: ignore
+
     _SUM_CALLS = Counter("summariser_calls_total", "Total summariser calls", ["status"])
     _SUM_LATENCY = Histogram("summariser_latency_seconds", "Summariser latency seconds")
 except Exception:  # pragma: no cover
@@ -81,11 +88,14 @@ class OpenAIBackend:  # pragma: no cover - network heavy, exercised in integrati
         self.model = model
         self.api_key = api_key
 
-    def _invoke_with_retry(self, prompt: str, meta: Dict[str, Any]) -> Dict[str, str]:  # pragma: no cover - network
+    def _invoke_with_retry(
+        self, prompt: str, meta: Dict[str, Any]
+    ) -> Dict[str, str]:  # pragma: no cover - network
         """Call OpenAI with retry + structured logging returning chunk JSON fields."""
         try:
             from openai import OpenAI  # type: ignore
             import openai as _openai_mod  # type: ignore
+
             # DNS pre-resolution (each invocation path) for diagnostic correlation
             try:
                 resolved_ip = socket.gethostbyname("api.openai.com")
@@ -94,15 +104,20 @@ class OpenAIBackend:  # pragma: no cover - network heavy, exercised in integrati
                 _LOG.warning("openai_dns_resolution_failed", extra={"error": str(de)})
             client = OpenAI(api_key=self.api_key, timeout=180)  # increased timeout
             if not hasattr(self, "_logged_version"):
-                _LOG.info("openai_sdk_version", extra={"version": getattr(_openai_mod, '__version__', 'unknown')})
+                _LOG.info(
+                    "openai_sdk_version",
+                    extra={"version": getattr(_openai_mod, "__version__", "unknown")},
+                )
                 self._logged_version = True  # type: ignore
             # Import exception classes for granular handling
-            API_CONN_ERR: Any = getattr(_openai_mod, 'APIConnectionError', tuple())
-            API_TIMEOUT_ERR: Any = getattr(_openai_mod, 'APITimeoutError', tuple())
-            API_ERROR: Any = getattr(_openai_mod, 'APIError', tuple())
-            RATE_LIMIT_ERR: Any = getattr(_openai_mod, 'RateLimitError', tuple())
+            API_CONN_ERR: Any = getattr(_openai_mod, "APIConnectionError", tuple())
+            API_TIMEOUT_ERR: Any = getattr(_openai_mod, "APITimeoutError", tuple())
+            API_ERROR: Any = getattr(_openai_mod, "APIError", tuple())
+            RATE_LIMIT_ERR: Any = getattr(_openai_mod, "RateLimitError", tuple())
         except Exception as exc:  # pragma: no cover - import/runtime
-            raise TransientSummarizationError(f"OpenAI import/init failed: {exc}") from exc
+            raise TransientSummarizationError(
+                f"OpenAI import/init failed: {exc}"
+            ) from exc
 
         max_attempts = 6  # increased attempts for transient network instability
         base_delay = 1.0
@@ -120,22 +135,29 @@ class OpenAIBackend:  # pragma: no cover - network heavy, exercised in integrati
                     temperature=0,
                 )
                 latency_ms = round((time.perf_counter() - start) * 1000, 2)
-                summary_text = getattr(response, 'output_text', '') or ''
+                summary_text = getattr(response, "output_text", "") or ""
                 import json
+
                 try:
                     data = json.loads(summary_text)
                 except Exception:  # salvage JSON
                     import re as _re
+
                     m = _re.search(r"{.*}", summary_text, _re.DOTALL)
                     data = json.loads(m.group(0)) if m else {}
                 required_chunk_keys = [
-                    'provider_seen', 'reason_for_visit', 'clinical_findings', 'treatment_plan',
-                    'diagnoses', 'providers', 'medications'
+                    "provider_seen",
+                    "reason_for_visit",
+                    "clinical_findings",
+                    "treatment_plan",
+                    "diagnoses",
+                    "providers",
+                    "medications",
                 ]
                 out_snake: Dict[str, Any] = {}
                 for k in required_chunk_keys:
                     v = data.get(k) if isinstance(data, dict) else None
-                    out_snake[k] = v if v not in (None, '') else ''
+                    out_snake[k] = v if v not in (None, "") else ""
                 _LOG.info(
                     "summariser_call_complete",
                     extra={"attempt": attempt, "latency_ms": latency_ms, **meta},
@@ -175,7 +197,7 @@ class OpenAIBackend:  # pragma: no cover - network heavy, exercised in integrati
                 continue
             except API_ERROR as exc:  # type: ignore
                 # Distinguish authentication/authorization issues vs transient 5xx
-                code = getattr(exc, 'status_code', None)
+                code = getattr(exc, "status_code", None)
                 retriable = code and 500 <= int(code) < 600
                 if code in (401, 403):
                     _LOG.error(
@@ -189,7 +211,9 @@ class OpenAIBackend:  # pragma: no cover - network heavy, exercised in integrati
                         },
                     )
                     # Authentication errors are not retried – escalate immediately
-                    raise SummarizationError(f"OpenAI authentication failed (status {code})") from exc
+                    raise SummarizationError(
+                        f"OpenAI authentication failed (status {code})"
+                    ) from exc
                 _LOG.error(
                     "summariser_call_failed",
                     extra={
@@ -225,21 +249,32 @@ class OpenAIBackend:  # pragma: no cover - network heavy, exercised in integrati
 
     def summarise(self, text: str) -> Dict[str, Any]:  # pragma: no cover - network
         # Lightweight offline/mock mode: if api_key indicates mock usage, return deterministic canned structure.
-        if self.api_key and isinstance(self.api_key, str) and self.api_key.lower().startswith("mock"):
-            _LOG.info("summariser_mock_backend", extra={"chars": len(text), "model": self.model})
-            snippet = text.strip().split('\n')[0][:120]
+        if (
+            self.api_key
+            and isinstance(self.api_key, str)
+            and self.api_key.lower().startswith("mock")
+        ):
+            _LOG.info(
+                "summariser_mock_backend",
+                extra={"chars": len(text), "model": self.model},
+            )
+            snippet = text.strip().split("\n")[0][:120]
             return {
-                'provider_seen': 'Unknown Provider',
-                'reason_for_visit': snippet or 'N/A',
-                'clinical_findings': 'No clinical findings extracted (mock mode).',
-                'treatment_plan': 'No treatment plan extracted (mock mode).',
-                'diagnoses': [],
-                'providers': [],
-                'medications': [],
+                "provider_seen": "Unknown Provider",
+                "reason_for_visit": snippet or "N/A",
+                "clinical_findings": "No clinical findings extracted (mock mode).",
+                "treatment_plan": "No treatment plan extracted (mock mode).",
+                "diagnoses": [],
+                "providers": [],
+                "medications": [],
             }
         char_count = len(text)
         approx_tokens = math.ceil(char_count / 4)
-        meta = {"char_count": char_count, "approx_tokens": approx_tokens, "model": self.model}
+        meta = {
+            "char_count": char_count,
+            "approx_tokens": approx_tokens,
+            "model": self.model,
+        }
         _LOG.info("summariser_prompt_meta", extra=meta)
         prompt = f"SYSTEM:\n{self.SYSTEM_PROMPT}\n---\nOCR_TEXT:\n{text[:100000]}"
         return self._invoke_with_retry(prompt, meta)
@@ -361,7 +396,9 @@ class Summariser:
             try:
                 return asyncio.run(self.summarise_async(payload))
             except TransientSummarizationError as exc:
-                raise SummarizationError(f"Transient summarisation failed after retries: {exc}") from exc
+                raise SummarizationError(
+                    f"Transient summarisation failed after retries: {exc}"
+                ) from exc
         raise SummarizationError(
             "Summariser.summarise cannot run inside an active asyncio event loop; use await summarise_async()",
         )
@@ -379,7 +416,9 @@ class Summariser:
             async for idx, normalized in self._run_chunk_tasks(chunks):
                 collected[idx] = normalized
         except TransientSummarizationError as exc:
-            raise SummarizationError(f"Transient summarisation failed after retries: {exc}") from exc
+            raise SummarizationError(
+                f"Transient summarisation failed after retries: {exc}"
+            ) from exc
         except SummarizationError:
             raise
         except Exception as exc:
@@ -390,7 +429,9 @@ class Summariser:
             raise SummarizationError("Incomplete summariser output (missing chunk)")
         return self._merge_results(chunks, normalized_chunks)
 
-    async def stream_summary(self, text: str) -> AsyncIterator[Tuple[int, int, Dict[str, Any]]]:
+    async def stream_summary(
+        self, text: str
+    ) -> AsyncIterator[Tuple[int, int, Dict[str, Any]]]:
         payload = self._coerce_text(text)
         chunks = self._prepare_chunks(payload)
         total = len(chunks)
@@ -404,7 +445,9 @@ class Summariser:
         chunker = SummarizerChunker(self.chunk_target_chars, self.chunk_hard_max)
         return chunker.split(sanitized)
 
-    async def _run_chunk_tasks(self, chunks: List[str]) -> AsyncIterator[Tuple[int, Dict[str, Any]]]:
+    async def _run_chunk_tasks(
+        self, chunks: List[str]
+    ) -> AsyncIterator[Tuple[int, Dict[str, Any]]]:
         sem = asyncio.Semaphore(self.max_concurrency)
         total = len(chunks)
 
@@ -442,7 +485,9 @@ class Summariser:
                 )
                 raise
 
-        tasks = [asyncio.create_task(worker(idx, chunk)) for idx, chunk in enumerate(chunks)]
+        tasks = [
+            asyncio.create_task(worker(idx, chunk)) for idx, chunk in enumerate(chunks)
+        ]
         try:
             for finished in asyncio.as_completed(tasks):
                 idx, result = await finished
@@ -458,8 +503,14 @@ class Summariser:
                     task.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)
 
-    def _normalize_chunk_payload(self, idx: int, payload: Dict[str, Any]) -> Dict[str, Any]:
-        part = dict(payload) if isinstance(payload, dict) else {"medical_summary": str(payload)}
+    def _normalize_chunk_payload(
+        self, idx: int, payload: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        part = (
+            dict(payload)
+            if isinstance(payload, dict)
+            else {"medical_summary": str(payload)}
+        )
         list_fields = {"diagnoses", "providers", "medications"}
         for k, v in list(part.items()):
             if k in list_fields:
@@ -470,7 +521,7 @@ class Summariser:
                 elif isinstance(v, dict):
                     flat = []
                     for subk, subv in v.items():
-                        subv_s = str(subv).strip() if subv is not None else ''
+                        subv_s = str(subv).strip() if subv is not None else ""
                         if subv_s:
                             flat.append(subv_s)
                     part[k] = flat
@@ -479,7 +530,9 @@ class Summariser:
             else:
                 if isinstance(v, dict):
                     comp = "; ".join(
-                        f"{dk}: {str(dv).strip()}" for dk, dv in v.items() if str(dv).strip()
+                        f"{dk}: {str(dv).strip()}"
+                        for dk, dv in v.items()
+                        if str(dv).strip()
                     )
                     part[k] = comp
                     _LOG.info(
@@ -491,29 +544,51 @@ class Summariser:
                     part[k] = joined
                     _LOG.info(
                         "summariser_value_coerced",
-                        extra={"key": k, "original_type": type(v).__name__, "length": len(joined)},
+                        extra={
+                            "key": k,
+                            "original_type": type(v).__name__,
+                            "length": len(joined),
+                        },
                     )
                 elif v is None:
                     part[k] = ""
         if idx == 0:
             type_map = {k: type(v).__name__ for k, v in part.items()}
-            _LOG.info("summariser_chunk_types", extra={"index": idx + 1, "types": type_map})
+            _LOG.info(
+                "summariser_chunk_types", extra={"index": idx + 1, "types": type_map}
+            )
         return part
 
-    def _merge_results(self, chunks: List[str], collected: List[Dict[str, Any]]) -> Dict[str, str]:
+    def _merge_results(
+        self, chunks: List[str], collected: List[Dict[str, Any]]
+    ) -> Dict[str, str]:
         # Legacy single-structure backend (tests) compatibility: if first chunk already
         # returns the legacy snake_case keys, bypass new merging logic.
-        legacy_keys = {"patient_info", "medical_summary", "billing_highlights", "legal_notes"}
-        new_schema_keys = {"provider_seen", "reason_for_visit", "clinical_findings", "treatment_plan"}
+        legacy_keys = {
+            "patient_info",
+            "medical_summary",
+            "billing_highlights",
+            "legal_notes",
+        }
+        new_schema_keys = {
+            "provider_seen",
+            "reason_for_visit",
+            "clinical_findings",
+            "treatment_plan",
+        }
         first_keys = set(collected[0].keys()) if collected else set()
-        if collected and (first_keys & legacy_keys) and not (first_keys & new_schema_keys):
+        if (
+            collected
+            and (first_keys & legacy_keys)
+            and not (first_keys & new_schema_keys)
+        ):
             # Treat as legacy backend output (possibly partial)
             src = collected[0]
             mapping = {
-                'patient_info': 'Patient Information',
-                'medical_summary': 'Medical Summary',
-                'billing_highlights': 'Billing Highlights',
-                'legal_notes': 'Legal / Notes',
+                "patient_info": "Patient Information",
+                "medical_summary": "Medical Summary",
+                "billing_highlights": "Billing Highlights",
+                "legal_notes": "Legal / Notes",
             }
             display_legacy: Dict[str, str] = {}
 
@@ -523,28 +598,30 @@ class Summariser:
                 try:
                     return str(val).strip()
                 except Exception:
-                    return ''
+                    return ""
 
             for sk, heading in mapping.items():
                 raw_val = src.get(sk)
                 # treat None explicitly as missing
                 if raw_val is None:
-                    display_legacy[heading] = 'N/A'
+                    display_legacy[heading] = "N/A"
                     continue
                 coerced = _safe_strip(raw_val)
-                display_legacy[heading] = coerced if coerced else 'N/A'
+                display_legacy[heading] = coerced if coerced else "N/A"
             return display_legacy
 
         # Merge strategy
         def _merge_field(key: str) -> str:
-            vals = [c.get(key, '') for c in collected if c.get(key) is not None]
+            vals = [c.get(key, "") for c in collected if c.get(key) is not None]
             if not vals:
-                return ''
+                return ""
             seen: set[str] = set()
             ordered: List[str] = []
             for v in vals:
                 try:
-                    logging.debug(f"Normalizing field={key!r} value_type={type(v).__name__}")
+                    logging.debug(
+                        f"Normalizing field={key!r} value_type={type(v).__name__}"
+                    )
                     if isinstance(v, (dict, list)):
                         v = json.dumps(v, ensure_ascii=False)
                     elif isinstance(v, (int, float)):
@@ -557,7 +634,7 @@ class Summariser:
                 if v_norm and v_norm not in seen:
                     seen.add(v_norm)
                     ordered.append(v_norm)
-            return '\n'.join(ordered) if ordered else 'N/A'
+            return "\n".join(ordered) if ordered else "N/A"
 
         def _merge_list_field(key: str) -> List[str]:
             items: List[str] = []
@@ -582,7 +659,7 @@ class Summariser:
                         if dvs:
                             items.append(dvs)
                 elif isinstance(raw, str) and raw.strip():
-                    parts = [p.strip() for p in raw.split(',') if p.strip()]
+                    parts = [p.strip() for p in raw.split(",") if p.strip()]
                     items.extend(parts if len(parts) > 1 else [raw.strip()])
                 else:
                     # Fallback: coerce to string
@@ -597,39 +674,41 @@ class Summariser:
                     deduped.append(it)
             return deduped
 
-        provider_seen = _merge_field('provider_seen')
-        reason_for_visit = _merge_field('reason_for_visit')
-        clinical_findings = _merge_field('clinical_findings')
-        treatment_plan = _merge_field('treatment_plan')
-        diagnoses_list = _merge_list_field('diagnoses')
-        providers_list = _merge_list_field('providers')
-        meds_list = _merge_list_field('medications')
+        provider_seen = _merge_field("provider_seen")
+        reason_for_visit = _merge_field("reason_for_visit")
+        clinical_findings = _merge_field("clinical_findings")
+        treatment_plan = _merge_field("treatment_plan")
+        diagnoses_list = _merge_list_field("diagnoses")
+        providers_list = _merge_list_field("providers")
+        meds_list = _merge_list_field("medications")
 
         # Compose final medical summary narrative (plain text, headers bold style not applied here; PDF layer can style)
         def _fmt_section(title: str, body: str) -> str:
-            body_eff = body.strip() if body.strip() else 'N/A'
+            body_eff = body.strip() if body.strip() else "N/A"
             return f"{title}:\n{body_eff}\n"
 
         narrative_parts = [
-            _fmt_section('Provider Seen', provider_seen),
-            _fmt_section('Reason for Visit', reason_for_visit),
-            _fmt_section('Clinical Findings', clinical_findings),
-            _fmt_section('Treatment / Follow-Up Plan', treatment_plan),
+            _fmt_section("Provider Seen", provider_seen),
+            _fmt_section("Reason for Visit", reason_for_visit),
+            _fmt_section("Clinical Findings", clinical_findings),
+            _fmt_section("Treatment / Follow-Up Plan", treatment_plan),
         ]
 
         def _fmt_list(title: str, items: List[str]) -> str:
             if not items:
                 return f"{title}:\nN/A\n"
-            return f"{title}:\n" + '\n'.join(f"- {i}" for i in items) + '\n'
+            return f"{title}:\n" + "\n".join(f"- {i}" for i in items) + "\n"
 
         index_sections = [
-            _fmt_list('Diagnoses', diagnoses_list),
-            _fmt_list('Providers', providers_list),
-            _fmt_list('Medications / Prescriptions', meds_list),
+            _fmt_list("Diagnoses", diagnoses_list),
+            _fmt_list("Providers", providers_list),
+            _fmt_list("Medications / Prescriptions", meds_list),
         ]
 
-        full_medical_summary = '\n'.join(narrative_parts + index_sections).strip()
-        avg_chunk = round(sum(len(c) for c in chunks) / len(chunks), 2) if chunks else 0.0
+        full_medical_summary = "\n".join(narrative_parts + index_sections).strip()
+        avg_chunk = (
+            round(sum(len(c) for c in chunks) / len(chunks), 2) if chunks else 0.0
+        )
         _LOG.info(
             "summariser_generation_complete",
             extra={
@@ -656,10 +735,10 @@ class Summariser:
         )
         # Adapt to legacy output contract expected by PDF writer
         display: Dict[str, str] = {
-            'Patient Information': 'N/A',
-            'Medical Summary': full_medical_summary,
-            'Billing Highlights': 'N/A',
-            'Legal / Notes': 'N/A',
+            "Patient Information": "N/A",
+            "Medical Summary": full_medical_summary,
+            "Billing Highlights": "N/A",
+            "Legal / Notes": "N/A",
         }
         # Provide structured lists on the returned dict under side-channel keys for enhanced PDF writer
         display["_diagnoses_list"] = "\n".join(diagnoses_list)

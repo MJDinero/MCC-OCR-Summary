@@ -21,11 +21,15 @@ class FakeBlob:
     def download_to_filename(self, filename: str) -> None:
         Path(filename).write_bytes(self._data)
 
-    def upload_from_filename(self, filename: str, content_type: str | None = None) -> None:
+    def upload_from_filename(
+        self, filename: str, content_type: str | None = None
+    ) -> None:
         self._data = Path(filename).read_bytes()
         self._content_type = content_type
 
-    def upload_from_string(self, data: bytes | str, content_type: str | None = None) -> None:
+    def upload_from_string(
+        self, data: bytes | str, content_type: str | None = None
+    ) -> None:
         if isinstance(data, str):
             data = data.encode("utf-8")
         self._data = data
@@ -62,11 +66,7 @@ class FakeStorageClient:
 
     def list_blobs(self, bucket_name: str, prefix: str):
         bucket = self.bucket(bucket_name)
-        return [
-            blob
-            for blob in bucket._store.values()
-            if blob.name.startswith(prefix)
-        ]
+        return [blob for blob in bucket._store.values() if blob.name.startswith(prefix)]
 
 
 def _build_pdf(page_count: int) -> bytes:

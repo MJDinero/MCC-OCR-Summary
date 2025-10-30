@@ -51,7 +51,9 @@ def _drive_service():
     raw_credentials = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
     if not raw_credentials:
         try:
-            raw_credentials = getattr(get_config(), "google_application_credentials", None)
+            raw_credentials = getattr(
+                get_config(), "google_application_credentials", None
+            )
         except Exception:  # pragma: no cover - config loading failures raised later
             raw_credentials = None
 
@@ -65,7 +67,9 @@ def _drive_service():
         try:
             service_account_info = json.loads(raw_credentials)
         except json.JSONDecodeError as exc:  # pragma: no cover - configuration error
-            raise RuntimeError("GOOGLE_APPLICATION_CREDENTIALS contains invalid JSON") from exc
+            raise RuntimeError(
+                "GOOGLE_APPLICATION_CREDENTIALS contains invalid JSON"
+            ) from exc
         creds = service_account.Credentials.from_service_account_info(
             service_account_info,
             scopes=_SCOPES,
@@ -78,15 +82,13 @@ def _drive_service():
             subject=subject,
         )  # type: ignore[arg-type]
     else:
-        raise RuntimeError(f"Missing GOOGLE_APPLICATION_CREDENTIALS file at {raw_credentials!r}")
+        raise RuntimeError(
+            f"Missing GOOGLE_APPLICATION_CREDENTIALS file at {raw_credentials!r}"
+        )
 
     service = build("drive", "v3", credentials=creds, cache_discovery=False)
     try:
-        about_info = (
-            service.about()
-            .get(fields="user")
-            .execute()
-        )
+        about_info = service.about().get(fields="user").execute()
         _LOG.info(
             "drive_impersonation_user=%s impersonated_as=%s",
             impersonate_user,
@@ -104,14 +106,14 @@ def _resolve_folder_metadata(folder_id: str) -> Dict[str, Any]:
     try:  # pragma: no cover - external API call
         request = service.files().get(
             fileId=folder_id,
-            fields='id,name,driveId,parents,capabilities(canAddChildren),permissionIds',
+            fields="id,name,driveId,parents,capabilities(canAddChildren),permissionIds",
             supportsAllDrives=True,
             supportsTeamDrives=True,
         )
     except TypeError:  # older stubs/tests
         request = service.files().get(
             fileId=folder_id,
-            fields='id,name,driveId,parents,capabilities(canAddChildren),permissionIds',
+            fields="id,name,driveId,parents,capabilities(canAddChildren),permissionIds",
         )
     metadata = request.execute()
     return metadata
@@ -137,7 +139,14 @@ def _extract_ids(raw_folder: str, raw_drive: str | None) -> Tuple[str, Optional[
             if isinstance(value, str) and value.strip():
                 folder_candidate = value.strip()
                 break
-        for key in ("driveId", "drive_id", "sharedDriveId", "shared_drive_id", "teamDriveId", "team_drive_id"):
+        for key in (
+            "driveId",
+            "drive_id",
+            "sharedDriveId",
+            "shared_drive_id",
+            "teamDriveId",
+            "team_drive_id",
+        ):
             value = json_candidate.get(key)
             if isinstance(value, str) and value.strip():
                 drive_candidate = value.strip()
@@ -176,7 +185,9 @@ def _extract_ids(raw_folder: str, raw_drive: str | None) -> Tuple[str, Optional[
     drive_candidate = drive_candidate or drive_from_matches
     if drive_candidate:
         drive_match = _ID_PATTERN.findall(drive_candidate)
-        drive_candidate = drive_match[0] if drive_match else drive_candidate.strip().strip("\"' ")
+        drive_candidate = (
+            drive_match[0] if drive_match else drive_candidate.strip().strip("\"' ")
+        )
         if drive_candidate and not drive_candidate.startswith("0A"):
             # Invalid shared drive IDs start with 0A; discard obvious mismatch.
             drive_candidate = None
@@ -194,20 +205,27 @@ def download_pdf(
 ) -> bytes:
     """Download a file from Drive, enforcing PDF payloads and optional structured logging."""
     if not file_id:
-        raise ValueError('file_id required')
+        raise ValueError("file_id required")
     if mime_type != "application/pdf":
         raise ValueError(f"Unsupported mime_type {mime_type!r} for download_pdf")
 
     extra_context: Dict[str, Any] = {"file_id": file_id}
     if resource_key:
-        masked_key = f"{resource_key[:4]}***{resource_key[-4:]}" if len(resource_key) > 8 else resource_key
+        masked_key = (
+            f"{resource_key[:4]}***{resource_key[-4:]}"
+            if len(resource_key) > 8
+            else resource_key
+        )
         extra_context["resource_key"] = masked_key
     if log_context:
         extra_context.update(log_context)
         try:
             _LOG.info("drive_download_started", extra=extra_context)
         except Exception:  # pragma: no cover - defensive logging
-            _LOG.info("drive_download_started (context suppressed)", extra={"file_id": file_id})
+            _LOG.info(
+                "drive_download_started (context suppressed)",
+                extra={"file_id": file_id},
+            )
     else:
         _LOG.info("drive_download_started", extra=extra_context)
 
@@ -235,17 +253,21 @@ def download_pdf(
             quota_value = None
     if quota_value:
         request.headers["X-Goog-User-Project"] = quota_value
-    header_value = _format_resource_keys({file_id: resource_key} if resource_key else None)
+    header_value = _format_resource_keys(
+        {file_id: resource_key} if resource_key else None
+    )
     if header_value:
         request.headers["X-Goog-Drive-Resource-Keys"] = header_value
     buf = io.BytesIO()
     downloader = MediaIoBaseDownload(buf, request)
     done = False
     while not done:
-        _status, done = downloader.next_chunk()  # _status unused; progress not logged for minimal impl
+        _status, done = (
+            downloader.next_chunk()
+        )  # _status unused; progress not logged for minimal impl
     data = buf.getvalue()
-    if not data.startswith(b'%PDF-'):
-        raise ValueError('Downloaded file is not a PDF')
+    if not data.startswith(b"%PDF-"):
+        raise ValueError("Downloaded file is not a PDF")
     extra_complete: Dict[str, Any] = {"file_id": file_id, "bytes": len(data)}
     if log_context:
         extra_complete.update(log_context)
@@ -260,14 +282,16 @@ def upload_pdf(
     parent_folder_id: str | None = None,
     log_context: Optional[Dict[str, Any]] = None,
 ) -> str:
-    if not file_bytes or not file_bytes.startswith(b'%PDF-'):
-        raise ValueError('file_bytes must be a PDF (bytes starting with %PDF-)')
+    if not file_bytes or not file_bytes.startswith(b"%PDF-"):
+        raise ValueError("file_bytes must be a PDF (bytes starting with %PDF-)")
     cfg = get_config()
     config_folder = (cfg.drive_report_folder_id or "").strip()
     explicit_output = (os.getenv("OUTPUT_FOLDER_ID") or "").strip()
     env_output = (os.getenv("DRIVE_OUTPUT_FOLDER_ID") or "").strip()
     env_report = (os.getenv("DRIVE_REPORT_FOLDER_ID") or "").strip()
-    canonical_folder = (config_folder or explicit_output or env_output or env_report).strip()
+    canonical_folder = (
+        config_folder or explicit_output or env_output or env_report
+    ).strip()
     if explicit_output:
         _LOG.info(
             "drive_output_folder_env",
@@ -279,11 +303,14 @@ def upload_pdf(
     if folder_source != canonical_folder:
         _LOG.warning(
             "drive_parent_override_ignored",
-            extra={"requested_parent": folder_source, "canonical_parent": canonical_folder},
+            extra={
+                "requested_parent": folder_source,
+                "canonical_parent": canonical_folder,
+            },
         )
         folder_source = canonical_folder
-    shared_drive_source = (
-        getattr(cfg, "drive_shared_drive_id", None) or os.getenv("DRIVE_SHARED_DRIVE_ID", None)
+    shared_drive_source = getattr(cfg, "drive_shared_drive_id", None) or os.getenv(
+        "DRIVE_SHARED_DRIVE_ID", None
     )
     folder_id, drive_id = _extract_ids(folder_source, shared_drive_source)
     try:
@@ -303,7 +330,7 @@ def upload_pdf(
             "folder_id": folder_id,
             "drive_id": folder_meta.get("driveId") or drive_id,
             "can_add_children": can_add_children,
-            "permissions": ','.join(folder_meta.get("permissionIds", []) or []),
+            "permissions": ",".join(folder_meta.get("permissionIds", []) or []),
         },
     )
 
@@ -313,14 +340,19 @@ def upload_pdf(
     elif not derived_drive_id and not drive_id:
         _LOG.warning(
             "drive_folder_not_shared",
-            extra={"folder_id": folder_id, "message": "Folder metadata missing driveId; likely My Drive"},
+            extra={
+                "folder_id": folder_id,
+                "message": "Folder metadata missing driveId; likely My Drive",
+            },
         )
     service = _drive_service()
-    media = MediaIoBaseUpload(io.BytesIO(file_bytes), mimetype='application/pdf', resumable=True)
+    media = MediaIoBaseUpload(
+        io.BytesIO(file_bytes), mimetype="application/pdf", resumable=True
+    )
     file_metadata: dict[str, Any] = {
-        'name': report_name,
-        'mimeType': 'application/pdf',
-        'parents': [folder_id],
+        "name": report_name,
+        "mimeType": "application/pdf",
+        "parents": [folder_id],
     }
     _LOG.info(
         "drive_upload_started",
@@ -336,7 +368,7 @@ def upload_pdf(
         request = service.files().create(
             body=file_metadata,
             media_body=media,
-            fields='id,name,parents,driveId,webViewLink',
+            fields="id,name,parents,driveId,webViewLink",
             supportsAllDrives=True,
             supportsTeamDrives=True,
             enforceSingleParent=True,
@@ -345,7 +377,7 @@ def upload_pdf(
         request = service.files().create(
             body=file_metadata,
             media_body=media,
-            fields='id,name,parents,driveId,webViewLink',
+            fields="id,name,parents,driveId,webViewLink",
             enforceSingleParent=True,
         )
 
@@ -379,18 +411,23 @@ def upload_pdf(
     context.setdefault("trace_id", None)
     context.setdefault("document_id", report_name)
     context.setdefault("shard_id", "aggregate")
-    context.setdefault("schema_version", cfg.summary_schema_version or os.getenv("SUMMARY_SCHEMA_VERSION", "2025-10-01"))
+    context.setdefault(
+        "schema_version",
+        cfg.summary_schema_version or os.getenv("SUMMARY_SCHEMA_VERSION", "2025-10-01"),
+    )
     context.setdefault("attempt", 1)
     context.setdefault("component", "drive_client")
     context.setdefault("severity", "INFO")
     if context.get("trace_id") and "logging.googleapis.com/trace" not in context:
-        context["logging.googleapis.com/trace"] = f"projects/{cfg.project_id}/traces/{context['trace_id']}"
+        context["logging.googleapis.com/trace"] = (
+            f"projects/{cfg.project_id}/traces/{context['trace_id']}"
+        )
     context.update(
         {
             "duration_ms": duration_ms,
-            "drive_file_id": _mask_drive_id(created.get('id')),
+            "drive_file_id": _mask_drive_id(created.get("id")),
             "bytes": len(file_bytes),
-            "drive_id": created.get('driveId') or drive_id,
+            "drive_id": created.get("driveId") or drive_id,
             "parent": folder_id,
         }
     )
@@ -398,7 +435,7 @@ def upload_pdf(
         "drive_upload_complete",
         extra=context,
     )
-    masked_id = _mask_drive_id(created.get('id'))
+    masked_id = _mask_drive_id(created.get("id"))
     _LOG.info(
         "drive_upload_success",
         extra={
@@ -407,6 +444,7 @@ def upload_pdf(
             "bytes": len(file_bytes),
         },
     )
-    return created['id']
+    return created["id"]
 
-__all__ = ['download_pdf', 'upload_pdf']
+
+__all__ = ["download_pdf", "upload_pdf"]

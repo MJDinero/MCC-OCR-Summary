@@ -31,7 +31,9 @@ class StubManifestBlob:
         self.name = name
         self._store = store
 
-    def upload_from_string(self, data, content_type=None, if_generation_match=None):  # noqa: D401
+    def upload_from_string(
+        self, data, content_type=None, if_generation_match=None
+    ):  # noqa: D401
         self._store[self.name] = {
             "data": data,
             "content_type": content_type,

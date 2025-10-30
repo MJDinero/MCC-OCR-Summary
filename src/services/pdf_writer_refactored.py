@@ -1,4 +1,5 @@
 """High-reliability PDF writer with deterministic output and defensive checks."""
+
 from __future__ import annotations
 
 import argparse
@@ -45,7 +46,9 @@ def _wrap_text(block: str, width: int) -> List[str]:
     return lines or [""]
 
 
-def _normalise_summary(summary: Dict[str, str] | str) -> Tuple[List[Tuple[str, str]], Dict[str, List[str]]]:
+def _normalise_summary(
+    summary: Dict[str, str] | str,
+) -> Tuple[List[Tuple[str, str]], Dict[str, List[str]]]:
     """Build ordered sections and capture structured index payloads."""
     if isinstance(summary, str):
         body = summary.strip()
@@ -55,22 +58,45 @@ def _normalise_summary(summary: Dict[str, str] | str) -> Tuple[List[Tuple[str, s
     if not summary:
         raise PDFGenerationError("Summary structure empty")
 
-    order = ["Patient Information", "Medical Summary", "Billing Highlights", "Legal / Notes"]
+    order = [
+        "Patient Information",
+        "Medical Summary",
+        "Billing Highlights",
+        "Legal / Notes",
+    ]
     sections: List[Tuple[str, str]] = []
     for key in order:
         if key in summary:
             value = (summary.get(key) or "").strip() or "N/A"
             sections.append((key, value))
     existing_keys = {title for title, _ in sections}
-    for key in sorted(k for k in summary.keys() if k not in existing_keys and not k.startswith("_")):
+    for key in sorted(
+        k for k in summary.keys() if k not in existing_keys and not k.startswith("_")
+    ):
         value = (summary.get(key) or "").strip()
         if value:
             sections.append((key, value))
 
-    diag_list = [line.strip() for line in (summary.get("_diagnoses_list", "") or "").splitlines() if line.strip()]
-    prov_list = [line.strip() for line in (summary.get("_providers_list", "") or "").splitlines() if line.strip()]
-    med_list = [line.strip() for line in (summary.get("_medications_list", "") or "").splitlines() if line.strip()]
-    indices = {"Diagnoses": diag_list, "Providers": prov_list, "Medications / Prescriptions": med_list}
+    diag_list = [
+        line.strip()
+        for line in (summary.get("_diagnoses_list", "") or "").splitlines()
+        if line.strip()
+    ]
+    prov_list = [
+        line.strip()
+        for line in (summary.get("_providers_list", "") or "").splitlines()
+        if line.strip()
+    ]
+    med_list = [
+        line.strip()
+        for line in (summary.get("_medications_list", "") or "").splitlines()
+        if line.strip()
+    ]
+    indices = {
+        "Diagnoses": diag_list,
+        "Providers": prov_list,
+        "Medications / Prescriptions": med_list,
+    }
 
     if any(indices.values()):
         sections.append(("Structured Indices", "=" * 48))
@@ -135,7 +161,9 @@ def _load_summary_from_gcs(gcs_uri: str) -> Dict[str, Any]:
     try:
         payload_bytes = blob.download_as_bytes()
     except Exception as exc:  # pragma: no cover - surfaces storage errors
-        raise PDFGenerationError(f"Failed to download summary from {gcs_uri}: {exc}") from exc
+        raise PDFGenerationError(
+            f"Failed to download summary from {gcs_uri}: {exc}"
+        ) from exc
     try:
         data = json.loads(payload_bytes.decode("utf-8"))
     except json.JSONDecodeError as exc:
@@ -170,7 +198,9 @@ def _upload_pdf_to_gcs(  # pragma: no cover - exercised via integration environm
         blob.upload_from_string(pdf_bytes, **upload_kwargs)
     except Exception as exc:
         is_precondition = False
-        if isinstance(exc, (gexc.PreconditionFailed, storage_exceptions.PreconditionFailed)):
+        if isinstance(
+            exc, (gexc.PreconditionFailed, storage_exceptions.PreconditionFailed)
+        ):
             is_precondition = True
         elif isinstance(exc, InvalidResponse):
             status = getattr(exc, "response", None)
@@ -179,7 +209,10 @@ def _upload_pdf_to_gcs(  # pragma: no cover - exercised via integration environm
         if if_generation_match == 0 and is_precondition:
             _LOG.info(
                 "pdf_upload_precondition_skipped",
-                extra={"gcs_uri": f"gs://{bucket_name}/{object_name}", "reason": str(exc)},
+                extra={
+                    "gcs_uri": f"gs://{bucket_name}/{object_name}",
+                    "reason": str(exc),
+                },
             )
             blob.reload()
             return blob
@@ -191,7 +224,9 @@ def _upload_pdf_to_gcs(  # pragma: no cover - exercised via integration environm
     return blob
 
 
-def _kms_signing_function(resource_name: str):  # pragma: no cover - requires KMS service
+def _kms_signing_function(
+    resource_name: str,
+):  # pragma: no cover - requires KMS service
     try:
         from google.cloud import kms_v1  # type: ignore
     except Exception as exc:  # pragma: no cover - optional dependency
@@ -213,13 +248,17 @@ def _kms_signing_function(resource_name: str):  # pragma: no cover - requires KM
     return _signer
 
 
-def _generate_signed_url(blob, ttl_seconds: int, *, kms_key: Optional[str] = None) -> str:  # pragma: no cover - network call
+def _generate_signed_url(
+    blob, ttl_seconds: int, *, kms_key: Optional[str] = None
+) -> str:  # pragma: no cover - network call
     if ttl_seconds <= 0:
         raise PDFGenerationError("Signed URL TTL must be greater than zero.")
     expiration = timedelta(seconds=ttl_seconds)
     if kms_key:
         signer = _kms_signing_function(kms_key)
-        service_account = os.getenv("SIGNED_URL_SERVICE_ACCOUNT") or os.getenv("SERVICE_ACCOUNT_EMAIL")
+        service_account = os.getenv("SIGNED_URL_SERVICE_ACCOUNT") or os.getenv(
+            "SERVICE_ACCOUNT_EMAIL"
+        )
         if not service_account:
             raise PDFGenerationError(
                 "SIGNED_URL_SERVICE_ACCOUNT (or SERVICE_ACCOUNT_EMAIL) must be set to use KMS signing."
@@ -232,8 +271,13 @@ def _generate_signed_url(blob, ttl_seconds: int, *, kms_key: Optional[str] = Non
             signing_function=signer,
         )
     else:
-        url = blob.generate_signed_url(expiration=expiration, method="GET", version="v4")
-    _LOG.info("pdf_signed_url_generated", extra={"gcs_uri": f"gs://{blob.bucket.name}/{blob.name}", "ttl": ttl_seconds})
+        url = blob.generate_signed_url(
+            expiration=expiration, method="GET", version="v4"
+        )
+    _LOG.info(
+        "pdf_signed_url_generated",
+        extra={"gcs_uri": f"gs://{blob.bucket.name}/{blob.name}", "ttl": ttl_seconds},
+    )
     return url
 
 
@@ -251,7 +295,12 @@ class PDFWriterRefactored:
     title: str = "Document Summary"
     wrap_width: int = 100
 
-    def build(self, summary: Dict[str, str] | str, *, log_context: Optional[Dict[str, Any]] = None) -> bytes:
+    def build(
+        self,
+        summary: Dict[str, str] | str,
+        *,
+        log_context: Optional[Dict[str, Any]] = None,
+    ) -> bytes:
         sections, indices = _normalise_summary(summary)
         formatted_sections: List[Tuple[str, str]] = []
         for heading, body in sections:
@@ -264,7 +313,9 @@ class PDFWriterRefactored:
         context = dict(log_context or {})
         context.setdefault("component", "pdf_writer")
         context.setdefault("severity", "INFO")
-        context.setdefault("schema_version", os.getenv("SUMMARY_SCHEMA_VERSION", "2025-10-01"))
+        context.setdefault(
+            "schema_version", os.getenv("SUMMARY_SCHEMA_VERSION", "2025-10-01")
+        )
         context.setdefault("shard_id", "aggregate")
         context.setdefault("attempt", 1)
         started_at = time.perf_counter()
@@ -306,11 +357,15 @@ class PDFWriterRefactored:
 
 
 def _cli(argv: Optional[Iterable[str]] = None) -> None:
-    parser = argparse.ArgumentParser(description="Render MCC medical summary PDF (Cloud Run job aware).")
+    parser = argparse.ArgumentParser(
+        description="Render MCC medical summary PDF (Cloud Run job aware)."
+    )
     parser.add_argument("--input", required=True, help="Summary JSON path.")
     parser.add_argument("--output", help="Optional local path to write PDF bytes.")
     parser.add_argument("--job-id", help="Pipeline job identifier to update state.")
-    parser.add_argument("--upload-gcs", help="Destination gs://bucket/object for PDF upload.")
+    parser.add_argument(
+        "--upload-gcs", help="Destination gs://bucket/object for PDF upload."
+    )
     parser.add_argument(
         "--if-generation-match",
         type=int,
@@ -318,9 +373,21 @@ def _cli(argv: Optional[Iterable[str]] = None) -> None:
         default=0,
         help="ifGenerationMatch precondition for GCS upload (default 0 to prevent duplicate overwrites).",
     )
-    parser.add_argument("--sign-url-ttl", type=int, default=int(os.getenv("PDF_SIGNED_URL_TTL", "3600")), help="TTL in seconds for signed URL generation.")
-    parser.add_argument("--skip-signed-url", action="store_true", help="Disable signed URL generation even when uploading to GCS.")
-    parser.add_argument("--kms-key", help="Cloud KMS key resource to sign URLs (requires SIGNED_URL_SERVICE_ACCOUNT).")
+    parser.add_argument(
+        "--sign-url-ttl",
+        type=int,
+        default=int(os.getenv("PDF_SIGNED_URL_TTL", "3600")),
+        help="TTL in seconds for signed URL generation.",
+    )
+    parser.add_argument(
+        "--skip-signed-url",
+        action="store_true",
+        help="Disable signed URL generation even when uploading to GCS.",
+    )
+    parser.add_argument(
+        "--kms-key",
+        help="Cloud KMS key resource to sign URLs (requires SIGNED_URL_SERVICE_ACCOUNT).",
+    )
     args = parser.parse_args(list(argv) if argv is not None else None)
 
     writer = PDFWriterRefactored()
@@ -351,7 +418,9 @@ def _cli(argv: Optional[Iterable[str]] = None) -> None:
             if job_snapshot:
                 base_metadata = dict(job_snapshot.metadata)
                 trace_id = getattr(job_snapshot, "trace_id", None)
-                document_id = getattr(job_snapshot, "pdf_uri", None) or getattr(job_snapshot, "object_uri", None)
+                document_id = getattr(job_snapshot, "pdf_uri", None) or getattr(
+                    job_snapshot, "object_uri", None
+                )
                 if isinstance(job_snapshot.retries, dict):
                     attempt_value = job_snapshot.retries.get("PDF_JOB", 0) + 1
                 state_store.mark_status(
@@ -360,11 +429,18 @@ def _cli(argv: Optional[Iterable[str]] = None) -> None:
                     stage="PDF_JOB",
                     message="PDF writer started",
                     extra={
-                        "input_path": input_arg if isinstance(summary_path, str) else str(summary_path.resolve())
+                        "input_path": (
+                            input_arg
+                            if isinstance(summary_path, str)
+                            else str(summary_path.resolve())
+                        )
                     },
                 )
         except Exception as exc:  # pragma: no cover - defensive
-            _LOG.exception("pdf_job_state_init_failed", extra={"job_id": args.job_id, "error": str(exc)})
+            _LOG.exception(
+                "pdf_job_state_init_failed",
+                extra={"job_id": args.job_id, "error": str(exc)},
+            )
             state_store = None
 
     try:
@@ -381,7 +457,9 @@ def _cli(argv: Optional[Iterable[str]] = None) -> None:
             "severity": "INFO",
         }
         if trace_id:
-            pdf_log_context["logging.googleapis.com/trace"] = f"projects/{cfg.project_id}/traces/{trace_id}"
+            pdf_log_context["logging.googleapis.com/trace"] = (
+                f"projects/{cfg.project_id}/traces/{trace_id}"
+            )
         pdf_bytes = writer.build(summary_payload, log_context=pdf_log_context)
     except Exception as exc:
         if state_store and args.job_id:
@@ -395,7 +473,9 @@ def _cli(argv: Optional[Iterable[str]] = None) -> None:
                     updates={"last_error": {"stage": "pdf_writer", "error": str(exc)}},
                 )
             except Exception:  # pragma: no cover - best effort
-                _LOG.exception("pdf_job_state_mark_failed", extra={"job_id": args.job_id})
+                _LOG.exception(
+                    "pdf_job_state_mark_failed", extra={"job_id": args.job_id}
+                )
         raise
 
     if pdf_path:
@@ -408,10 +488,14 @@ def _cli(argv: Optional[Iterable[str]] = None) -> None:
     signed_url: Optional[str] = None
     if args.upload_gcs:
         try:
-            blob = _upload_pdf_to_gcs(pdf_bytes, args.upload_gcs, if_generation_match=args.if_generation_match)
+            blob = _upload_pdf_to_gcs(
+                pdf_bytes, args.upload_gcs, if_generation_match=args.if_generation_match
+            )
             pdf_uri = f"gs://{blob.bucket.name}/{blob.name}"
             if not args.skip_signed_url:
-                signed_url = _generate_signed_url(blob, args.sign_url_ttl, kms_key=args.kms_key)
+                signed_url = _generate_signed_url(
+                    blob, args.sign_url_ttl, kms_key=args.kms_key
+                )
         except Exception as exc:
             if state_store and args.job_id:
                 try:
@@ -421,10 +505,14 @@ def _cli(argv: Optional[Iterable[str]] = None) -> None:
                         stage="PDF_JOB_UPLOAD",
                         message=str(exc),
                         extra={"error": str(exc), "phase": "pdf_upload"},
-                        updates={"last_error": {"stage": "pdf_upload", "error": str(exc)}},
+                        updates={
+                            "last_error": {"stage": "pdf_upload", "error": str(exc)}
+                        },
                     )
                 except Exception:  # pragma: no cover - best effort
-                    _LOG.exception("pdf_job_state_upload_failed", extra={"job_id": args.job_id})
+                    _LOG.exception(
+                        "pdf_job_state_upload_failed", extra={"job_id": args.job_id}
+                    )
             raise
 
     if state_store and args.job_id:
@@ -455,7 +543,9 @@ def _cli(argv: Optional[Iterable[str]] = None) -> None:
                     extra={"pdf_uri": pdf_uri, "signed_url": signed_url},
                 )
         except Exception:  # pragma: no cover - best effort
-            _LOG.exception("pdf_job_state_complete_failed", extra={"job_id": args.job_id})
+            _LOG.exception(
+                "pdf_job_state_complete_failed", extra={"job_id": args.job_id}
+            )
 
 
 if __name__ == "__main__":  # pragma: no cover - CLI entrypoint

@@ -39,7 +39,9 @@ class StubPublisher:
     def __init__(self) -> None:
         self.messages: list[tuple[str, bytes, dict[str, str]]] = []
 
-    async def publish(self, topic: str, data: bytes, attributes: dict[str, str] | None = None) -> str:
+    async def publish(
+        self, topic: str, data: bytes, attributes: dict[str, str] | None = None
+    ) -> str:
         self.messages.append((topic, data, attributes or {}))
         return "benchmark"
 
@@ -116,7 +118,10 @@ async def run_benchmark(pages: int, words_per_page: int) -> BenchmarkResult:
     for message in chunk_messages:
         await summarizer.handle_chunk(message)
     duration = time.perf_counter() - start
-    summary_length = sum(len(msg.summary_text) for msg in await store.list_chunk_summaries(job_id=f"bench-{pages}"))
+    summary_length = sum(
+        len(msg.summary_text)
+        for msg in await store.list_chunk_summaries(job_id=f"bench-{pages}")
+    )
     return BenchmarkResult(
         pages=pages,
         duration=duration,

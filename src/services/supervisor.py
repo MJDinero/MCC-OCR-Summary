@@ -17,12 +17,25 @@ _LOG = logging.getLogger("supervisor")
 
 _WORD_RE = re.compile(r"[A-Za-z0-9']+")
 
-_HEADER_TOKENS: tuple[str, ...] = ("diagnoses:", "clinical findings:", "treatment", "medications", "reason for visit:", "provider seen:")  # pragma: no cover
+_HEADER_TOKENS: tuple[str, ...] = (
+    "diagnoses:",
+    "clinical findings:",
+    "treatment",
+    "medications",
+    "reason for visit:",
+    "provider seen:",
+)  # pragma: no cover
 
-_STOPWORDS: frozenset[str] = frozenset("the and or of to a in for on with at by is are was were be this that from as an it patient patients medical summary plan follow diagnosis".split())  # pragma: no cover
+_STOPWORDS: frozenset[str] = frozenset(
+    "the and or of to a in for on with at by is are was were be this that from as an it patient patients medical summary plan follow diagnosis".split()
+)  # pragma: no cover
 
-_INVALID_SUMMARY_KEYWORDS: frozenset[str] = frozenset({"n/a", "no data", "none", "empty", "tbd"})
-_PLACEHOLDER_RE = re.compile(r"^(?:n/?a|no data|none|empty|tbd)[\s\.\-]*$", re.IGNORECASE)
+_INVALID_SUMMARY_KEYWORDS: frozenset[str] = frozenset(
+    {"n/a", "no data", "none", "empty", "tbd"}
+)
+_PLACEHOLDER_RE = re.compile(
+    r"^(?:n/?a|no data|none|empty|tbd)[\s\.\-]*$", re.IGNORECASE
+)
 
 
 def _strip_section_headers(summary_text: str) -> str:
@@ -35,8 +48,8 @@ def _strip_section_headers(summary_text: str) -> str:
         if not raw_line:
             cleaned_lines.append(raw_line)
             continue
-        if ':' in raw_line:
-            _, remainder = raw_line.split(':', 1)
+        if ":" in raw_line:
+            _, remainder = raw_line.split(":", 1)
             cleaned_lines.append(remainder.strip())
         else:  # pragma: no cover - handled implicitly by colon stripping tests
             cleaned_lines.append(raw_line.strip())
@@ -52,11 +65,15 @@ def _normalise_mb(size_bytes: int | float | None) -> float:
 def _extract_summary_text(summary: Dict[str, Any]) -> str:
     if not summary:
         return ""
-    if isinstance(summary.get("Medical Summary"), str):  # pragma: no cover - direct field read
+    if isinstance(
+        summary.get("Medical Summary"), str
+    ):  # pragma: no cover - direct field read
         return summary["Medical Summary"]
     # Join any string like values as fallback
     parts: list[str] = []
-    for value in summary.values():  # pragma: no cover - fallback join for loose structures
+    for (
+        value
+    ) in summary.values():  # pragma: no cover - fallback join for loose structures
         if isinstance(value, str):
             parts.append(value)
     return "\n".join(parts)
@@ -87,8 +104,12 @@ class CommonSenseSupervisor:
     ) -> None:
         self.simple = simple
         self.min_ratio = min_ratio  # pragma: no cover - constructor wiring
-        self.baseline_min_chars = baseline_min_chars  # pragma: no cover - constructor wiring
-        self.multi_pass_min_chars = multi_pass_min_chars  # pragma: no cover - constructor wiring
+        self.baseline_min_chars = (
+            baseline_min_chars  # pragma: no cover - constructor wiring
+        )
+        self.multi_pass_min_chars = (
+            multi_pass_min_chars  # pragma: no cover - constructor wiring
+        )
         self.max_retries = max_retries  # pragma: no cover - constructor wiring
         self.logger = logger or _LOG  # pragma: no cover - constructor wiring
         self._retry_variants: Tuple[Dict[str, Any], ...] = (
@@ -143,7 +164,9 @@ class CommonSenseSupervisor:
             min_summary_chars = int(os.getenv("MIN_SUMMARY_CHARS", min_summary_default))
             min_ratio = float(os.getenv("MIN_SUMMARY_RATIO", "0.005"))
             summary_lc = summary_text.lower()
-            keyword_hits = sum(summary_lc.count(token) for token in _INVALID_SUMMARY_KEYWORDS)
+            keyword_hits = sum(
+                summary_lc.count(token) for token in _INVALID_SUMMARY_KEYWORDS
+            )
             head_fragment = summary_text.strip()[:32]
             looks_placeholder = bool(_PLACEHOLDER_RE.fullmatch(head_fragment))
             too_short = summary_chars < min_summary_chars
@@ -159,8 +182,14 @@ class CommonSenseSupervisor:
                 "paragraphs": 1 if summary_chars else 0,
                 "headers": 0,
             }
-            passed = all(checks[key] for key in ("length_ok", "semantic_ok", "ratio_ok"))
-            failure_reasons = [key for key in ("length_ok", "semantic_ok", "ratio_ok") if not checks[key]]
+            passed = all(
+                checks[key] for key in ("length_ok", "semantic_ok", "ratio_ok")
+            )
+            failure_reasons = [
+                key
+                for key in ("length_ok", "semantic_ok", "ratio_ok")
+                if not checks[key]
+            ]
             reason = "" if passed else ",".join(failure_reasons) or "failed_checks"
             validation = {
                 "supervisor_passed": passed,
@@ -211,7 +240,11 @@ class CommonSenseSupervisor:
 
         target_length = max(
             int((doc_stats.get("text_length") or 0) * self.min_ratio),
-            self.multi_pass_min_chars if require_multi_pass else self.baseline_min_chars,
+            (
+                self.multi_pass_min_chars
+                if require_multi_pass
+                else self.baseline_min_chars
+            ),
         )
         length_score = 0.0
         if target_length <= 0:
@@ -226,15 +259,19 @@ class CommonSenseSupervisor:
         alignment = self._content_alignment(alignment_source, alignment_focus_text)
 
         # Runtime tunable thresholds (env overrides) for adaptive strictness
-        alignment_threshold = float(os.getenv('SUPERVISOR_ALIGNMENT_THRESHOLD', '0.80'))
-        length_threshold = float(os.getenv('SUPERVISOR_LENGTH_SCORE_THRESHOLD', '0.75'))
-        min_headers_required = int(os.getenv('SUPERVISOR_MIN_HEADERS', '3'))
-        require_list = os.getenv('SUPERVISOR_REQUIRE_LIST', 'true').lower() == 'true'
+        alignment_threshold = float(os.getenv("SUPERVISOR_ALIGNMENT_THRESHOLD", "0.80"))
+        length_threshold = float(os.getenv("SUPERVISOR_LENGTH_SCORE_THRESHOLD", "0.75"))
+        min_headers_required = int(os.getenv("SUPERVISOR_MIN_HEADERS", "3"))
+        require_list = os.getenv("SUPERVISOR_REQUIRE_LIST", "true").lower() == "true"
 
         length_ok = length_score >= length_threshold
-        structure_ok = header_count >= min_headers_required and (has_list or not require_list)
+        structure_ok = header_count >= min_headers_required and (
+            has_list or not require_list
+        )
         if (doc_stats.get("pages") or 0) >= 100:
-            structure_ok = structure_ok and (paragraph_count >= 3 or summary_chars >= 1000)
+            structure_ok = structure_ok and (
+                paragraph_count >= 3 or summary_chars >= 1000
+            )
 
         alignment_ok = alignment >= alignment_threshold
 
@@ -349,7 +386,9 @@ class CommonSenseSupervisor:
         alignment = float(validation.get("content_alignment") or 0.0)
         return round(0.4 * length_score + 0.6 * alignment, 3)
 
-    def _invoke_variant(self, summariser: Any, text: str, variant: Dict[str, Any]) -> Dict[str, Any]:
+    def _invoke_variant(
+        self, summariser: Any, text: str, variant: Dict[str, Any]
+    ) -> Dict[str, Any]:
         chunk_target_attr = getattr(summariser, "chunk_target_chars", None)
         chunk_max_attr = getattr(summariser, "chunk_hard_max", None)
         restore_target = chunk_target_attr
@@ -379,13 +418,7 @@ class CommonSenseSupervisor:
         if not summary_text:
             return 0
         lowered = summary_text.lower()
-        return len(
-            {
-                token
-                for token in self.required_header_tokens
-                if token in lowered
-            }
-        )
+        return len({token for token in self.required_header_tokens if token in lowered})
 
     def _has_structured_list(self, summary_text: str, summary: Dict[str, Any]) -> bool:
         if summary_text and re.search(r"\n\s*[-*]\s+", summary_text):

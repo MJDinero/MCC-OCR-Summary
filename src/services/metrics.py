@@ -67,7 +67,9 @@ class PrometheusMetrics(MetricsClient):
         @app.get("/metrics")
         async def _metrics_endpoint():  # pragma: no cover - passthrough
             data = generate_latest()
-            return PlainTextResponse(data.decode("utf-8"), media_type=CONTENT_TYPE_LATEST)
+            return PlainTextResponse(
+                data.decode("utf-8"), media_type=CONTENT_TYPE_LATEST
+            )
 
         app.state._prometheus_instrumented = True
         app.state.metrics = metrics

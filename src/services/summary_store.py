@@ -31,7 +31,9 @@ class GCSChunkSummaryStore(ChunkSummaryStore):  # pragma: no cover - requires re
         kms_key_name: str | None = None,
     ) -> None:
         if storage is None:
-            raise RuntimeError("google-cloud-storage is required for GCSChunkSummaryStore")
+            raise RuntimeError(
+                "google-cloud-storage is required for GCSChunkSummaryStore"
+            )
         self.client = client or storage.Client()
         self.bucket = self.client.bucket(bucket_name)
         self.prefix = prefix.rstrip("/")
@@ -49,7 +51,9 @@ class GCSChunkSummaryStore(ChunkSummaryStore):  # pragma: no cover - requires re
             blob = self.bucket.blob(self._blob_name(record.job_id, record.chunk_id))
             if self.kms_key_name:
                 setattr(blob, "kms_key_name", self.kms_key_name)
-            blob.metadata = {key: str(value) for key, value in (record.metadata or {}).items()}
+            blob.metadata = {
+                key: str(value) for key, value in (record.metadata or {}).items()
+            }
             try:
                 blob.upload_from_string(
                     payload_json,
