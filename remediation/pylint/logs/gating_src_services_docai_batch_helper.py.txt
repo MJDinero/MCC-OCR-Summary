@@ -1,0 +1,6 @@
+[7;33m************* Module docai_batch_helper[0m
+src/services/docai_batch_helper.py:116:0: R0913: [1;3;35mToo many arguments (6/5)[0m ([1;3;35mtoo-many-arguments[0m)
+
+------------------------------------------------------------------
+Your code has been rated at 9.93/10 (previous run: 9.93/10, +0.00)
+

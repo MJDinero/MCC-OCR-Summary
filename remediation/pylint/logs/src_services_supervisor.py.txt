@@ -1,0 +1,8 @@
+************* Module supervisor
+src/services/supervisor.py:94:4: R0913: Too many arguments (7/5) (too-many-arguments)
+src/services/supervisor.py:142:4: R0913: Too many arguments (6/5) (too-many-arguments)
+src/services/supervisor.py:331:4: R0913: Too many arguments (6/5) (too-many-arguments)
+
+------------------------------------------------------------------
+Your code has been rated at 9.87/10 (previous run: 9.87/10, +0.00)
+
