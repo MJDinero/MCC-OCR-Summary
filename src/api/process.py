@@ -254,10 +254,18 @@ async def process_drive(
         raise HTTPException(status_code=503, detail="Drive upload disabled")
 
     request_id = uuid.uuid4().hex
+    writer_backend = getattr(
+        request.app.state,
+        "writer_backend",
+        getattr(request.app.state, "pdf_writer_mode", "unknown"),
+    )
+    compose_mode = getattr(request.app.state, "summary_compose_mode", "unknown")
     return JSONResponse(
         {
             "report_file_id": drive_file_id,
             "supervisor_passed": bool(validation.get("supervisor_passed")),
             "request_id": request_id,
+            "writer_backend": writer_backend,
+            "compose_mode": compose_mode,
         }
     )
