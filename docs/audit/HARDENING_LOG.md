@@ -224,3 +224,11 @@
 - docai_decision:
 {"decision":"local_pypdf_split","pages_total":263,"retry_on_page_limit":false,"processor_id":"21c8becfabc49de6","splitter_processor_id":null,"location":"us","request_id":"1617c98380bf4878bb01074a5070076e"}
 - metrics: /metrics scraped internally via Prometheus sidecar; service remains private.
+
+
+### 2025-10-30T23:38:59Z — Large-PDF OCR unblock verification
+- revision: `mcc-ocr-summary-00334-s26`  commit: `dffdfaf2bde0`
+- run: `run-20251030-233444.json`
+- validator: {"ok": true, "sections_ok": true, "noise_found": false, "length": 22616}
+- pages: 6
+- note: docai_decision log captured in remediation/logs/docai_decision-20251030-233444.json; Prometheus sidecar scrapes /metrics (service private).
