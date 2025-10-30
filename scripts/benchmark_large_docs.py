@@ -3,28 +3,23 @@
 
 from __future__ import annotations
 
+import sys
 import argparse
 import asyncio
 import time
 from pathlib import Path
-import sys
 from dataclasses import dataclass
 from statistics import mean
-from typing import Any, AsyncIterator, Iterable, Sequence
+from typing import AsyncIterator, Sequence, TYPE_CHECKING
 
 # Ensure the repository root is on sys.path for script execution.
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from src.models.events import OCRChunkMessage
-from src.services.chunker import Chunk, Chunker
-from src.services.metrics import NullMetrics
-from src.services.summarization_service import (
-    SummarisationConfig,
-    SummarizationService,
-)
-from src.services.summary_store import InMemoryChunkSummaryStore
+if TYPE_CHECKING:
+    from src.models.events import OCRChunkMessage
+    from src.services.chunker import Chunk
 
 
 @dataclass(slots=True)
@@ -60,6 +55,15 @@ class EchoLLM:
 
 
 async def run_benchmark(pages: int, words_per_page: int) -> BenchmarkResult:
+    from src.models.events import OCRChunkMessage
+    from src.services.chunker import Chunker
+    from src.services.metrics import NullMetrics
+    from src.services.summarization_service import (
+        SummarisationConfig,
+        SummarizationService,
+    )
+    from src.services.summary_store import InMemoryChunkSummaryStore
+
     publisher = StubPublisher()
     store = InMemoryChunkSummaryStore()
     summarizer = SummarizationService(
@@ -86,9 +90,9 @@ async def run_benchmark(pages: int, words_per_page: int) -> BenchmarkResult:
         for page in pages_text:
             yield page
 
-    chunk_messages: list[OCRChunkMessage] = []
+    chunk_messages: list["OCRChunkMessage"] = []
     chunk_index = 0
-    chunk_list: list[Chunk] = []
+    chunk_list: list["Chunk"] = []
     async for chunk in ocr_chunker.chunk_async(_page_source()):  # type: ignore[arg-type]
         chunk_list.append(chunk)
 

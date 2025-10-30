@@ -160,7 +160,7 @@ def _extract_document_dict(result: Any) -> Dict[str, Any]:
 
 
 def _normalise(doc: Dict[str, Any]) -> Dict[str, Any]:
-    pages_out = []
+    pages_out: list[dict[str, Any]] = []
     pages = doc.get("pages") or []
     for idx, p in enumerate(pages, start=1):
         text = p.get("layout", {}).get("text", "") if isinstance(p, dict) else ""
@@ -263,7 +263,7 @@ def _call_docai_with_backoff(
             should_retry = _is_retryable_error(exc)
             if not should_retry or attempt >= MAX_CHUNK_RETRIES:
                 raise
-            sleep_for = min(backoff * (2 ** (attempt - 1)), 16.0) + random.uniform(0.1, 0.6)
+            sleep_for = min(backoff * (2 ** (attempt - 1)), 16.0) + random.uniform(0.1, 0.6)  # nosec B311 - jitter only
             _LOG.warning(
                 "docai_chunk_retry",
                 extra={
@@ -464,7 +464,7 @@ class OCRService:
                 if temp_path:
                     try:
                         temp_path.unlink(missing_ok=True)  # type: ignore[attr-defined]
-                    except Exception:  # pragma: no cover - cleanup best effort
+                    except Exception:  # pragma: no cover - cleanup best effort # nosec B110
                         pass
 
         should_split = (actual_pages or estimated_pages) > PAGES_BATCH_THRESHOLD
@@ -807,7 +807,7 @@ def _poll_operation(  # pylint: disable=too-many-arguments
             if attempt >= max_attempts:
                 raise OCRServiceError(f"{stage} operation timed out") from exc
             wait_base = min(delay, max_delay)
-            jitter = random.uniform(0.25 * wait_base, 0.75 * wait_base)
+            jitter = random.uniform(0.25 * wait_base, 0.75 * wait_base)  # nosec B311 - jitter only
             sleep_seconds = wait_base + jitter
             _LOG.info(
                 "docai_operation_retry",

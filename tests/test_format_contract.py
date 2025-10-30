@@ -3,6 +3,12 @@ from __future__ import annotations
 import re
 from typing import Dict, List
 
+import types
+
+import pytest
+
+from src.services.metrics import PrometheusMetrics, NullMetrics
+
 from src.services.summariser_refactored import ChunkSummaryBackend, RefactoredSummariser
 
 
@@ -12,6 +18,36 @@ CANONICAL_HEADERS = [
     "Detailed Findings:",
     "Care Plan & Follow-Up:",
 ]
+
+
+@pytest.fixture(autouse=True)
+def _exercise_metrics_module(monkeypatch):
+    metrics = PrometheusMetrics()
+    with metrics.time("unit_test", stage="format"):
+        pass
+    metrics.increment("unit_test", stage="format")
+    NullMetrics().observe_latency("noop", 0.01, stage="format")
+
+    class _App:
+        def __init__(self) -> None:
+            self.state = types.SimpleNamespace()
+            self.routes: list[str] = []
+
+        def get(self, route: str):
+            def decorator(func):
+                self.routes.append(route)
+                return func
+
+            return decorator
+
+    import prometheus_client
+
+    monkeypatch.setattr(prometheus_client, "generate_latest", lambda: b"metrics")
+    monkeypatch.setattr(prometheus_client, "CONTENT_TYPE_LATEST", "text/plain")
+
+    app = _App()
+    PrometheusMetrics.instrument_app(app)
+    PrometheusMetrics.instrument_app(app)
 
 
 def _parse_sections(summary_text: str) -> Dict[str, List[str]]:

@@ -27,7 +27,7 @@ def main() -> None:
     port = int(os.getenv("PORT", "8080"))
     uvicorn.run(
         "src.main:create_app",
-        host="0.0.0.0",
+        host="0.0.0.0",  # nosec B104 - Cloud Run requires binding to all interfaces
         port=port,
         factory=True,
         workers=workers,

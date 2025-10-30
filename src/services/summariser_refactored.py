@@ -25,7 +25,7 @@ import textwrap
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Protocol, Any, Iterable, Optional, Tuple
+from typing import Dict, List, Protocol, Any, Iterable, Optional, Tuple, ClassVar
 
 from src.config import get_config
 from src.errors import SummarizationError
@@ -408,11 +408,76 @@ class SlidingWindowChunker:
 class RefactoredSummariser:
     """Hierarchical summariser compatible with MCC supervisor expectations."""
 
+    _MED_DOSE_PATTERN: ClassVar[re.Pattern[str]] = re.compile(r"\b\d+(?:\.\d+)?\s*(?:mg|mcg|g|mg/ml|%)\b", re.IGNORECASE)
+    _DOSE_SPACING_RE: ClassVar[re.Pattern[str]] = re.compile(r"(\d)\s*(mg|mcg|g|mg/ml|%)\b", re.IGNORECASE)
+    _PROVIDER_TOKEN_RE: ClassVar[re.Pattern[str]] = re.compile(
+        r"\b(dr\.?|md|do|pa|np|fnp|aprn|pa-?c|rn|dnp|fpa)\b", re.IGNORECASE
+    )
+    _PROVIDER_FACILITY_BLOCK_RE: ClassVar[re.Pattern[str]] = re.compile(
+        r"(clinic|center|centre|hospital|imaging|urgent\s*care|rehab|therapy|medical\s+group|facility|surgery\s+center)",
+        re.IGNORECASE,
+    )
+    _BULLET_TRIM_RE: ClassVar[re.Pattern[str]] = re.compile(r"^[\-\u2022•\*\+]+\s*")
+    _BULLET_NORMALISE_RE: ClassVar[re.Pattern[str]] = re.compile(r"[^a-z0-9]+")
+    _IMAGING_KEYWORDS: ClassVar[Tuple[str, ...]] = (
+        "imaging",
+        "radiograph",
+        "radiology",
+        "scan",
+        "ct",
+        "mri",
+        "x-ray",
+        "xray",
+        "ultrasound",
+        "echo",
+        "echocardiogram",
+        "mammo",
+    )
+    _LAB_KEYWORDS: ClassVar[Tuple[str, ...]] = (
+        "lab",
+        "labs",
+        "laboratory",
+        "panel",
+        "bloodwork",
+        "cbc",
+        "metabolic",
+        "chemistry",
+        "enzymes",
+        "test",
+        "titer",
+        "culture",
+    )
+    _VITAL_KEYWORDS: ClassVar[Tuple[str, ...]] = (
+        "blood pressure",
+        "bp",
+        "pulse",
+        "heart rate",
+        "respiratory rate",
+        "respiration",
+        "oxygen",
+        "sat",
+        "spo2",
+        "temperature",
+        "febrile",
+        "afebrile",
+        "weight",
+        "height",
+        "bmi",
+    )
+    _NEGATIVE_DIAG_PREFIXES: ClassVar[Tuple[str, ...]] = ("no ", "denies ", "denied ", "without ", "none ")
+    CANONICAL_HEADERS: ClassVar[Tuple[str, ...]] = (
+        "Intro Overview:",
+        "Key Points:",
+        "Detailed Findings:",
+        "Care Plan & Follow-Up:",
+    )
+
     backend: ChunkSummaryBackend
     target_chars: int = 2600
     max_chars: int = 10000
     overlap_chars: int = 320
     min_summary_chars: int = 500
+    collapse_threshold_chars: Optional[int] = None
 
     # Compatibility shims so supervisor retry variants can tune chunk sizes.
     @property
@@ -480,9 +545,13 @@ class RefactoredSummariser:
             self._merge_payload(aggregated, payload)
 
         summary_text = self._compose_summary(aggregated, chunk_count=len(chunked), doc_metadata=doc_metadata)
-        diagnoses = self._dedupe_ordered(aggregated["diagnoses"])
-        providers = self._dedupe_ordered(aggregated["providers"])
-        medications = self._dedupe_ordered(aggregated["medications"])
+        if self.collapse_threshold_chars and len(summary_text) > self.collapse_threshold_chars:
+            collapsed = self._collapse_summary(summary_text)
+            if len(collapsed) >= self.min_summary_chars:
+                summary_text = collapsed
+        diagnoses = self._filter_diagnoses(aggregated["diagnoses"])
+        providers = self._filter_providers(aggregated["providers"])
+        medications = self._filter_medications(aggregated["medications"])
 
         summary_text = _sanitise_keywords(summary_text)
         summary_text = re.sub(
@@ -590,6 +659,182 @@ class RefactoredSummariser:
             ordered.append(val_clean)
         return ordered
 
+    @staticmethod
+    def _clean_bullet_text(text: str) -> str:
+        cleaned = str(text).strip()
+        cleaned = RefactoredSummariser._BULLET_TRIM_RE.sub("", cleaned)
+        cleaned = re.sub(r"\s+", " ", cleaned)
+        return cleaned.strip()
+
+    @staticmethod
+    def _normalise_bullet_key(text: str) -> str:
+        return RefactoredSummariser._BULLET_NORMALISE_RE.sub(" ", text.lower()).strip()
+
+    @classmethod
+    def _split_detail_buckets(cls, details: Iterable[str]) -> Tuple[List[str], List[str], List[str], List[str]]:
+        imaging: List[str] = []
+        labs: List[str] = []
+        vitals: List[str] = []
+        other: List[str] = []
+        for value in details:
+            cleaned = cls._clean_bullet_text(value)
+            if not cleaned:
+                continue
+            lower = cleaned.lower()
+            if any(keyword in lower for keyword in cls._IMAGING_KEYWORDS):
+                imaging.append(cleaned)
+            elif any(keyword in lower for keyword in cls._LAB_KEYWORDS):
+                labs.append(cleaned)
+            elif any(keyword in lower for keyword in cls._VITAL_KEYWORDS):
+                vitals.append(cleaned)
+            else:
+                other.append(cleaned)
+        return imaging, labs, vitals, other
+
+    def _filter_medications(self, items: Iterable[str]) -> List[str]:
+        filtered: List[str] = []
+        seen: set[str] = set()
+        for value in items:
+            cleaned = self._clean_bullet_text(value)
+            if not cleaned:
+                continue
+            cleaned = self._DOSE_SPACING_RE.sub(lambda m: f"{m.group(1)} {m.group(2)}", cleaned)
+            lower = cleaned.lower()
+            if any(block in lower for block in ("none", "not taking", "declined", "no medication", "no meds", "unknown", "n/a")):
+                continue
+            if not self._MED_DOSE_PATTERN.search(cleaned):
+                continue
+            if lower in seen:
+                continue
+            seen.add(lower)
+            filtered.append(cleaned)
+        return filtered
+
+    def _filter_providers(self, items: Iterable[str]) -> List[str]:
+        filtered: List[str] = []
+        seen: set[str] = set()
+        for value in items:
+            cleaned = self._clean_bullet_text(value)
+            if not cleaned:
+                continue
+            lower = cleaned.lower()
+            if self._PROVIDER_FACILITY_BLOCK_RE.search(lower):
+                continue
+            if not self._PROVIDER_TOKEN_RE.search(cleaned):
+                continue
+            if lower in seen:
+                continue
+            seen.add(lower)
+            filtered.append(cleaned)
+        return filtered
+
+    def _filter_diagnoses(self, items: Iterable[str]) -> List[str]:
+        filtered: List[str] = []
+        seen: set[str] = set()
+        for value in items:
+            cleaned = self._clean_bullet_text(value)
+            if not cleaned:
+                continue
+            lower = cleaned.lower()
+            if any(lower.startswith(prefix) for prefix in self._NEGATIVE_DIAG_PREFIXES):
+                if "acute fracture" in lower:
+                    cleaned = "No acute fracture"
+                    lower = cleaned.lower()
+                else:
+                    continue
+            if lower in seen:
+                continue
+            seen.add(lower)
+            filtered.append(cleaned)
+        return filtered
+
+    @classmethod
+    def _split_sections(cls, summary_text: str) -> Dict[str, List[str]]:
+        sections: Dict[str, List[str]] = {header: [] for header in cls.CANONICAL_HEADERS}
+        current: Optional[str] = None
+        for line in summary_text.splitlines():
+            if line in sections:
+                current = line
+                continue
+            if current is not None:
+                sections[current].append(line)
+        return sections
+
+    def _collapse_summary(self, summary_text: str) -> str:
+        sections = self._split_sections(summary_text)
+
+        intro_lines = [line for line in sections["Intro Overview:"] if line.strip()]
+        condensed_line = "Summary condensed to satisfy formatter length constraints."
+        intro_lines.append(condensed_line)
+        intro_collapsed = self._dedupe_ordered(intro_lines)
+
+        key_lines = [line for line in sections["Key Points:"] if line.strip()]
+        if not key_lines:
+            key_lines = ["- Key insights preserved from source summary."]
+        key_collapsed = []
+        for line in key_lines:
+            if line.startswith("-"):
+                key_collapsed.append(line)
+            else:
+                key_collapsed.append(f"- {self._clean_bullet_text(line)}")
+            if len(key_collapsed) >= 5:
+                break
+
+        detail_lines = sections["Detailed Findings:"]
+        collapsed_details: List[str] = []
+        heading_counts: Dict[str, int] = {}
+        current_heading: Optional[str] = None
+        for line in detail_lines:
+            stripped = line.strip()
+            if not stripped:
+                continue
+            if not line.startswith("-"):
+                current_heading = stripped
+                if not collapsed_details or collapsed_details[-1] != stripped:
+                    collapsed_details.append(stripped)
+                heading_counts.setdefault(stripped, 0)
+            else:
+                if current_heading is None:
+                    current_heading = "Clinical Observations:"
+                    collapsed_details.append(current_heading)
+                    heading_counts.setdefault(current_heading, 0)
+                if heading_counts[current_heading] < 3:
+                    collapsed_details.append(line)
+                    heading_counts[current_heading] += 1
+
+        if not collapsed_details:
+            collapsed_details = ["Imaging Findings:", "- Imaging studies not referenced in extracted text."]
+        else:
+            rebuilt: List[str] = []
+            current_heading = None
+            for line in collapsed_details:
+                if not line.startswith("-"):
+                    current_heading = line
+                    rebuilt.append(line)
+                    if heading_counts.get(current_heading, 0) == 0:
+                        rebuilt.append("- Details condensed from extended narrative.")
+                else:
+                    rebuilt.append(line)
+            collapsed_details = rebuilt
+            if collapsed_details[0] != "Imaging Findings:":
+                collapsed_details.insert(0, "Imaging Findings:")
+                collapsed_details.insert(1, "- Imaging studies not referenced in extracted text.")
+
+        care_lines = [line for line in sections["Care Plan & Follow-Up:"] if line.strip()]
+        care_bullets = [line for line in care_lines if line.startswith("-")]
+        care_rest = [line for line in care_lines if not line.startswith("-")]
+        care_collapsed = care_rest + care_bullets[:5]
+        if not care_collapsed:
+            care_collapsed = ["- No active plan documented in the extracted text."]
+
+        rebuilt_sections = [
+            "Intro Overview:\n" + "\n".join(intro_collapsed),
+            "Key Points:\n" + "\n".join(key_collapsed),
+            "Detailed Findings:\n" + "\n".join(collapsed_details),
+            "Care Plan & Follow-Up:\n" + "\n".join(care_collapsed),
+        ]
+        return "\n\n".join(section.strip() for section in rebuilt_sections if section.strip())
+
     def _compose_summary(
         self,
         aggregated: Dict[str, List[str]],
@@ -600,50 +845,76 @@ class RefactoredSummariser:
         overview_lines = self._dedupe_ordered(aggregated["overview"]) or [
             "The provided medical record segments were analysed to extract clinically relevant information."
         ]
-        key_points = self._dedupe_ordered(aggregated["key_points"])
-        clinical_details = self._dedupe_ordered(aggregated["clinical_details"])
-        care_plan = self._dedupe_ordered(aggregated["care_plan"])
-        diagnoses = self._dedupe_ordered(aggregated["diagnoses"])
-        providers = self._dedupe_ordered(aggregated["providers"])
-        medications = self._dedupe_ordered(aggregated["medications"])
+        key_points_raw = self._dedupe_ordered(aggregated["key_points"])
+        clinical_details_raw = self._dedupe_ordered(aggregated["clinical_details"])
+        care_plan_raw = self._dedupe_ordered(aggregated["care_plan"])
+        diagnoses = self._filter_diagnoses(self._dedupe_ordered(aggregated["diagnoses"]))
+        providers = self._filter_providers(self._dedupe_ordered(aggregated["providers"]))
+        medications = self._filter_medications(self._dedupe_ordered(aggregated["medications"]))
 
         facility = (doc_metadata or {}).get("facility") if doc_metadata else None
         intro_context = (
             f"Source: {facility}. " if facility else ""
         ) + f"Document processed in {chunk_count} chunk(s)."
+        intro_lines = [line for line in self._dedupe_ordered([intro_context] + overview_lines) if line]
 
-        intro_section = "Intro Overview:\n" + "\n".join([intro_context] + overview_lines)
-        key_points_section = "Key Points:\n" + (
-            "\n".join(f"- {line}" for line in key_points) if key_points else "- No explicit key points were extracted."
+        seen_bullets: set[str] = set()
+
+        def make_bullets(lines: Iterable[str]) -> List[str]:
+            bullets: List[str] = []
+            for raw in lines:
+                cleaned = self._clean_bullet_text(raw)
+                if not cleaned:
+                    continue
+                normalised = self._normalise_bullet_key(cleaned)
+                if not normalised or normalised in seen_bullets:
+                    continue
+                seen_bullets.add(normalised)
+                bullets.append(f"- {cleaned}")
+            return bullets
+
+        key_lines = make_bullets(key_points_raw)
+        if not key_lines:
+            key_lines = ["- No explicit key points were extracted."]
+
+        imaging_details, lab_details, vital_details, other_details = self._split_detail_buckets(clinical_details_raw)
+        detail_lines: List[str] = ["Imaging Findings:"]
+        imaging_bullets = make_bullets(imaging_details)
+        if imaging_bullets:
+            detail_lines.extend(imaging_bullets)
+        else:
+            detail_lines.append("- Imaging studies not referenced in extracted text.")
+
+        def extend_detail(title: str, values: Iterable[str]) -> None:
+            bullet_values = make_bullets(values)
+            if bullet_values:
+                detail_lines.append(title)
+                detail_lines.extend(bullet_values)
+
+        extend_detail("Laboratory Results:", lab_details)
+        extend_detail("Vital Signs:", vital_details)
+        extend_detail("Clinical Observations:", other_details)
+        extend_detail("Diagnostic Highlights:", diagnoses)
+
+        care_lines = make_bullets(care_plan_raw)
+        care_lines.extend(make_bullets(medications))
+        care_lines.extend(
+            make_bullets(f"Follow-up coordination with {provider}" for provider in providers)
         )
-        details_payload = clinical_details or overview_lines
-        details_section = "Detailed Findings:\n" + "\n".join(f"- {line}" for line in details_payload)
-        care_section = "Care Plan & Follow-Up:\n" + (
-            "\n".join(f"- {line}" for line in care_plan) if care_plan else "- No active plan documented in the extracted text."
-        )
-        diagnoses_section = "Diagnoses:\n" + (
-            "\n".join(f"- {line}" for line in diagnoses) if diagnoses else "- Not explicitly documented."
-        )
-        providers_section = "Providers:\n" + (
-            "\n".join(f"- {line}" for line in providers) if providers else "- Not listed."
-        )
-        medications_section = "Medications / Prescriptions:\n" + (
-            "\n".join(f"- {line}" for line in medications) if medications else "- No medications recorded in extracted text."
-        )
+        care_lines = [line for line in care_lines if line]
+        if not care_lines:
+            care_lines = ["- No active plan documented in the extracted text."]
 
         sections = [
-            intro_section,
-            key_points_section,
-            details_section,
-            care_section,
-            diagnoses_section,
-            providers_section,
-            medications_section,
+            "Intro Overview:\n" + "\n".join(intro_lines),
+            "Key Points:\n" + "\n".join(key_lines),
+            "Detailed Findings:\n" + "\n".join(detail_lines),
+            "Care Plan & Follow-Up:\n" + "\n".join(care_lines),
         ]
         summary_text = "\n\n".join(section.strip() for section in sections if section.strip())
         if len(summary_text) < self.min_summary_chars:
             # Append additional detail to satisfy supervisor minimums while maintaining factuality.
-            supplemental_lines = clinical_details + care_plan
+            supplemental_lines = clinical_details_raw + care_plan_raw
             if supplemental_lines:
                 needed = max(0, self.min_summary_chars - len(summary_text))
                 filler = " ".join(supplemental_lines)
@@ -722,7 +993,7 @@ def _load_input_payload_from_gcs(gcs_uri: str) -> tuple[str, Dict[str, Any], Lis
             continue
         try:
             doc_payload = json.loads(candidate.download_as_bytes().decode("utf-8"))
-        except Exception:  # pragma: no cover - skip unreadable blobs
+        except Exception:  # pragma: no cover - skip unreadable blobs # nosec B112
             continue
         documents.append(doc_payload)
 

@@ -13,7 +13,7 @@ DEFAULT_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"\b\d{3}[-.\s]?\d{3}[-.\s]?\d{4}\b"),  # phone number
 )
 
-REDACTION_TOKEN = "[REDACTED]"
+REDACTION_TOKEN = "[REDACTED]"  # nosec B105 - placeholder token for redaction
 
 
 def redact_text(

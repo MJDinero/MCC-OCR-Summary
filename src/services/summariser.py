@@ -143,7 +143,7 @@ class OpenAIBackend:  # pragma: no cover - network heavy, exercised in integrati
                 return out_snake
             except (API_CONN_ERR, API_TIMEOUT_ERR) as exc:  # type: ignore
                 last_exc = exc  # retriable
-                wait = min(2 ** (attempt - 1) + random.random(), 30.0)
+                wait = min(2 ** (attempt - 1) + random.random(), 30.0)  # nosec B311 - retry backoff jitter
                 _LOG.warning(
                     "summariser_retry_attempt",
                     extra={
@@ -159,7 +159,7 @@ class OpenAIBackend:  # pragma: no cover - network heavy, exercised in integrati
                 continue
             except (RATE_LIMIT_ERR,) as exc:  # type: ignore
                 last_exc = exc
-                wait = min(base_delay * attempt + random.random(), 20.0)
+                wait = min(base_delay * attempt + random.random(), 20.0)  # nosec B311 - retry backoff jitter
                 _LOG.warning(
                     "summariser_retry_attempt",
                     extra={
@@ -202,7 +202,7 @@ class OpenAIBackend:  # pragma: no cover - network heavy, exercised in integrati
                     },
                 )
                 if retriable and attempt < max_attempts:
-                    wait = min(2 ** (attempt - 1) + random.random(), 30.0)
+                    wait = min(2 ** (attempt - 1) + random.random(), 30.0)  # nosec B311 - retry backoff jitter
                     time.sleep(wait)
                     last_exc = exc
                     continue
@@ -522,7 +522,7 @@ class Summariser:
                     return val.strip()
                 try:
                     return str(val).strip()
-                except Exception:
+                except Exception:  # nosec B112 - tolerate malformed data during merge
                     return ''
 
             for sk, heading in mapping.items():
@@ -552,8 +552,8 @@ class Summariser:
                     if not isinstance(v, str):
                         v = str(v)
                     v_norm = v.strip()
-                except Exception:
-                    continue
+                except Exception:  # nosec B112 - tolerate malformed data during merge
+                    v_norm = ""
                 if v_norm and v_norm not in seen:
                     seen.add(v_norm)
                     ordered.append(v_norm)

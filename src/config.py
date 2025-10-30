@@ -51,7 +51,9 @@ class AppConfig(BaseSettings):
     doc_ai_legacy_layout: bool = Field(False, validation_alias='DOC_AI_LEGACY_LAYOUT')
     doc_ai_enable_image_quality_scores: bool = Field(True, validation_alias='DOC_AI_ENABLE_IMAGE_QUALITY_SCORES')
     openai_api_key: str | None = Field(None, validation_alias='OPENAI_API_KEY')
-    openai_model: str | None = Field(None, validation_alias='OPENAI_MODEL')
+    openai_model: str = Field('gpt-4.1-mini', validation_alias='OPENAI_MODEL')
+    openai_use_responses_raw: str | bool | None = Field(False, validation_alias='OPENAI_USE_RESPONSES')
+    openai_json_mode_raw: str | bool | None = Field(True, validation_alias='OPENAI_JSON_MODE')
     internal_event_token: str = Field('', validation_alias='INTERNAL_EVENT_TOKEN')
     use_refactored_summariser_raw: str | bool | None = Field(False, validation_alias='USE_REFACTORED_SUMMARISER')
     drive_input_folder_id: str = Field('', validation_alias='DRIVE_INPUT_FOLDER_ID')
@@ -126,6 +128,20 @@ class AppConfig(BaseSettings):
             resolved = resolve_secret(value, project_id=project_hint)
             if resolved is not None:
                 setattr(self, field_name, resolved)
+
+    @property
+    def openai_use_responses(self) -> bool:
+        raw = self.openai_use_responses_raw
+        if isinstance(raw, bool):
+            return raw
+        return parse_bool(str(raw))
+
+    @property
+    def openai_json_mode(self) -> bool:
+        raw = self.openai_json_mode_raw
+        if isinstance(raw, bool):
+            return raw
+        return parse_bool(str(raw))
 
     @property
     def use_refactored_summariser(self) -> bool:

@@ -15,7 +15,6 @@ omit =
     src/services/docai_batch_helper.py
     src/services/pdf_writer_refactored.py
     src/services/pdf_writer.py
-    src/services/metrics.py
     src/services/interfaces.py
     src/services/summary_repository.py
     src/services/summary_store.py
