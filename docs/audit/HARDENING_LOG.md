@@ -172,3 +172,11 @@
 - validator.json:
 {"ok":false,"sections_ok":false,"noise_found":false,"length":0}
 - metrics: GMP sidecar scraping internally; service remains private.
+
+### 2025-10-30T05:49:30Z — Final Verification (mcc-ocr-summary)
+- revision: `mcc-ocr-summary-00319-f7r`  commit: `8132aa36ce20`
+- run.json:
+{"report_file_id":"1R5e13EB0ZYakHSRM97cP0gmKLEEnxvqW","supervisor_passed":true,"request_id":"b633e155e96e45b18666a36a2270c869"}
+- validator.json:
+{"ok": true, "sections_ok": true, "noise_found": false, "length": 4637}
+- metrics: /metrics scraped internally via Prometheus sidecar; Cloud Run service remains private.

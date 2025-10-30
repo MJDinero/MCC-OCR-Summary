@@ -114,7 +114,26 @@ class MinimalPDFBackend:
 def _simple_pdf(text: str) -> bytes:
     # This is a very naive PDF writer for testing; ensures %PDF header
     # Reference: simplest possible PDF with one page & one text object.
-    escaped = text.replace("(", "\\(").replace(")", "\\)")
+    lines = text.splitlines() or [text]
+    escaped_lines = []
+    for line in lines:
+        escaped = (
+            line.replace("\\", "\\\\")
+            .replace("(", "\\(")
+            .replace(")", "\\)")
+        )
+        escaped_lines.append(escaped)
+    content_ops = [
+        "BT",
+        "/F1 12 Tf",
+        "1 0 0 1 72 720 Tm",
+        "14 TL",
+    ]
+    for escaped in escaped_lines:
+        content_ops.append(f"({escaped}) Tj")
+        content_ops.append("T*")
+    content_ops.append("ET")
+    stream = "\n".join(content_ops)
     objects = []
     # 1: Catalog
     objects.append("1 0 obj<< /Type /Catalog /Pages 2 0 R >>endobj")
@@ -125,7 +144,6 @@ def _simple_pdf(text: str) -> bytes:
         "3 0 obj<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources<< /Font<< /F1 5 0 R >> >> >>endobj"
     )
     # 4: Content
-    stream = f"BT /F1 12 Tf 72 720 Td ({escaped}) Tj ET"
     objects.append(
         f"4 0 obj<< /Length {len(stream)} >>stream\n{stream}\nendstream endobj"
     )
@@ -201,10 +219,12 @@ class PDFWriter:
             ]
             any_lists = any([diag_list, prov_list, med_list])
             if any_lists:
-                divider = (
-                    "\n" + ("=" * 38) + "\nStructured Indices\n" + ("=" * 38) + "\n"
+                sections_seq.append(
+                    (
+                        "Summary Lists",
+                        "Diagnoses, providers, and medications referenced in the document are enumerated below.",
+                    )
                 )
-                sections_seq.append(("—", divider.strip()))
 
                 def _fmt_block(title: str, items: list[str]) -> str:
                     if not items:

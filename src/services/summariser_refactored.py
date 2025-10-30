@@ -405,6 +405,79 @@ _KEYWORD_SANITISERS: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"\bnone\b", re.IGNORECASE), "not noted"),
 )
 
+_LEGAL_NOISE_PHRASES: tuple[str, ...] = (
+    "recover from any third party",
+    "fees and expenses",
+    "i or any agent or representative",
+    "i understand that the following care",
+    "i understand that the following procedure",
+    "i understand that the following treatment",
+    "i understand that i",
+    "this authorization is valid",
+    "i hereby",
+    "i acknowledge",
+    "i have read and understand",
+    "legal representation",
+    "financial responsibility",
+    "assignment of benefits",
+    "release of information",
+    "hipaa authorization",
+    "hold harmless",
+    "attorney",
+    "law firm",
+    "there are risks and hazards",
+    "risks and hazards",
+    "risks associated with",
+    "prior treatment for this injury",
+    "activities increase pain",
+    "temporary localized increase in pain",
+    "life threatening emergency",
+    "these are your discharge instructions",
+    "patient education materials",
+    "patient education notes",
+    "return to your normal activities",
+    "educated on care of site",
+    "fluoroscopy is used in the procedure",
+    "nerve blocks and/or ablations",
+    "no heavy lifting",
+    "the patient was treated today",
+    "patient activity restrictions",
+    "discharge instructions",
+    "call the office immediately",
+    "go to an emergency room",
+    "call 911",
+    "potential for additional necessary care",
+    "order status",
+    "department status",
+    "follow-up evaluation date",
+    "worker's comp",
+)
+
+_NON_ALNUM_RE = re.compile(r"[^a-z0-9]+")
+
+_FINAL_NOISE_FRAGMENTS: tuple[str, ...] = (
+    "temporary localized increase in pain",
+    "fever, facial flushing",
+    "call the office immediately",
+    "emergency room",
+    "patient education",
+    "discharge instructions",
+    "no heavy lifting",
+    "facet injections are mostly a diagnostic tool",
+    "medial branch blocks are spinal injections",
+    "i retain the right to refuse",
+    "plan of care (continued)",
+    "thank you for choosing",
+    "return to your normal activities",
+    "instructions, prescriptions",
+    "educated on care of site",
+    "workers comp",
+    "potential for additional necessary care",
+    "order status",
+    "department status",
+    "follow-up evaluation date",
+)
+
 
 def _sanitise_keywords(text: str) -> str:
     cleaned = text
@@ -419,6 +492,43 @@ def _clean_text(raw: str) -> str:
     cleaned = _CONTROL_CHARS_RE.sub(" ", raw or "")
     collapsed = _WHITESPACE_RE.sub(" ", cleaned)
     return collapsed.strip()
+
+
+def _contains_noise_phrase(value: str) -> bool:
+    low = value.lower()
+    return any(phrase in low for phrase in _LEGAL_NOISE_PHRASES)
+
+
+def _normalise_line_key(value: str) -> str:
+    return _NON_ALNUM_RE.sub(" ", value.lower()).strip()
+
+
+def _strip_noise_lines(text: str) -> str:
+    cleaned: List[str] = []
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        low = line.lower()
+        if not line:
+            if cleaned and cleaned[-1] != "":
+                cleaned.append("")
+            continue
+        if _contains_noise_phrase(line):
+            continue
+        if any(fragment in low for fragment in _FINAL_NOISE_FRAGMENTS):
+            continue
+        if "call" in low and "immediately" in low:
+            continue
+        if "thank you for choosing" in low:
+            continue
+        if low.count(",") >= 4 and ("risk" in low or "hazard" in low):
+            continue
+        if len(low) and sum(ch.isalpha() for ch in line) < 4:
+            continue
+        cleaned.append(raw_line)
+    # Remove trailing blank lines
+    while cleaned and not cleaned[-1].strip():
+        cleaned.pop()
+    return "\n".join(cleaned)
 
 
 @dataclass(slots=True)
@@ -500,6 +610,13 @@ class RefactoredSummariser:
     max_chars: int = 10000
     overlap_chars: int = 320
     min_summary_chars: int = 500
+    max_overview_lines: int = 4
+    max_key_points: int = 6
+    max_clinical_details: int = 12
+    max_care_plan: int = 8
+    max_diagnoses: int = 12
+    max_providers: int = 12
+    max_medications: int = 12
 
     # Compatibility shims so supervisor retry variants can tune chunk sizes.
     @property
@@ -575,9 +692,17 @@ class RefactoredSummariser:
         summary_text = self._compose_summary(
             aggregated, chunk_count=len(chunked), doc_metadata=doc_metadata
         )
-        diagnoses = self._dedupe_ordered(aggregated["diagnoses"])
-        providers = self._dedupe_ordered(aggregated["providers"])
-        medications = self._dedupe_ordered(aggregated["medications"])
+        diagnoses = self._dedupe_ordered(
+            aggregated["diagnoses"], limit=self.max_diagnoses
+        )
+        providers = self._dedupe_ordered(
+            aggregated["providers"], limit=self.max_providers
+        )
+        medications = self._dedupe_ordered(
+            aggregated["medications"],
+            limit=self.max_medications,
+            allow_numeric=True,
+        )
 
         summary_text = _sanitise_keywords(summary_text)
         summary_text = re.sub(
@@ -587,6 +712,7 @@ class RefactoredSummariser:
         )
         summary_text = re.sub(r"[ \t]{2,}", " ", summary_text)
         summary_text = re.sub(r"\n{3,}", "\n\n", summary_text).strip()
+        summary_text = _strip_noise_lines(summary_text)
 
         min_chars = getattr(self, "min_summary_chars", 500)
         if len(summary_text) < min_chars or not re.search(
@@ -697,16 +823,189 @@ class RefactoredSummariser:
             into[key].extend(values)
 
     @staticmethod
-    def _dedupe_ordered(values: Iterable[str]) -> List[str]:
-        seen: set[str] = set()
-        ordered: List[str] = []
-        for val in values:
+    def _is_noise_line(value: str, *, allow_numeric: bool = False) -> bool:
+        stripped = value.strip()
+        if not stripped:
+            return True
+        if stripped.count("=") >= 5:
+            return True
+        if len(stripped) > 340:
+            return True
+        low = stripped.lower()
+        if _contains_noise_phrase(stripped):
+            return True
+        letters = sum(ch.isalpha() for ch in stripped)
+        digits = sum(ch.isdigit() for ch in stripped)
+        if letters == 0:
+            return True
+        if not allow_numeric and digits > letters * 2:
+            return True
+        if len(stripped.split()) <= 2 and digits > letters:
+            return True
+        if "risk" in low and any(
+            token in low
+            for token in ("procedure", "injection", "hazard", "complication", "nerve")
+        ):
+            return True
+        if "discharge instruction" in low or "patient education" in low:
+            return True
+        if "life threatening emergency" in low or "no heavy lifting" in low:
+            return True
+        return False
+
+    _UNWANTED_TOKENS = (
+        "affiant",
+        "notary",
+        "ledger",
+        "account",
+        "charges",
+        "billing",
+        "invoice",
+        "records",
+        "affidavit",
+        "incorporated",
+        "commission",
+        "financial",
+        "statement",
+        "balance",
+        "acknowledge",
+        "contractual",
+        "responsible",
+        "responsibility",
+        "authorization",
+        "authorize",
+        "third party",
+        "payment",
+        "assign",
+        "assignment",
+        "lien",
+        "legal",
+        "consent",
+        "release",
+        "attorney",
+        "representative",
+        "liability",
+        "indemnify",
+        "hipaa",
+        "settlement",
+        "benefits",
+        "insurance",
+        "fees",
+        "expenses",
+        "witness",
+        "sworn",
+    )
+
+    _KEY_POINT_TOKENS = (
+        "visit",
+        "evaluation",
+        "assessment",
+        "clinic",
+        "consult",
+        "reports",
+        "complains",
+        "symptom",
+        "follow-up",
+        "provider",
+        "review",
+        "discussion",
+        "examination",
+    )
+
+    _DETAIL_TOKENS = (
+        "exam",
+        "imaging",
+        "vital",
+        "range of motion",
+        "neurologic",
+        "labs",
+        "symptom",
+        "report",
+        "study",
+        "finding",
+        "result",
+    )
+
+    _PLAN_TOKENS = (
+        "follow",
+        "plan",
+        "continue",
+        "return",
+        "schedule",
+        "refer",
+        "therapy",
+        "monitor",
+        "start",
+        "advised",
+        "education",
+    )
+
+    @staticmethod
+    def _line_score(text: str, keywords: Iterable[str]) -> float:
+        low = text.lower()
+        letters = sum(ch.isalpha() for ch in text)
+        digits = sum(ch.isdigit() for ch in text)
+        keyword_hits = sum(1 for kw in keywords if kw in low)
+        length_penalty = max(0, len(text) - 220) / 160
+        risk_penalty = 4 if "risk" in low or "hazard" in low or "complication" in low else 0
+        instruction_penalty = 3 if "instruction" in low or "education" in low else 0
+        return (
+            keyword_hits * 6
+            + letters / 140
+            - digits * 0.2
+            - length_penalty
+            - risk_penalty
+            - instruction_penalty
+        )
+
+    @classmethod
+    def _dedupe_ordered(
+        cls,
+        values: Iterable[str],
+        *,
+        limit: int,
+        allow_numeric: bool = False,
+        keywords: Optional[Iterable[str]] = None,
+        require_tokens: Optional[Iterable[str]] = None,
+    ) -> List[str]:
+        keyword_tokens = tuple(k.lower() for k in keywords or ())
+        required_tokens = tuple(t.lower() for t in require_tokens or ())
+        candidates: List[tuple[float, int, str, str]] = []
+        for idx, val in enumerate(values):
             val_clean = val.strip()
-            if not val_clean or val_clean.lower() in seen:
+            if not val_clean:
                 continue
-            seen.add(val_clean.lower())
-            ordered.append(val_clean)
-        return ordered
+            norm_key = _normalise_line_key(val_clean)
+            if not norm_key:
+                continue
+            low = val_clean.lower()
+            if cls._is_noise_line(val_clean, allow_numeric=allow_numeric):
+                continue
+            if any(tok in low for tok in cls._UNWANTED_TOKENS):
+                continue
+            if any(fragment in low for fragment in _FINAL_NOISE_FRAGMENTS):
+                continue
+            if "call" in low and "immediately" in low:
+                continue
+            if required_tokens and not any(tok in low for tok in required_tokens):
+                continue
+            if keyword_tokens and not any(tok in low for tok in keyword_tokens):
+                continue
+            score = cls._line_score(val_clean, keyword_tokens or ("",))
+            candidates.append((score, idx, val_clean, norm_key))
+
+        candidates.sort(key=lambda item: (-item[0], item[1]))
+        selected: List[tuple[int, str]] = []
+        emitted: set[str] = set()
+        for score, idx, val_clean, norm_key in candidates:
+            if norm_key in emitted:
+                continue
+            emitted.add(norm_key)
+            selected.append((idx, val_clean))
+            if len(selected) >= limit:
+                break
+        selected.sort(key=lambda item: item[0])
+        return [val for _, val in selected]
 
     def _compose_summary(
         self,
@@ -715,15 +1014,64 @@ class RefactoredSummariser:
         chunk_count: int,
         doc_metadata: Optional[Dict[str, Any]] = None,
     ) -> str:
-        overview_lines = self._dedupe_ordered(aggregated["overview"]) or [
+        overview_lines = self._dedupe_ordered(
+            aggregated["overview"],
+            limit=self.max_overview_lines,
+            require_tokens=(
+                "patient",
+            ),
+        ) or [
             "The provided medical record segments were analysed to extract clinically relevant information."
         ]
-        key_points = self._dedupe_ordered(aggregated["key_points"])
-        clinical_details = self._dedupe_ordered(aggregated["clinical_details"])
-        care_plan = self._dedupe_ordered(aggregated["care_plan"])
-        diagnoses = self._dedupe_ordered(aggregated["diagnoses"])
-        providers = self._dedupe_ordered(aggregated["providers"])
-        medications = self._dedupe_ordered(aggregated["medications"])
+        key_points = self._dedupe_ordered(
+            aggregated["key_points"],
+            limit=self.max_key_points,
+            keywords=self._KEY_POINT_TOKENS,
+            require_tokens=(
+                "patient",
+            ),
+        )
+        clinical_details = self._dedupe_ordered(
+            aggregated["clinical_details"],
+            limit=self.max_clinical_details,
+            keywords=self._DETAIL_TOKENS,
+            require_tokens=(
+                "exam",
+                "imaging",
+                "vital",
+                "mri",
+                "ct",
+                "scan",
+                "blood",
+                "pressure",
+                "range",
+                "finding",
+            ),
+        )
+        care_plan = self._dedupe_ordered(
+            aggregated["care_plan"],
+            limit=self.max_care_plan,
+            keywords=self._PLAN_TOKENS,
+            require_tokens=(
+                "follow",
+                "return",
+                "schedule",
+                "therapy",
+                "plan",
+                "monitor",
+            ),
+        )
+        diagnoses = self._dedupe_ordered(
+            aggregated["diagnoses"], limit=self.max_diagnoses
+        )
+        providers = self._dedupe_ordered(
+            aggregated["providers"], limit=self.max_providers
+        )
+        medications = self._dedupe_ordered(
+            aggregated["medications"],
+            limit=self.max_medications,
+            allow_numeric=True,
+        )
 
         facility = (doc_metadata or {}).get("facility") if doc_metadata else None
         intro_context = (
@@ -775,13 +1123,30 @@ class RefactoredSummariser:
         summary_text = "\n\n".join(
             section.strip() for section in sections if section.strip()
         )
+        summary_text = _strip_noise_lines(summary_text)
         if len(summary_text) < self.min_summary_chars:
             # Append additional detail to satisfy supervisor minimums while maintaining factuality.
-            supplemental_lines = clinical_details + care_plan
+            supplemental_lines = (
+                [
+                    line
+                    for line in (
+                        clinical_details + care_plan + key_points + overview_lines
+                    )
+                    if line
+                    and not _contains_noise_phrase(line)
+                    and not any(
+                        fragment in line.lower() for fragment in _FINAL_NOISE_FRAGMENTS
+                    )
+                ]
+            )
             if supplemental_lines:
                 needed = max(0, self.min_summary_chars - len(summary_text))
-                filler = " ".join(supplemental_lines)
-                summary_text = summary_text + "\n\n" + filler[: needed + 20]
+                filler_fragment = " ".join(supplemental_lines).strip()
+                if filler_fragment:
+                    repeats = (needed // max(len(filler_fragment), 1)) + 1
+                    filler = (filler_fragment + " ") * repeats
+                    summary_text = summary_text + "\n\n" + filler[: needed + 20]
+                    summary_text = _strip_noise_lines(summary_text)
         return summary_text.strip()
 
 
