@@ -567,7 +567,9 @@ def _strip_noise_lines(lines: Iterable[str]) -> list[str]:
 
 
 def _limit_sentences(text: str, max_sentences: int) -> str:
-    sentences = [segment.strip() for segment in _SENTENCE_SPLIT_RE.split(text) if segment.strip()]
+    sentences = [
+        segment.strip() for segment in _SENTENCE_SPLIT_RE.split(text) if segment.strip()
+    ]
     if not sentences:
         return ""
     limited = " ".join(sentences[:max_sentences]).strip()
@@ -810,7 +812,7 @@ def _jaccard_similarity(tokens_a: set[str], tokens_b: set[str]) -> float:
 
 
 def _dedupe_across_sections(
-    sections: List[tuple[str, List[str], bool, bool]]
+    sections: List[tuple[str, List[str], bool, bool]],
 ) -> List[tuple[str, List[str], bool, bool]]:
     seen: List[set[str]] = []
     result: List[tuple[str, List[str], bool, bool]] = []
@@ -991,8 +993,10 @@ class RefactoredSummariser:
             )
             self._merge_payload(aggregated, payload)
 
-        summary_text, diagnoses_list, providers_list, medications_list = self._compose_summary(
-            aggregated, chunk_count=len(chunked), doc_metadata=doc_metadata
+        summary_text, diagnoses_list, providers_list, medications_list = (
+            self._compose_summary(
+                aggregated, chunk_count=len(chunked), doc_metadata=doc_metadata
+            )
         )
 
         summary_text = _sanitise_keywords(summary_text)
@@ -1238,7 +1242,9 @@ class RefactoredSummariser:
         digits = sum(ch.isdigit() for ch in text)
         keyword_hits = sum(1 for kw in keywords if kw in low)
         length_penalty = max(0, len(text) - 220) / 160
-        risk_penalty = 4 if "risk" in low or "hazard" in low or "complication" in low else 0
+        risk_penalty = (
+            4 if "risk" in low or "hazard" in low or "complication" in low else 0
+        )
         instruction_penalty = 3 if "instruction" in low or "education" in low else 0
         return (
             keyword_hits * 6
@@ -1431,12 +1437,7 @@ class RefactoredSummariser:
         if len(summary_text) < self.min_summary_chars:
             supplemental_lines = [
                 line
-                for line in (
-                    detail_lines
-                    + care_lines
-                    + key_point_lines
-                    + intro_lines
-                )
+                for line in (detail_lines + care_lines + key_point_lines + intro_lines)
                 if line
                 and not _contains_noise_phrase(line)
                 and not _matches_noise_fragment(line)
