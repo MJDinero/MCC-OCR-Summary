@@ -4,7 +4,9 @@ These errors provide clear, typed failure modes across the microservice so
 FastAPI exception handlers can map them to appropriate HTTP status codes and
 logs can be structured consistently.
 """
+
 from __future__ import annotations
+
 
 class ValidationError(Exception):
     """Raised when user supplied input (file upload, parameters) is invalid."""

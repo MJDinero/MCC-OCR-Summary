@@ -18,6 +18,7 @@ High-level responsibilities implemented here:
 * Helper functions to create state stores and workflow launchers from the
   runtime configuration/environment.
 """
+
 from __future__ import annotations
 
 import base64
@@ -140,14 +141,11 @@ class DuplicateJobError(RuntimeError):
 class PipelineStateStore(Protocol):
     """Abstract persistence interface for pipeline job state."""
 
-    def create_job(self, payload: PipelineJobCreate) -> PipelineJob:
-        ...
+    def create_job(self, payload: PipelineJobCreate) -> PipelineJob: ...
 
-    def get_job(self, job_id: str) -> PipelineJob | None:
-        ...
+    def get_job(self, job_id: str) -> PipelineJob | None: ...
 
-    def get_by_dedupe(self, dedupe_key: str) -> PipelineJob | None:
-        ...
+    def get_by_dedupe(self, dedupe_key: str) -> PipelineJob | None: ...
 
     def mark_status(
         self,
@@ -158,14 +156,11 @@ class PipelineStateStore(Protocol):
         message: str | None = None,
         extra: Dict[str, Any] | None = None,
         updates: Dict[str, Any] | None = None,
-    ) -> PipelineJob:
-        ...
+    ) -> PipelineJob: ...
 
-    def record_retry(self, job_id: str, stage: str) -> PipelineJob:
-        ...
+    def record_retry(self, job_id: str, stage: str) -> PipelineJob: ...
 
-    def update_fields(self, job_id: str, **fields: Any) -> PipelineJob:
-        ...
+    def update_fields(self, job_id: str, **fields: Any) -> PipelineJob: ...
 
 
 def _now_ts() -> float:
@@ -199,12 +194,19 @@ def _normalise_hash_component(value: str | None, seed: str) -> str:
     return hashlib.sha256(seed.encode("utf-8")).hexdigest()[:32]
 
 
-def build_dedupe_key(bucket: str, object_name: str, generation: str | None, object_hash: str | None = None) -> str:
+def build_dedupe_key(
+    bucket: str,
+    object_name: str,
+    generation: str | None,
+    object_hash: str | None = None,
+) -> str:
     safe_generation = generation or "nogeneration"
     seed = f"{bucket}/{object_name}@{safe_generation}"
     if object_hash:
         cleaned = "".join(ch for ch in object_hash.lower() if ch.isalnum())
-        hash_component = cleaned[:32] if cleaned else _normalise_hash_component(None, seed)
+        hash_component = (
+            cleaned[:32] if cleaned else _normalise_hash_component(None, seed)
+        )
     else:
         hash_component = _normalise_hash_component(None, seed)
     return f"{seed}#{hash_component}"
@@ -227,7 +229,9 @@ class InMemoryStateStore(PipelineStateStore):
             safe_generation = payload.generation or "nogeneration"
             seed = f"{payload.bucket}/{payload.object_name}@{safe_generation}"
             object_hash = _normalise_hash_component(payload.md5_hash, seed)
-            dedupe_key = build_dedupe_key(payload.bucket, payload.object_name, payload.generation, object_hash)
+            dedupe_key = build_dedupe_key(
+                payload.bucket, payload.object_name, payload.generation, object_hash
+            )
             if dedupe_key in self._by_dedupe:
                 existing = self._jobs[self._by_dedupe[dedupe_key]]
                 raise DuplicateJobError(existing)
@@ -276,7 +280,9 @@ class InMemoryStateStore(PipelineStateStore):
                 bucket_obj, _, generation = dedupe_key.partition("@")
                 bucket, _, object_name = bucket_obj.partition("/")
                 if bucket and object_name:
-                    fallback_key = build_dedupe_key(bucket, object_name, generation or None, None)
+                    fallback_key = build_dedupe_key(
+                        bucket, object_name, generation or None, None
+                    )
                     job_id = self._by_dedupe.get(fallback_key)
             if not job_id:
                 return None
@@ -321,7 +327,9 @@ class InMemoryStateStore(PipelineStateStore):
                 log_extra["status_message"] = message
             if extra:
                 # avoid mutating caller supplied dict
-                log_extra.update({k: v for k, v in extra.items() if k not in {"message", "asctime"}})
+                log_extra.update(
+                    {k: v for k, v in extra.items() if k not in {"message", "asctime"}}
+                )
             LOG.info("pipeline_status_transition", extra=log_extra)
             return _clone_job(job)
 
@@ -333,7 +341,12 @@ class InMemoryStateStore(PipelineStateStore):
             job.updated_at = _now_ts()
             LOG.warning(
                 "pipeline_stage_retry",
-                extra={"job_id": job.job_id, "stage": stage, "attempt": retries, "trace_id": job.trace_id},
+                extra={
+                    "job_id": job.job_id,
+                    "stage": stage,
+                    "attempt": retries,
+                    "trace_id": job.trace_id,
+                },
             )
             return _clone_job(job)
 
@@ -397,7 +410,9 @@ class GCSStateStore(PipelineStateStore):  # pragma: no cover - exercised via int
         safe_generation = payload.generation or "nogeneration"
         seed = f"{payload.bucket}/{payload.object_name}@{safe_generation}"
         object_hash = _normalise_hash_component(payload.md5_hash, seed)
-        dedupe_key = build_dedupe_key(payload.bucket, payload.object_name, payload.generation, object_hash)
+        dedupe_key = build_dedupe_key(
+            payload.bucket, payload.object_name, payload.generation, object_hash
+        )
         object_uri = build_object_uri(payload.bucket, payload.object_name)
         job = PipelineJob(
             job_id=_generate_job_id(),
@@ -436,7 +451,12 @@ class GCSStateStore(PipelineStateStore):  # pragma: no cover - exercised via int
         self._write_job(job, if_generation_match=0)
         LOG.info(
             "pipeline_job_created",
-            extra={"job_id": job.job_id, "dedupe_key": dedupe_key, "object_uri": object_uri, "trace_id": job.trace_id},
+            extra={
+                "job_id": job.job_id,
+                "dedupe_key": dedupe_key,
+                "object_uri": object_uri,
+                "trace_id": job.trace_id,
+            },
         )
         return job
 
@@ -455,7 +475,9 @@ class GCSStateStore(PipelineStateStore):  # pragma: no cover - exercised via int
                 bucket_obj, _, generation = dedupe_key.partition("@")
                 bucket, _, object_name = bucket_obj.partition("/")
                 if bucket and object_name:
-                    fallback_key = build_dedupe_key(bucket, object_name, generation or None, None)
+                    fallback_key = build_dedupe_key(
+                        bucket, object_name, generation or None, None
+                    )
                     blob = self._dedupe_blob(fallback_key)
                     if not blob.exists():
                         return None
@@ -513,7 +535,13 @@ class GCSStateStore(PipelineStateStore):  # pragma: no cover - exercised via int
                 if message is not None:
                     log_extra["status_message"] = message
                 if extra:
-                    log_extra.update({k: v for k, v in extra.items() if k not in {"message", "asctime"}})
+                    log_extra.update(
+                        {
+                            k: v
+                            for k, v in extra.items()
+                            if k not in {"message", "asctime"}
+                        }
+                    )
                 LOG.info("pipeline_status_transition", extra=log_extra)
                 return job
             except gexc.PreconditionFailed:  # type: ignore[attr-defined]
@@ -570,7 +598,11 @@ class GCSStateStore(PipelineStateStore):  # pragma: no cover - exercised via int
         return blob
 
     def _dedupe_blob(self, dedupe_key: str):
-        encoded = base64.urlsafe_b64encode(dedupe_key.encode("utf-8")).decode("ascii").rstrip("=")
+        encoded = (
+            base64.urlsafe_b64encode(dedupe_key.encode("utf-8"))
+            .decode("ascii")
+            .rstrip("=")
+        )
         path = f"{self._prefix}/dedupe/{encoded}.json"
         blob = self._bucket.blob(path)
         if self._kms_key:
@@ -579,7 +611,9 @@ class GCSStateStore(PipelineStateStore):  # pragma: no cover - exercised via int
 
     def _write_job(self, job: PipelineJob, *, if_generation_match: int | None) -> None:
         blob = self._job_blob(job.job_id)
-        payload = json.dumps(pipeline_job_to_dict(job), separators=(",", ":"), sort_keys=True)
+        payload = json.dumps(
+            pipeline_job_to_dict(job), separators=(",", ":"), sort_keys=True
+        )
         kwargs: Dict[str, Any] = {"content_type": "application/json"}
         if if_generation_match is not None:
             kwargs["if_generation_match"] = if_generation_match
@@ -629,8 +663,7 @@ class WorkflowLauncher(Protocol):
         job: PipelineJob,
         parameters: Dict[str, Any] | None = None,
         trace_context: str | None = None,
-    ) -> str | None:
-        ...
+    ) -> str | None: ...
 
 
 class NoopWorkflowLauncher(WorkflowLauncher):
@@ -655,7 +688,9 @@ class NoopWorkflowLauncher(WorkflowLauncher):
         return None
 
 
-class CloudWorkflowsLauncher(WorkflowLauncher):  # pragma: no cover - depends on GCP services
+class CloudWorkflowsLauncher(
+    WorkflowLauncher
+):  # pragma: no cover - depends on GCP services
     """Triggers executions of a configured Cloud Workflow with trace propagation."""
 
     def __init__(
@@ -665,7 +700,9 @@ class CloudWorkflowsLauncher(WorkflowLauncher):  # pragma: no cover - depends on
         client: Any | None = None,
     ) -> None:
         if executions_v1 is None or workflows is None:
-            raise RuntimeError("google-cloud-workflows is required for CloudWorkflowsLauncher")
+            raise RuntimeError(
+                "google-cloud-workflows is required for CloudWorkflowsLauncher"
+            )
         self._workflow_name = workflow_name
         self._client = client or executions_v1.ExecutionsClient()
 
@@ -682,7 +719,7 @@ class CloudWorkflowsLauncher(WorkflowLauncher):  # pragma: no cover - depends on
             "dedupe_key": job.dedupe_key,
             "trace_id": job.trace_id,
             "request_id": job.request_id,
-             "object_hash": job.object_hash,
+            "object_hash": job.object_hash,
             "metadata": job.metadata,
         }
         if trace_context:
@@ -691,19 +728,29 @@ class CloudWorkflowsLauncher(WorkflowLauncher):  # pragma: no cover - depends on
             payload.update(parameters)
 
         execution = executions_v1.Execution(argument=json.dumps(payload))
-        request = executions_v1.CreateExecutionRequest(parent=self._workflow_name, execution=execution)
+        request = executions_v1.CreateExecutionRequest(
+            parent=self._workflow_name, execution=execution
+        )
 
         call_kwargs: Dict[str, Any] = {}
         if trace_context:
-            call_kwargs.setdefault("metadata", []).append(("x-cloud-trace-context", trace_context))
+            call_kwargs.setdefault("metadata", []).append(
+                ("x-cloud-trace-context", trace_context)
+            )
         if Retry is not None:
-            call_kwargs["retry"] = Retry(initial=1.0, maximum=8.0, multiplier=2.0, deadline=30.0)
+            call_kwargs["retry"] = Retry(
+                initial=1.0, maximum=8.0, multiplier=2.0, deadline=30.0
+            )
 
         response = self._client.create_execution(request=request, **call_kwargs)
         execution_name = getattr(response, "name", None)
         LOG.info(
             "workflow_execution_created",
-            extra={"job_id": job.job_id, "workflow_execution": execution_name, "trace_id": job.trace_id},
+            extra={
+                "job_id": job.job_id,
+                "workflow_execution": execution_name,
+                "trace_id": job.trace_id,
+            },
         )
         return execution_name
 
@@ -715,7 +762,9 @@ def create_state_store_from_env() -> PipelineStateStore:
     if backend == "gcs":
         bucket = os.getenv("PIPELINE_STATE_BUCKET")
         if not bucket:
-            raise RuntimeError("PIPELINE_STATE_BUCKET required when PIPELINE_STATE_BACKEND=gcs")
+            raise RuntimeError(
+                "PIPELINE_STATE_BUCKET required when PIPELINE_STATE_BACKEND=gcs"
+            )
         prefix = os.getenv("PIPELINE_STATE_PREFIX", "pipeline-state")
         project_id = os.getenv("PROJECT_ID")
         kms_key = resolve_secret_env("PIPELINE_STATE_KMS_KEY", project_id=project_id)

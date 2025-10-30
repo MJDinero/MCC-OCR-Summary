@@ -2,7 +2,12 @@ import pytest
 from types import SimpleNamespace
 from google.api_core import exceptions as gexc
 
-from src.services.docai_helper import OCRService, run_splitter, run_batch_ocr, clean_ocr_output
+from src.services.docai_helper import (
+    OCRService,
+    run_splitter,
+    run_batch_ocr,
+    clean_ocr_output,
+)
 from src.errors import OCRServiceError, ValidationError
 from src.config import AppConfig, get_config
 from src.services.pipeline import InMemoryStateStore, PipelineJobCreate, PipelineStatus
@@ -24,7 +29,9 @@ class DummyClient:
 
 
 def make_cfg():
-    return AppConfig(project_id="proj", DOC_AI_LOCATION="us", DOC_AI_OCR_PROCESSOR_ID="pid")
+    return AppConfig(
+        project_id="proj", DOC_AI_LOCATION="us", DOC_AI_OCR_PROCESSOR_ID="pid"
+    )
 
 
 def test_clean_ocr_output_strips_transport_headers():
@@ -63,6 +70,7 @@ def test_clean_ocr_output_strips_transport_headers():
     assert "Follow the instructions" not in cleaned
     assert "Signs of infection" not in cleaned
 
+
 def test_success_first_try():
     client = DummyClient([{"text": "Hello", "pages": [{"text": "Hello"}]}])
     svc = OCRService("pid", config=make_cfg(), client_factory=lambda _ep: client)
@@ -72,10 +80,12 @@ def test_success_first_try():
 
 
 def test_retry_then_success():
-    client = DummyClient([
-        gexc.ServiceUnavailable("unavail"),
-        {"text": "World", "pages": [{"text": "World"}]},
-    ])
+    client = DummyClient(
+        [
+            gexc.ServiceUnavailable("unavail"),
+            {"text": "World", "pages": [{"text": "World"}]},
+        ]
+    )
     svc = OCRService("pid", config=make_cfg(), client_factory=lambda _ep: client)
     out = svc.process(VALID_PDF)
     assert out["text"] == "World"
@@ -100,7 +110,10 @@ def test_validation_error_propagates():
 def test_run_splitter_updates_state_and_manifest(monkeypatch):
     monkeypatch.setenv("PROJECT_ID", "proj")
     monkeypatch.setenv("REGION", "us")
-    monkeypatch.setenv("CMEK_KEY_NAME", "projects/demo/locations/us-central1/keyRings/test/cryptoKeys/test-key")
+    monkeypatch.setenv(
+        "CMEK_KEY_NAME",
+        "projects/demo/locations/us-central1/keyRings/test/cryptoKeys/test-key",
+    )
     get_config.cache_clear()
     store = InMemoryStateStore()
     job = store.create_job(
@@ -126,7 +139,9 @@ def test_run_splitter_updates_state_and_manifest(monkeypatch):
         def result(self, timeout=None):
             return {
                 "document_output_config": {
-                    "gcs_output_config": {"gcs_uri": "gs://intake-bucket/split/job123/"},
+                    "gcs_output_config": {
+                        "gcs_uri": "gs://intake-bucket/split/job123/"
+                    },
                 },
                 "shards": [
                     {"gcs_uri": "gs://intake-bucket/split/job123/0000.pdf"},
@@ -160,7 +175,9 @@ def test_run_splitter_updates_state_and_manifest(monkeypatch):
 
     assert client.requests, "Splitter should issue Document AI request"
     request = client.requests[0]
-    assert request["document_output_config"]["gcs_output_config"]["kms_key_name"].endswith("test-key")
+    assert request["document_output_config"]["gcs_output_config"][
+        "kms_key_name"
+    ].endswith("test-key")
     assert request["encryption_spec"]["kms_key_name"].endswith("test-key")
     assert result["manifest_uri"].endswith("manifest.json")
     assert len(result["shards"]) == 2
@@ -200,7 +217,9 @@ def test_run_batch_ocr_fanout_updates_metadata(monkeypatch):
             self.requests = []
 
         def batch_process_documents(self, request):
-            shard_uri = request["input_documents"]["gcs_documents"]["documents"][0]["gcs_uri"]
+            shard_uri = request["input_documents"]["gcs_documents"]["documents"][0][
+                "gcs_uri"
+            ]
             dest_uri = request["document_output_config"]["gcs_output_config"]["gcs_uri"]
             op = _StubOCROperation(dest_uri, len(self.requests))
             self.requests.append((shard_uri, dest_uri))

@@ -11,7 +11,7 @@ class _StubOCR:
 
 
 def _build_app(monkeypatch):
-    monkeypatch.setattr('src.main.OCRService', lambda *args, **kwargs: _StubOCR())
+    monkeypatch.setattr("src.main.OCRService", lambda *args, **kwargs: _StubOCR())
     monkeypatch.setenv("PROJECT_ID", "proj")
     monkeypatch.setenv("REGION", "us")
     monkeypatch.setenv("DOC_AI_PROCESSOR_ID", "pid")
@@ -28,18 +28,18 @@ def _build_app(monkeypatch):
 def test_healthz_ok(monkeypatch):
     app = _build_app(monkeypatch)
     client = TestClient(app)
-    r = client.get('/healthz')
+    r = client.get("/healthz")
     assert r.status_code == 200
-    assert r.json().get('status') == 'ok'
+    assert r.json().get("status") == "ok"
 
 
 def test_metrics_endpoint_available(monkeypatch):
     app = _build_app(monkeypatch)
     client = TestClient(app)
-    r = client.get('/metrics')
+    r = client.get("/metrics")
     # If prometheus_client is installed we expect 200 & some metric text
     if r.status_code == 200:
-        assert 'python_info' in r.text or 'process_cpu' in r.text or 'summary' in r.text
+        assert "python_info" in r.text or "process_cpu" in r.text or "summary" in r.text
     else:
         # Graceful degradation (endpoint absent)
         assert r.status_code in {404, 500}

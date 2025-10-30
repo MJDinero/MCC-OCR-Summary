@@ -21,7 +21,7 @@ class DummyBlob:
 
     # Upload API compatibility
     def upload_from_filename(self, filename: str):  # noqa: D401
-        with open(filename, 'rb') as f:
+        with open(filename, "rb") as f:
             self._data = f.read()
 
 
@@ -62,7 +62,9 @@ class DummyOperation:
     def __init__(self, metadata=None):
         self._done = False
         self._polls = 0
-        self.metadata = metadata or SimpleNamespace(individual_process_statuses=[1, 2, 3])
+        self.metadata = metadata or SimpleNamespace(
+            individual_process_statuses=[1, 2, 3]
+        )
         self.name = "operations/123"
 
     def done(self):  # noqa: D401
@@ -97,7 +99,9 @@ class DummyDocAIClient:
             pages = [{"layout": {"text": f"page {i+1}"}}]
             doc = {"text": f"full text {i+1}", "pages": pages}
             blob_name = f"{prefix}output-{i}.json"
-            self.storage_client._blobs[blob_name] = DummyBlob(blob_name, json.dumps({"document": doc}).encode("utf-8"))
+            self.storage_client._blobs[blob_name] = DummyBlob(
+                blob_name, json.dumps({"document": doc}).encode("utf-8")
+            )
         return DummyOperation()
 
 
@@ -115,7 +119,9 @@ def _cmek_env(monkeypatch):
     monkeypatch.setenv("INTAKE_GCS_BUCKET", "unit-intake-bucket")
     monkeypatch.setenv("OUTPUT_GCS_BUCKET", "unit-output-bucket")
     monkeypatch.setenv("SUMMARY_BUCKET", "unit-summary-bucket")
-    monkeypatch.setenv("CMEK_KEY_NAME", "projects/demo/locations/us/keyRings/test/cryptoKeys/test-key")
+    monkeypatch.setenv(
+        "CMEK_KEY_NAME", "projects/demo/locations/us/keyRings/test/cryptoKeys/test-key"
+    )
     get_config.cache_clear()
     yield
     get_config.cache_clear()
@@ -125,7 +131,14 @@ def test_batch_process_local_upload(tmp_pdf, monkeypatch):
     storage_client = DummyStorageClient()
     doc_client = DummyDocAIClient(storage_client)
     clients = _BatchClients(docai=doc_client, storage=storage_client)  # type: ignore[arg-type]
-    result = batch_process_documents_gcs(str(tmp_pdf), None, processor_id="pid", region="us", project_id="proj", clients=clients)
+    result = batch_process_documents_gcs(
+        str(tmp_pdf),
+        None,
+        processor_id="pid",
+        region="us",
+        project_id="proj",
+        clients=clients,
+    )
     assert result["text"].startswith("full text")
     assert len(result["pages"]) == 2
     meta = result["batch_metadata"]
@@ -137,16 +150,32 @@ def test_batch_process_local_upload(tmp_pdf, monkeypatch):
     request = doc_client.requests[0]
     gcs_cfg = request["document_output_config"]["gcs_output_config"]
     assert gcs_cfg["kms_key_name"].endswith("test-key")
-    upload_blobs = [blob for name, blob in storage_client._blobs.items() if name.startswith("uploads/")]
+    upload_blobs = [
+        blob
+        for name, blob in storage_client._blobs.items()
+        if name.startswith("uploads/")
+    ]
     assert upload_blobs, "expected local upload to be written to intake bucket"
-    assert upload_blobs[0].kms_key_name and upload_blobs[0].kms_key_name.endswith("test-key")
+    assert upload_blobs[0].kms_key_name and upload_blobs[0].kms_key_name.endswith(
+        "test-key"
+    )
 
 
 def test_batch_requires_pdf(monkeypatch, tmp_path):
     f = tmp_path / "file.txt"
     f.write_text("hello")
     with pytest.raises(ValidationError):
-        batch_process_documents_gcs(str(f), None, "pid", "us", project_id="proj", clients=_BatchClients(docai=DummyDocAIClient(DummyStorageClient()), storage=DummyStorageClient()))
+        batch_process_documents_gcs(
+            str(f),
+            None,
+            "pid",
+            "us",
+            project_id="proj",
+            clients=_BatchClients(
+                docai=DummyDocAIClient(DummyStorageClient()),
+                storage=DummyStorageClient(),
+            ),
+        )
 
 
 def test_batch_failure_missing_output(monkeypatch, tmp_pdf):
@@ -154,7 +183,10 @@ def test_batch_failure_missing_output(monkeypatch, tmp_pdf):
     class NoOutputDocAI(DummyDocAIClient):
         def batch_process_documents(self, request):  # noqa: D401
             return DummyOperation()
+
     storage_client = DummyStorageClient()
     clients = _BatchClients(docai=NoOutputDocAI(storage_client), storage=storage_client)
     with pytest.raises(OCRServiceError):
-        batch_process_documents_gcs(str(tmp_pdf), None, "pid", "us", project_id="proj", clients=clients)
+        batch_process_documents_gcs(
+            str(tmp_pdf), None, "pid", "us", project_id="proj", clients=clients
+        )

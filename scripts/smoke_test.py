@@ -13,7 +13,9 @@ class _DummyBackend(ChunkSummaryBackend):
     def __init__(self):
         self.calls = 0
 
-    def summarise_chunk(self, *, chunk_text, chunk_index, total_chunks, estimated_tokens):  # pragma: no cover - deterministic stub
+    def summarise_chunk(
+        self, *, chunk_text, chunk_index, total_chunks, estimated_tokens
+    ):  # pragma: no cover - deterministic stub
         self.calls += 1
         return {
             "overview": f"Summary chunk {chunk_index + 1}",

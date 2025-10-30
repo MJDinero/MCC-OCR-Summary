@@ -6,7 +6,9 @@ import logging
 from typing import Any, Dict
 
 
-def structured_log(logger: logging.Logger, level: int, event: str, **fields: Any) -> None:
+def structured_log(
+    logger: logging.Logger, level: int, event: str, **fields: Any
+) -> None:
     """Emit a log record with an `event` attribute and structured extras."""
     payload: Dict[str, Any] = {"event": event}
     payload.update(fields)

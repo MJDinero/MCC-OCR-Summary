@@ -8,7 +8,9 @@ from typing import Any, Iterable, Mapping
 DEFAULT_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"\b\d{3}-\d{2}-\d{4}\b"),  # SSN
     re.compile(r"\b\d{2}-\d{7}\b"),  # MRN-like
-    re.compile(r"\b\d{8,}\b"),  # generic long identifiers (account numbers, phone digits)
+    re.compile(
+        r"\b\d{8,}\b"
+    ),  # generic long identifiers (account numbers, phone digits)
     re.compile(r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", re.IGNORECASE),  # email
     re.compile(r"\b\d{3}[-.\s]?\d{3}[-.\s]?\d{4}\b"),  # phone number
 )

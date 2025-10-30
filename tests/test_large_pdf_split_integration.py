@@ -12,14 +12,23 @@ class DummyBatch:
     def __init__(self):
         self.calls = []
 
-    def __call__(self, input_uri, output_uri, processor_id, region, project_id=None, clients=None):
+    def __call__(
+        self, input_uri, output_uri, processor_id, region, project_id=None, clients=None
+    ):
         self.calls.append(input_uri)
-        pages = [{"layout": {"text": f"Page {i} part {len(self.calls)}"}} for i in range(1, 121)]
+        pages = [
+            {"layout": {"text": f"Page {i} part {len(self.calls)}"}}
+            for i in range(1, 121)
+        ]
         return {
             "text": " ".join(p["layout"]["text"] for p in pages),
             "pages": pages,
-            "batch_metadata": {"status": "succeeded", "output_uri": f"gs://out/part{len(self.calls)}"},
+            "batch_metadata": {
+                "status": "succeeded",
+                "output_uri": f"gs://out/part{len(self.calls)}",
+            },
         }
+
 
 @pytest.fixture()
 def large_pdf(tmp_path, monkeypatch):
@@ -28,15 +37,17 @@ def large_pdf(tmp_path, monkeypatch):
     for _ in range(263):
         writer.add_blank_page(width=72, height=72)
     pdf_path = tmp_path / "large.pdf"
-    with open(pdf_path, 'wb') as f:
+    with open(pdf_path, "wb") as f:
         writer.write(f)
     return pdf_path
+
 
 @pytest.fixture(autouse=True)
 def patch_batch(monkeypatch):
     dummy = DummyBatch()
-    monkeypatch.setattr('src.services.docai_helper.batch_process_documents_gcs', dummy)
+    monkeypatch.setattr("src.services.docai_helper.batch_process_documents_gcs", dummy)
     return dummy
+
 
 @pytest.fixture(autouse=True)
 def patch_storage(monkeypatch):
@@ -64,22 +75,27 @@ def patch_storage(monkeypatch):
         def list_blobs(self, *_args, **_kwargs):
             return []
 
-    monkeypatch.setattr('src.services.docai_batch_helper.storage.Client', lambda: DummyStorage())
+    monkeypatch.setattr(
+        "src.services.docai_batch_helper.storage.Client", lambda: DummyStorage()
+    )
     return True
 
 
 def test_large_pdf_uses_async_batch_path(large_pdf, patch_batch, monkeypatch):
     # Patch config references used by OCRService
     from src.config import get_config
+
     cfg = get_config()
-    monkeypatch.setattr(cfg, 'project_id', 'proj')
-    monkeypatch.setattr(cfg, 'region', 'us')
-    service = OCRService(processor_id='processor123', config=cfg, client_factory=lambda endpoint: None)  # client unused in batch path
+    monkeypatch.setattr(cfg, "project_id", "proj")
+    monkeypatch.setattr(cfg, "region", "us")
+    service = OCRService(
+        processor_id="processor123", config=cfg, client_factory=lambda endpoint: None
+    )  # client unused in batch path
 
     result = service.process(str(large_pdf))
 
     # Expect batch path with automatic batching (single invocation)
-    meta = result.get('batch_metadata') or {}
-    assert meta.get('batch_mode') == 'async_auto'
+    meta = result.get("batch_metadata") or {}
+    assert meta.get("batch_mode") == "async_auto"
     assert len(patch_batch.calls) == 1
-    assert len(result.get('pages') or []) == 120
+    assert len(result.get("pages") or []) == 120

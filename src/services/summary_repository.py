@@ -19,7 +19,9 @@ from ..models.events import SummaryResultMessage
 from .storage_service import SummaryRepository
 
 
-class HybridSummaryRepository(SummaryRepository):  # pragma: no cover - requires GCP services
+class HybridSummaryRepository(
+    SummaryRepository
+):  # pragma: no cover - requires GCP services
     """Stores summaries in both BigQuery and GCS (idempotent)."""
 
     def __init__(
@@ -34,7 +36,9 @@ class HybridSummaryRepository(SummaryRepository):  # pragma: no cover - requires
         kms_key_name: str | None = None,
     ) -> None:
         if bigquery is None or storage is None:
-            raise RuntimeError("google-cloud-bigquery and google-cloud-storage are required")
+            raise RuntimeError(
+                "google-cloud-bigquery and google-cloud-storage are required"
+            )
         self.dataset = dataset
         self.table = table
         self.bucket_name = bucket_name
@@ -67,7 +71,9 @@ class HybridSummaryRepository(SummaryRepository):  # pragma: no cover - requires
         payload = {
             "job_id": job_id,
             "final_summary": final_summary,
-            "per_chunk_summaries": [summary.summary_text for summary in per_chunk_summaries],
+            "per_chunk_summaries": [
+                summary.summary_text for summary in per_chunk_summaries
+            ],
             "metadata": metadata,
             "created_at": datetime.now(timezone.utc).isoformat(),
         }
@@ -100,7 +106,9 @@ class HybridSummaryRepository(SummaryRepository):  # pragma: no cover - requires
             {
                 "job_id": job_id,
                 "final_summary": final_summary,
-                "chunk_summaries": [summary.summary_text for summary in per_chunk_summaries],
+                "chunk_summaries": [
+                    summary.summary_text for summary in per_chunk_summaries
+                ],
                 "metadata": metadata,
                 "created_at": datetime.now(timezone.utc).isoformat(),
             }
@@ -119,9 +127,13 @@ class HybridSummaryRepository(SummaryRepository):  # pragma: no cover - requires
         try:
             table = self.bq_client.get_table(table_ref)
         except Exception as exc:  # pragma: no cover - network call
-            raise RuntimeError(f"Unable to verify encryption for {table_ref}: {exc}") from exc
+            raise RuntimeError(
+                f"Unable to verify encryption for {table_ref}: {exc}"
+            ) from exc
         encryption_cfg = getattr(table, "encryption_configuration", None)
-        kms_key = getattr(encryption_cfg, "kms_key_name", None) if encryption_cfg else None
+        kms_key = (
+            getattr(encryption_cfg, "kms_key_name", None) if encryption_cfg else None
+        )
         if kms_key != self.kms_key_name:
             raise RuntimeError(
                 f"BigQuery table {table_ref} is not encrypted with expected CMEK {self.kms_key_name}"

@@ -25,7 +25,10 @@ def test_job_public_view_captures_retries_and_upload_metadata():
         stage="PDF_JOB",
         message="PDF uploaded",
         extra={"pdf_uri": "gs://output/docs/file.pdf"},
-        updates={"pdf_uri": "gs://output/docs/file.pdf", "signed_url": "https://signed"},
+        updates={
+            "pdf_uri": "gs://output/docs/file.pdf",
+            "signed_url": "https://signed",
+        },
     )
 
     snapshot = store.get_job(job.job_id)

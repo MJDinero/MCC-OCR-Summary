@@ -13,18 +13,15 @@ class PubSubPublisher(Protocol):
         topic: str,
         data: bytes,
         attributes: dict[str, str] | None = None,
-    ) -> str:
-        ...
+    ) -> str: ...
 
 
 class MetricsClient(Protocol):
     """Interface for emitting metrics to Cloud Monitoring or Prometheus."""
 
-    def observe_latency(self, name: str, value: float, **labels: str) -> None:
-        ...
+    def observe_latency(self, name: str, value: float, **labels: str) -> None: ...
 
-    def increment(self, name: str, amount: int = 1, **labels: str) -> None:
-        ...
+    def increment(self, name: str, amount: int = 1, **labels: str) -> None: ...
 
 
 __all__ = ["PubSubPublisher", "MetricsClient"]

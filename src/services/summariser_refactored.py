@@ -12,6 +12,7 @@ Key improvements:
 The refactored summariser remains framework agnostic; callers should inject a
 backend implementing :class:`ChunkSummaryBackend`.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -113,7 +114,9 @@ class OpenAIResponsesBackend:  # pragma: no cover - network heavy, validated by 
         },
     }
 
-    def __init__(self, model: str = "gpt-4.1-mini", api_key: Optional[str] = None) -> None:
+    def __init__(
+        self, model: str = "gpt-4.1-mini", api_key: Optional[str] = None
+    ) -> None:
         self.model = model
         self.api_key = api_key
 
@@ -124,7 +127,9 @@ class OpenAIResponsesBackend:  # pragma: no cover - network heavy, validated by 
         chunk_index: int,
         total_chunks: int,
         estimated_tokens: int,
-    ) -> Dict[str, Any]:  # pragma: no cover - network path exercised in integration tests
+    ) -> Dict[
+        str, Any
+    ]:  # pragma: no cover - network path exercised in integration tests
         try:
             from openai import OpenAI  # type: ignore
         except Exception as exc:  # pragma: no cover - dependency resolution
@@ -163,7 +168,11 @@ class OpenAIResponsesBackend:  # pragma: no cover - network heavy, validated by 
         except (AttributeError, TypeError) as exc:
             _LOG.warning(
                 "openai_responses_fallback",
-                extra={"error": str(exc), "model": self.model, "chunk_index": chunk_index},
+                extra={
+                    "error": str(exc),
+                    "model": self.model,
+                    "chunk_index": chunk_index,
+                },
             )
             fallback_backend = HeuristicChunkBackend()
             self._fallback_used = True
@@ -200,7 +209,9 @@ class OpenAIResponsesBackend:  # pragma: no cover - network heavy, validated by 
         try:
             parsed = json.loads(content)
         except json.JSONDecodeError as exc:  # pragma: no cover - salvage path
-            raise SummarizationError(f"Failed to parse chunk JSON (chunk {chunk_index}): {exc}") from exc
+            raise SummarizationError(
+                f"Failed to parse chunk JSON (chunk {chunk_index}): {exc}"
+            ) from exc
         if parsed.get("schema_version") != self.CHUNK_SCHEMA_VERSION:
             raise SummarizationError(
                 f"Chunk schema_version mismatch: expected {self.CHUNK_SCHEMA_VERSION}, got {parsed.get('schema_version')}"
@@ -217,12 +228,47 @@ class HeuristicChunkBackend(ChunkSummaryBackend):
     """
 
     provider_tokens = ("dr", "doctor", "nurse", "provider", "physician", "practitioner")
-    care_plan_tokens = ("plan", "follow", "schedule", "return", "recommend", "monitor", "continue", "start", "advise")
-    medication_tokens = ("mg", "tablet", "capsule", "medication", "prescrib", "dose", "administer", "therapy", "diet")
-    diagnosis_tokens = ("hypertension", "diabetes", "infection", "injury", "fracture", "asthma", "covid", "anemia", "migraine", "cancer")
+    care_plan_tokens = (
+        "plan",
+        "follow",
+        "schedule",
+        "return",
+        "recommend",
+        "monitor",
+        "continue",
+        "start",
+        "advise",
+    )
+    medication_tokens = (
+        "mg",
+        "tablet",
+        "capsule",
+        "medication",
+        "prescrib",
+        "dose",
+        "administer",
+        "therapy",
+        "diet",
+    )
+    diagnosis_tokens = (
+        "hypertension",
+        "diabetes",
+        "infection",
+        "injury",
+        "fracture",
+        "asthma",
+        "covid",
+        "anemia",
+        "migraine",
+        "cancer",
+    )
     provider_pattern = re.compile(r"Dr\.?\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*")
-    medication_pattern = re.compile(r"\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\s+\d+\s*(?:mg|mcg|g))")
-    named_med_pattern = re.compile(r"\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*(?:\s+therapy|\s+diet))")
+    medication_pattern = re.compile(
+        r"\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\s+\d+\s*(?:mg|mcg|g))"
+    )
+    named_med_pattern = re.compile(
+        r"\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*(?:\s+therapy|\s+diet))"
+    )
 
     def summarise_chunk(
         self,
@@ -265,7 +311,9 @@ class HeuristicChunkBackend(ChunkSummaryBackend):
         overview = sentences[0] if sentences else ""
         key_points = sentences[: min(5, len(sentences))]
 
-        def _select(sentences_in: Iterable[str], needles: Iterable[str], limit: int = 6) -> List[str]:
+        def _select(
+            sentences_in: Iterable[str], needles: Iterable[str], limit: int = 6
+        ) -> List[str]:
             lowered_needles = tuple(n.lower() for n in needles)
             selected: List[str] = []
             for sent in sentences_in:
@@ -278,9 +326,13 @@ class HeuristicChunkBackend(ChunkSummaryBackend):
                     break
             return selected
 
-        clinical_details = [sent.strip().rstrip(".") for sent in sentences[1:] if len(sent.split()) >= 6][:10]
+        clinical_details = [
+            sent.strip().rstrip(".") for sent in sentences[1:] if len(sent.split()) >= 6
+        ][:10]
         if not clinical_details:
-            clinical_details = [s.strip().rstrip(".") for s in sentences[:max(1, len(sentences) // 2)]]
+            clinical_details = [
+                s.strip().rstrip(".") for s in sentences[: max(1, len(sentences) // 2)]
+            ]
 
         care_plan = _select(sentences, self.care_plan_tokens, limit=8)
         if not care_plan and sentences:
@@ -314,7 +366,7 @@ class HeuristicChunkBackend(ChunkSummaryBackend):
         def _truncate(items: List[str], max_len: int = 280) -> List[str]:
             truncated: List[str] = []
             for item in items:
-                trimmed = item[: max_len].strip()
+                trimmed = item[:max_len].strip()
                 if trimmed:
                     truncated.append(trimmed)
             return truncated
@@ -382,7 +434,13 @@ class ChunkedText:
 class SlidingWindowChunker:
     """Token-aware greedy chunker with symmetric overlap for continuity."""
 
-    def __init__(self, *, target_chars: int = 2600, max_chars: int = 10000, overlap_chars: int = 320) -> None:
+    def __init__(
+        self,
+        *,
+        target_chars: int = 2600,
+        max_chars: int = 10000,
+        overlap_chars: int = 320,
+    ) -> None:
         if max_chars <= target_chars:
             raise ValueError("max_chars must be greater than target_chars")
         self.target_chars = target_chars
@@ -394,7 +452,9 @@ class SlidingWindowChunker:
             return []
         if len(text) <= self.max_chars:
             approx_tokens = max(1, math.ceil(len(text) / 4))
-            return [ChunkedText(text=text, index=1, total=1, approx_tokens=approx_tokens)]
+            return [
+                ChunkedText(text=text, index=1, total=1, approx_tokens=approx_tokens)
+            ]
 
         chunks: List[ChunkedText] = []
         start = 0
@@ -403,7 +463,11 @@ class SlidingWindowChunker:
         while start < length:
             end = min(start + self.target_chars, length)
             # extend to the next whitespace for readability but do not exceed max_chars
-            while end < length and end - start < self.max_chars and text[end] not in {" ", "\n", "\t"}:
+            while (
+                end < length
+                and end - start < self.max_chars
+                and text[end] not in {" ", "\n", "\t"}
+            ):
                 end += 1
             segment = text[start:end].strip()
             if not segment:
@@ -454,7 +518,9 @@ class RefactoredSummariser:
     def chunk_hard_max(self, value: int) -> None:
         self.max_chars = max(self.target_chars + 64, int(value))
 
-    def summarise(self, text: str, *, doc_metadata: Optional[Dict[str, Any]] = None) -> Dict[str, str]:
+    def summarise(
+        self, text: str, *, doc_metadata: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, str]:
         if text is None or not str(text).strip():
             raise SummarizationError("Input text empty")
         raw_text = str(text)
@@ -488,7 +554,11 @@ class RefactoredSummariser:
         for chunk in chunked:
             _LOG.info(
                 "summariser_refactored_chunk_start",
-                extra={"index": chunk.index, "total": chunk.total, "approx_tokens": chunk.approx_tokens},
+                extra={
+                    "index": chunk.index,
+                    "total": chunk.total,
+                    "approx_tokens": chunk.approx_tokens,
+                },
             )
             payload = self.backend.summarise_chunk(
                 chunk_text=chunk.text,
@@ -502,7 +572,9 @@ class RefactoredSummariser:
             )
             self._merge_payload(aggregated, payload)
 
-        summary_text = self._compose_summary(aggregated, chunk_count=len(chunked), doc_metadata=doc_metadata)
+        summary_text = self._compose_summary(
+            aggregated, chunk_count=len(chunked), doc_metadata=doc_metadata
+        )
         diagnoses = self._dedupe_ordered(aggregated["diagnoses"])
         providers = self._dedupe_ordered(aggregated["providers"])
         medications = self._dedupe_ordered(aggregated["medications"])
@@ -517,11 +589,15 @@ class RefactoredSummariser:
         summary_text = re.sub(r"\n{3,}", "\n\n", summary_text).strip()
 
         min_chars = getattr(self, "min_summary_chars", 500)
-        if len(summary_text) < min_chars or not re.search(r"\b(Intro Overview|Key Points)\b", summary_text, re.IGNORECASE):
+        if len(summary_text) < min_chars or not re.search(
+            r"\b(Intro Overview|Key Points)\b", summary_text, re.IGNORECASE
+        ):
             raise SummarizationError("Summary too short or missing structure")
 
         summary_chars = len(summary_text)
-        avg_chunk_chars = round(sum(len(ch.text) for ch in chunked) / max(1, len(chunked)), 2)
+        avg_chunk_chars = round(
+            sum(len(ch.text) for ch in chunked) / max(1, len(chunked)), 2
+        )
         _LOG.info(
             "summariser_generation_complete",
             extra={
@@ -535,10 +611,22 @@ class RefactoredSummariser:
         )
 
         display: Dict[str, str] = {
-            "Patient Information": doc_metadata.get("patient_info", "Not provided") if doc_metadata else "Not provided",
+            "Patient Information": (
+                doc_metadata.get("patient_info", "Not provided")
+                if doc_metadata
+                else "Not provided"
+            ),
             "Medical Summary": summary_text,
-            "Billing Highlights": doc_metadata.get("billing", "Not provided") if doc_metadata else "Not provided",
-            "Legal / Notes": doc_metadata.get("legal_notes", "Not provided") if doc_metadata else "Not provided",
+            "Billing Highlights": (
+                doc_metadata.get("billing", "Not provided")
+                if doc_metadata
+                else "Not provided"
+            ),
+            "Legal / Notes": (
+                doc_metadata.get("legal_notes", "Not provided")
+                if doc_metadata
+                else "Not provided"
+            ),
             "_diagnoses_list": "\n".join(diagnoses),
             "_providers_list": "\n".join(providers),
             "_medications_list": "\n".join(medications),
@@ -597,7 +685,14 @@ class RefactoredSummariser:
             if overview_clean and not _is_placeholder(overview_clean):
                 into["overview"].append(overview_clean)
 
-        for key in ("key_points", "clinical_details", "care_plan", "diagnoses", "providers", "medications"):
+        for key in (
+            "key_points",
+            "clinical_details",
+            "care_plan",
+            "diagnoses",
+            "providers",
+            "medications",
+        ):
             values = _coerce_list(payload.get(key))
             into[key].extend(values)
 
@@ -635,23 +730,37 @@ class RefactoredSummariser:
             f"Source: {facility}. " if facility else ""
         ) + f"Document processed in {chunk_count} chunk(s)."
 
-        intro_section = "Intro Overview:\n" + "\n".join([intro_context] + overview_lines)
+        intro_section = "Intro Overview:\n" + "\n".join(
+            [intro_context] + overview_lines
+        )
         key_points_section = "Key Points:\n" + (
-            "\n".join(f"- {line}" for line in key_points) if key_points else "- No explicit key points were extracted."
+            "\n".join(f"- {line}" for line in key_points)
+            if key_points
+            else "- No explicit key points were extracted."
         )
         details_payload = clinical_details or overview_lines
-        details_section = "Detailed Findings:\n" + "\n".join(f"- {line}" for line in details_payload)
+        details_section = "Detailed Findings:\n" + "\n".join(
+            f"- {line}" for line in details_payload
+        )
         care_section = "Care Plan & Follow-Up:\n" + (
-            "\n".join(f"- {line}" for line in care_plan) if care_plan else "- No active plan documented in the extracted text."
+            "\n".join(f"- {line}" for line in care_plan)
+            if care_plan
+            else "- No active plan documented in the extracted text."
         )
         diagnoses_section = "Diagnoses:\n" + (
-            "\n".join(f"- {line}" for line in diagnoses) if diagnoses else "- Not explicitly documented."
+            "\n".join(f"- {line}" for line in diagnoses)
+            if diagnoses
+            else "- Not explicitly documented."
         )
         providers_section = "Providers:\n" + (
-            "\n".join(f"- {line}" for line in providers) if providers else "- Not listed."
+            "\n".join(f"- {line}" for line in providers)
+            if providers
+            else "- Not listed."
         )
         medications_section = "Medications / Prescriptions:\n" + (
-            "\n".join(f"- {line}" for line in medications) if medications else "- No medications recorded in extracted text."
+            "\n".join(f"- {line}" for line in medications)
+            if medications
+            else "- No medications recorded in extracted text."
         )
 
         sections = [
@@ -663,7 +772,9 @@ class RefactoredSummariser:
             providers_section,
             medications_section,
         ]
-        summary_text = "\n\n".join(section.strip() for section in sections if section.strip())
+        summary_text = "\n\n".join(
+            section.strip() for section in sections if section.strip()
+        )
         if len(summary_text) < self.min_summary_chars:
             # Append additional detail to satisfy supervisor minimums while maintaining factuality.
             supplemental_lines = clinical_details + care_plan
@@ -674,10 +785,17 @@ class RefactoredSummariser:
         return summary_text.strip()
 
 
-__all__ = ["ChunkSummaryBackend", "OpenAIResponsesBackend", "HeuristicChunkBackend", "RefactoredSummariser"]
+__all__ = [
+    "ChunkSummaryBackend",
+    "OpenAIResponsesBackend",
+    "HeuristicChunkBackend",
+    "RefactoredSummariser",
+]
 
 
-def _normalise_document_payload(data: Dict[str, Any]) -> tuple[str, Dict[str, Any], List[Dict[str, Any]]]:
+def _normalise_document_payload(
+    data: Dict[str, Any],
+) -> tuple[str, Dict[str, Any], List[Dict[str, Any]]]:
     """Extract text, metadata and pages from a Document AI-style payload."""
 
     if not isinstance(data, dict):
@@ -687,7 +805,9 @@ def _normalise_document_payload(data: Dict[str, Any]) -> tuple[str, Dict[str, An
     if isinstance(data.get("metadata"), dict):
         metadata = dict(data["metadata"])
 
-    document: Dict[str, Any] | None = data.get("document") if isinstance(data.get("document"), dict) else None
+    document: Dict[str, Any] | None = (
+        data.get("document") if isinstance(data.get("document"), dict) else None
+    )
     if document:
         doc_metadata = document.get("metadata")
         if isinstance(doc_metadata, dict):
@@ -699,19 +819,27 @@ def _normalise_document_payload(data: Dict[str, Any]) -> tuple[str, Dict[str, An
         raise SummarizationError("Input payload must be a JSON object.")
 
     pages_raw = document.get("pages")
-    pages: List[Dict[str, Any]] = [page for page in pages_raw if isinstance(page, dict)] if isinstance(pages_raw, list) else []
+    pages: List[Dict[str, Any]] = (
+        [page for page in pages_raw if isinstance(page, dict)]
+        if isinstance(pages_raw, list)
+        else []
+    )
 
     text_val = document.get("text")
     text = text_val.strip() if isinstance(text_val, str) else ""
     if not text and pages:
-        text = " ".join((page.get("text") or "").strip() for page in pages if isinstance(page, dict)).strip()
+        text = " ".join(
+            (page.get("text") or "").strip() for page in pages if isinstance(page, dict)
+        ).strip()
     if not text:
         raise SummarizationError("Input JSON missing 'text' or 'pages' fields.")
 
     return text, metadata, pages
 
 
-def _load_input_payload_from_gcs(gcs_uri: str) -> tuple[str, Dict[str, Any], List[Dict[str, Any]]]:
+def _load_input_payload_from_gcs(
+    gcs_uri: str,
+) -> tuple[str, Dict[str, Any], List[Dict[str, Any]]]:
     try:
         from google.cloud import storage  # type: ignore[attr-defined]
     except Exception as exc:  # pragma: no cover - optional dependency
@@ -732,7 +860,9 @@ def _load_input_payload_from_gcs(gcs_uri: str) -> tuple[str, Dict[str, Any], Lis
         try:
             payload = json.loads(payload_bytes.decode("utf-8"))
         except json.JSONDecodeError as exc:
-            raise SummarizationError(f"Invalid JSON payload at {gcs_uri}: {exc}") from exc
+            raise SummarizationError(
+                f"Invalid JSON payload at {gcs_uri}: {exc}"
+            ) from exc
         return _normalise_document_payload(payload)
 
     prefix = object_name
@@ -779,7 +909,9 @@ def _load_input_payload_from_gcs(gcs_uri: str) -> tuple[str, Dict[str, Any], Lis
     return _normalise_document_payload(combined)
 
 
-def _load_input_payload(path: Path | str) -> tuple[str, Dict[str, Any], List[Dict[str, Any]]]:
+def _load_input_payload(
+    path: Path | str,
+) -> tuple[str, Dict[str, Any], List[Dict[str, Any]]]:
     raw_path = str(path)
     if raw_path.startswith("gs:/") and not raw_path.startswith("gs://"):
         raw_path = raw_path.replace("gs:/", "gs://", 1)
@@ -792,7 +924,9 @@ def _load_input_payload(path: Path | str) -> tuple[str, Dict[str, Any], List[Dic
     try:
         payload = json.loads(local_path.read_text(encoding="utf-8"))
     except json.JSONDecodeError as exc:
-        raise SummarizationError(f"Invalid JSON payload at {local_path}: {exc}") from exc
+        raise SummarizationError(
+            f"Invalid JSON payload at {local_path}: {exc}"
+        ) from exc
     return _normalise_document_payload(payload)
 
 
@@ -824,13 +958,17 @@ def _upload_summary_to_gcs(  # pragma: no cover - requires GCS interaction
     bucket_name, object_name = _split_gcs_uri(gcs_uri)
     client = storage.Client()
     blob = client.bucket(bucket_name).blob(object_name)
-    payload = json.dumps(summary, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+    payload = json.dumps(
+        summary, ensure_ascii=False, separators=(",", ":"), sort_keys=True
+    )
     upload_kwargs: Dict[str, Any] = {"content_type": "application/json"}
     if if_generation_match is not None and if_generation_match >= 0:
         upload_kwargs["if_generation_match"] = if_generation_match
     blob.upload_from_string(payload, **upload_kwargs)
     gcs_path = f"gs://{blob.bucket.name}/{blob.name}"
-    _LOG.info("summary_uploaded_gcs", extra={"gcs_uri": gcs_path, "bytes": len(payload)})
+    _LOG.info(
+        "summary_uploaded_gcs", extra={"gcs_uri": gcs_path, "bytes": len(payload)}
+    )
     return gcs_path
 
 
@@ -841,24 +979,63 @@ def _merge_dicts(base: Dict[str, Any], patch: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _cli(argv: Optional[Iterable[str]] = None) -> None:
-    parser = argparse.ArgumentParser(description="Generate MCC medical summaries using the refactored summariser.")
-    parser.add_argument("--input", required=True, help="Path to OCR JSON payload containing 'text' or 'pages'.")
-    parser.add_argument("--output", help="Optional path to write structured summary JSON locally.")
-    parser.add_argument("--output-gcs", help="Optional GCS URI to upload the summary JSON (uses V4 signed URLs downstream).")
+    parser = argparse.ArgumentParser(
+        description="Generate MCC medical summaries using the refactored summariser."
+    )
+    parser.add_argument(
+        "--input",
+        required=True,
+        help="Path to OCR JSON payload containing 'text' or 'pages'.",
+    )
+    parser.add_argument(
+        "--output", help="Optional path to write structured summary JSON locally."
+    )
+    parser.add_argument(
+        "--output-gcs",
+        help="Optional GCS URI to upload the summary JSON (uses V4 signed URLs downstream).",
+    )
     parser.add_argument(
         "--gcs-if-generation",
         type=int,
         default=0,
         help="ifGenerationMatch precondition when uploading to GCS (default 0; set to -1 to disable).",
     )
-    parser.add_argument("--dry-run", action="store_true", help="Use heuristic backend (no network calls).")
-    parser.add_argument("--model", default=os.getenv("OPENAI_MODEL") or "gpt-4o-mini", help="OpenAI model to use.")
-    parser.add_argument("--api-key", help="Explicit OpenAI API key. Defaults to environment variable.")
-    parser.add_argument("--target-chars", type=int, default=int(os.getenv("REF_SUMMARISER_TARGET_CHARS", "2400")))
-    parser.add_argument("--max-chars", type=int, default=int(os.getenv("REF_SUMMARISER_MAX_CHARS", "10000")))
-    parser.add_argument("--overlap-chars", type=int, default=int(os.getenv("REF_SUMMARISER_OVERLAP_CHARS", "320")))
-    parser.add_argument("--min-summary-chars", type=int, default=int(os.getenv("REF_SUMMARISER_MIN_SUMMARY_CHARS", "480")))
-    parser.add_argument("--job-id", help="Pipeline job identifier for Cloud Run Jobs to update state.")
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Use heuristic backend (no network calls).",
+    )
+    parser.add_argument(
+        "--model",
+        default=os.getenv("OPENAI_MODEL") or "gpt-4o-mini",
+        help="OpenAI model to use.",
+    )
+    parser.add_argument(
+        "--api-key", help="Explicit OpenAI API key. Defaults to environment variable."
+    )
+    parser.add_argument(
+        "--target-chars",
+        type=int,
+        default=int(os.getenv("REF_SUMMARISER_TARGET_CHARS", "2400")),
+    )
+    parser.add_argument(
+        "--max-chars",
+        type=int,
+        default=int(os.getenv("REF_SUMMARISER_MAX_CHARS", "10000")),
+    )
+    parser.add_argument(
+        "--overlap-chars",
+        type=int,
+        default=int(os.getenv("REF_SUMMARISER_OVERLAP_CHARS", "320")),
+    )
+    parser.add_argument(
+        "--min-summary-chars",
+        type=int,
+        default=int(os.getenv("REF_SUMMARISER_MIN_SUMMARY_CHARS", "480")),
+    )
+    parser.add_argument(
+        "--job-id", help="Pipeline job identifier for Cloud Run Jobs to update state."
+    )
     args = parser.parse_args(list(argv) if argv is not None else None)
 
     input_arg = args.input
@@ -881,7 +1058,9 @@ def _cli(argv: Optional[Iterable[str]] = None) -> None:
             except SecretResolutionError:
                 api_key = os.getenv("OPENAI_API_KEY")
         if not api_key:
-            parser.error("OPENAI_API_KEY must be set (or --api-key provided) when not using --dry-run.")
+            parser.error(
+                "OPENAI_API_KEY must be set (or --api-key provided) when not using --dry-run."
+            )
         backend = OpenAIResponsesBackend(model=args.model, api_key=api_key)
         _LOG.info("openai_backend_active", extra={"model": args.model})
 
@@ -919,13 +1098,20 @@ def _cli(argv: Optional[Iterable[str]] = None) -> None:
                 stage="SUMMARY_JOB",
                 message="Summariser job started",
                 extra={
-                    "input_path": input_arg if input_arg.startswith("gs://") else str(Path(input_arg).resolve()),
+                    "input_path": (
+                        input_arg
+                        if input_arg.startswith("gs://")
+                        else str(Path(input_arg).resolve())
+                    ),
                     "estimated_pages": len(pages),
                     "input_chars": len(text),
                 },
             )
         except Exception as exc:  # pragma: no cover - defensive
-            _LOG.exception("summary_job_state_init_failed", extra={"job_id": args.job_id, "error": str(exc)})
+            _LOG.exception(
+                "summary_job_state_init_failed",
+                extra={"job_id": args.job_id, "error": str(exc)},
+            )
             state_store = None
 
     validation: Dict[str, Any] = {}
@@ -940,7 +1126,11 @@ def _cli(argv: Optional[Iterable[str]] = None) -> None:
                 raise
             _LOG.warning(
                 "summary_backend_retry",
-                extra={"error": str(exc), "backend": backend_label, "input_chars": len(text)},
+                extra={
+                    "error": str(exc),
+                    "backend": backend_label,
+                    "input_chars": len(text),
+                },
             )
             backend = HeuristicChunkBackend()
             backend_label = "heuristic_fallback"
@@ -967,7 +1157,11 @@ def _cli(argv: Optional[Iterable[str]] = None) -> None:
                 raise
             _LOG.warning(
                 "supervisor_validation_retry",
-                extra={"error": str(exc), "backend": backend_label, "input_chars": len(text)},
+                extra={
+                    "error": str(exc),
+                    "backend": backend_label,
+                    "input_chars": len(text),
+                },
             )
             backend = HeuristicChunkBackend()
             backend_label = "heuristic_fallback"
@@ -989,7 +1183,9 @@ def _cli(argv: Optional[Iterable[str]] = None) -> None:
                 validation["override_reason"] = reason
                 validation["supervisor_passed"] = True
                 log_event = (
-                    "supervisor_override_dry_run" if args.dry_run else "supervisor_override_heuristic"
+                    "supervisor_override_dry_run"
+                    if args.dry_run
+                    else "supervisor_override_heuristic"
                 )
                 _LOG.warning(
                     log_event,
@@ -1004,17 +1200,26 @@ def _cli(argv: Optional[Iterable[str]] = None) -> None:
     except Exception as exc:
         if state_store and args.job_id:
             try:
-                stage_label = "SUPERVISOR" if failure_phase == "supervisor" else "SUMMARY_JOB"
+                stage_label = (
+                    "SUPERVISOR" if failure_phase == "supervisor" else "SUMMARY_JOB"
+                )
                 state_store.mark_status(
                     args.job_id,
                     PipelineStatus.FAILED,
                     stage=stage_label,
                     message=str(exc),
-                    extra={"error": str(exc), "phase": failure_phase, "summary_backend": backend_label},
+                    extra={
+                        "error": str(exc),
+                        "phase": failure_phase,
+                        "summary_backend": backend_label,
+                    },
                     updates={"last_error": {"stage": failure_phase, "error": str(exc)}},
                 )
             except Exception:  # pragma: no cover - best effort
-                _LOG.exception("summary_job_state_failure_mark_failed", extra={"job_id": args.job_id})
+                _LOG.exception(
+                    "summary_job_state_failure_mark_failed",
+                    extra={"job_id": args.job_id},
+                )
         raise
 
     summary_gcs_uri: Optional[str] = None
@@ -1022,8 +1227,12 @@ def _cli(argv: Optional[Iterable[str]] = None) -> None:
         _write_output(Path(args.output), summary)
     if args.output_gcs:
         try:
-            if_generation = None if args.gcs_if_generation < 0 else args.gcs_if_generation
-            summary_gcs_uri = _upload_summary_to_gcs(args.output_gcs, summary, if_generation_match=if_generation)
+            if_generation = (
+                None if args.gcs_if_generation < 0 else args.gcs_if_generation
+            )
+            summary_gcs_uri = _upload_summary_to_gcs(
+                args.output_gcs, summary, if_generation_match=if_generation
+            )
         except Exception as exc:
             if state_store and args.job_id:
                 try:
@@ -1033,19 +1242,29 @@ def _cli(argv: Optional[Iterable[str]] = None) -> None:
                         stage="SUMMARY_JOB",
                         message=str(exc),
                         extra={"error": str(exc), "phase": "summary_upload"},
-                        updates={"last_error": {"stage": "summary_upload", "error": str(exc)}},
+                        updates={
+                            "last_error": {"stage": "summary_upload", "error": str(exc)}
+                        },
                     )
                 except Exception:
-                    _LOG.exception("summary_job_state_upload_failed", extra={"job_id": args.job_id})
+                    _LOG.exception(
+                        "summary_job_state_upload_failed", extra={"job_id": args.job_id}
+                    )
             raise
 
     schema_version = os.getenv("SUMMARY_SCHEMA_VERSION", "2025-10-01")
     if state_store and args.job_id:
         try:
             summary_metadata: Dict[str, Any] = {
-                "summary_sections": [key for key in summary.keys() if not key.startswith("_")],
-                "summary_char_length": sum(len(str(value or "")) for value in summary.values()),
-                "summary_generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                "summary_sections": [
+                    key for key in summary.keys() if not key.startswith("_")
+                ],
+                "summary_char_length": sum(
+                    len(str(value or "")) for value in summary.values()
+                ),
+                "summary_generated_at": time.strftime(
+                    "%Y-%m-%dT%H:%M:%SZ", time.gmtime()
+                ),
                 "supervisor_validation": validation,
                 "summary_schema_version": schema_version,
                 "summary_backend": backend_label,
@@ -1078,7 +1297,9 @@ def _cli(argv: Optional[Iterable[str]] = None) -> None:
                 },
             )
         except Exception:  # pragma: no cover - best effort
-            _LOG.exception("summary_job_state_complete_failed", extra={"job_id": args.job_id})
+            _LOG.exception(
+                "summary_job_state_complete_failed", extra={"job_id": args.job_id}
+            )
     duration_ms = int((time.perf_counter() - summarise_started) * 1000)
     trace_field: Optional[str] = None
     if trace_id:

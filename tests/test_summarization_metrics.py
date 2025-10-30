@@ -1,6 +1,10 @@
 import pytest
 
-from src.models.events import OCRChunkMessage, StorageRequestMessage, SummaryResultMessage
+from src.models.events import (
+    OCRChunkMessage,
+    StorageRequestMessage,
+    SummaryResultMessage,
+)
 from src.services.metrics import PrometheusMetrics
 from src.services.storage_service import StorageConfig, StorageService
 from src.services.summarization_service import (
@@ -14,13 +18,23 @@ class DummyPublisher:
     def __init__(self) -> None:
         self.messages = []
 
-    async def publish(self, topic: str, data: bytes, attributes: dict[str, str] | None = None) -> str:
+    async def publish(
+        self, topic: str, data: bytes, attributes: dict[str, str] | None = None
+    ) -> str:
         self.messages.append((topic, data, attributes or {}))
         return "msg"
 
 
 class DummyLLM:
-    async def summarize(self, *, prompt: str, text: str, temperature: float, max_output_tokens: int, model: str) -> str:
+    async def summarize(
+        self,
+        *,
+        prompt: str,
+        text: str,
+        temperature: float,
+        max_output_tokens: int,
+        model: str,
+    ) -> str:
         return f"summary for {text[:10]}"
 
 

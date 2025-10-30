@@ -25,8 +25,7 @@ class SummaryRepository(Protocol):
         final_summary: str,
         per_chunk_summaries: list[SummaryResultMessage],
         metadata: dict[str, str],
-    ) -> None:
-        ...
+    ) -> None: ...
 
 
 @dataclass(slots=True)

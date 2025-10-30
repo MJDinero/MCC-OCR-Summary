@@ -10,7 +10,12 @@ from typing import AsyncIterator, Protocol
 
 from tenacity import AsyncRetrying, stop_after_attempt, wait_random_exponential
 
-from ..models.events import OCRChunkMessage, StorageRequestMessage, SummaryRequestMessage, SummaryResultMessage
+from ..models.events import (
+    OCRChunkMessage,
+    StorageRequestMessage,
+    SummaryRequestMessage,
+    SummaryResultMessage,
+)
 from ..utils.redact import redact_mapping
 from .chunker import Chunker
 from .interfaces import MetricsClient, PubSubPublisher
@@ -30,8 +35,7 @@ class LanguageModelClient(Protocol):
         temperature: float,
         max_output_tokens: int,
         model: str,
-    ) -> str:
-        ...
+    ) -> str: ...
 
 
 class ChunkSummaryStore(Protocol):
@@ -41,11 +45,11 @@ class ChunkSummaryStore(Protocol):
         self,
         *,
         record: SummaryResultMessage,
-    ) -> None:
-        ...
+    ) -> None: ...
 
-    async def list_chunk_summaries(self, *, job_id: str) -> list[SummaryResultMessage]:
-        ...
+    async def list_chunk_summaries(
+        self, *, job_id: str
+    ) -> list[SummaryResultMessage]: ...
 
 
 @dataclass(slots=True)
@@ -95,7 +99,11 @@ class SummarizationService:
         """Process an OCR chunk and publish the resulting summary."""
         started = time.perf_counter()
         try:
-            doc_type = message.metadata.get("doc_type", "document") if message.metadata else "document"
+            doc_type = (
+                message.metadata.get("doc_type", "document")
+                if message.metadata
+                else "document"
+            )
             partial_summaries = await self._summarize_sections(message, doc_type)
             chunk_summary = await self._summarize_text(
                 "\n".join(partial_summaries),
@@ -107,8 +115,16 @@ class SummarizationService:
                 chunk_id=message.chunk_id,
                 trace_id=message.trace_id,
                 summary_text=chunk_summary,
-                section_index=int(message.metadata.get("chunk_index", "0")) if message.metadata else 0,
-                total_sections=int(message.metadata.get("total_chunks", "0")) if message.metadata else 0,
+                section_index=(
+                    int(message.metadata.get("chunk_index", "0"))
+                    if message.metadata
+                    else 0
+                ),
+                total_sections=(
+                    int(message.metadata.get("total_chunks", "0"))
+                    if message.metadata
+                    else 0
+                ),
                 tokens_used=len(chunk_summary),
                 aggregate=False,
                 metadata=message.metadata or {},
@@ -155,7 +171,9 @@ class SummarizationService:
             doc_type=message.doc_type or "document",
         )
 
-    async def _summarize_sections(self, message: OCRChunkMessage, doc_type: str) -> list[str]:
+    async def _summarize_sections(
+        self, message: OCRChunkMessage, doc_type: str
+    ) -> list[str]:
         async def single_page() -> AsyncIterator[str]:
             yield message.text
 
@@ -169,7 +187,9 @@ class SummarizationService:
             summary = await self._summarize_text(
                 section,
                 doc_type=doc_type,
-                max_words=min(self.config.max_words, max(50, self.config.max_words // 2)),
+                max_words=min(
+                    self.config.max_words, max(50, self.config.max_words // 2)
+                ),
             )
             summaries.append(summary)
         return summaries
@@ -191,7 +211,9 @@ class SummarizationService:
                 )
         raise RuntimeError("Summarisation retries exhausted")
 
-    async def _publish_final_summary(self, message: OCRChunkMessage, doc_type: str) -> None:
+    async def _publish_final_summary(
+        self, message: OCRChunkMessage, doc_type: str
+    ) -> None:
         started = time.perf_counter()
         summaries = await self.store.list_chunk_summaries(job_id=message.job_id)
         if not summaries:
@@ -218,7 +240,9 @@ class SummarizationService:
             trace_id=message.trace_id,
             final_summary=final_summary,
             per_chunk_summaries=summaries,
-            object_uri=message.metadata.get("source_uri", "") if message.metadata else "",
+            object_uri=(
+                message.metadata.get("source_uri", "") if message.metadata else ""
+            ),
             metadata=message.metadata or {},
         )
         data, attributes = storage_message.to_pubsub()
@@ -281,4 +305,10 @@ class SummarizationService:
             self.metrics.increment("dlq_messages_total", stage="summarization")
 
 
-__all__ = ["SummarizationService", "SummarisationConfig", "LanguageModelClient", "ChunkSummaryStore", "build_prompt"]
+__all__ = [
+    "SummarizationService",
+    "SummarisationConfig",
+    "LanguageModelClient",
+    "ChunkSummaryStore",
+    "build_prompt",
+]
