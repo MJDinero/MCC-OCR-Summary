@@ -599,6 +599,20 @@ _ADMIN_KEYWORDS = (
     "patient education",
 )
 
+_CHUNK_METADATA_RE = re.compile(
+    r"\s*document processed in\s+\d+\s+chunk\(s\)(?:\.\s*)?", re.IGNORECASE
+)
+
+
+def _strip_chunk_metadata(text: str) -> str:
+    if not text:
+        return ""
+    cleaned = _CHUNK_METADATA_RE.sub(" ", text)
+    cleaned = re.sub(r"\s{2,}", " ", cleaned)
+    cleaned = re.sub(r"\s+([.,;:])", r"\1", cleaned)
+    return cleaned.strip()
+
+
 _VITAL_TOKENS = (
     "blood pressure",
     "vital",
@@ -628,7 +642,7 @@ _DETAIL_VITAL_RE = re.compile(
 def _filter_intro_lines(lines: Iterable[str]) -> List[str]:
     filtered: List[str] = []
     for line in lines:
-        text = _limit_sentences(line, 2)
+        text = _limit_sentences(_strip_chunk_metadata(line), 2)
         if not text:
             continue
         low = text.lower()
@@ -647,7 +661,7 @@ def _filter_intro_lines(lines: Iterable[str]) -> List[str]:
 def _filter_key_points(lines: Iterable[str]) -> List[str]:
     filtered: List[str] = []
     for line in lines:
-        text = _limit_sentences(line, 2)
+        text = _limit_sentences(_strip_chunk_metadata(line), 2)
         if not text:
             continue
         if _is_admin_noise(text) or _matches_noise_fragment(text):
@@ -665,7 +679,7 @@ def _filter_details(lines: Iterable[str]) -> List[str]:
     vital_seen = False
 
     for line in lines:
-        text = _limit_sentences(line, 2)
+        text = _limit_sentences(_strip_chunk_metadata(line), 2)
         if not text:
             continue
         if _is_admin_noise(text) or _matches_noise_fragment(text):
@@ -693,7 +707,7 @@ def _filter_care_plan(lines: Iterable[str]) -> List[str]:
     filtered: List[str] = []
     seen_keys: set[str] = set()
     for line in lines:
-        text = _limit_sentences(line, 2)
+        text = _limit_sentences(_strip_chunk_metadata(line), 2)
         if not text:
             continue
         if _is_admin_noise(text) or _matches_noise_fragment(text):
@@ -740,7 +754,7 @@ def _filter_diagnoses(items: Iterable[str]) -> List[str]:
     filtered: List[str] = []
     seen: set[str] = set()
     for item in items:
-        text = (item or "").strip("•- \t\r\n")
+        text = _strip_chunk_metadata((item or "").strip("•- \t\r\n"))
         if not text:
             continue
         if _matches_noise_fragment(text) or _is_admin_noise(text):
@@ -763,7 +777,7 @@ def _filter_providers(items: Iterable[str]) -> List[str]:
     filtered: List[str] = []
     seen: set[str] = set()
     for item in items:
-        text = (item or "").strip("•- \t\r\n")
+        text = _strip_chunk_metadata((item or "").strip("•- \t\r\n"))
         if not text:
             continue
         if _matches_noise_fragment(text):
@@ -784,7 +798,7 @@ def _filter_medications(items: Iterable[str]) -> List[str]:
     filtered: List[str] = []
     seen: set[str] = set()
     for item in items:
-        text = (item or "").strip("•- \t\r\n")
+        text = _strip_chunk_metadata((item or "").strip("•- \t\r\n"))
         if not text:
             continue
         if _matches_noise_fragment(text) or _is_admin_noise(text):
@@ -833,6 +847,38 @@ def _dedupe_across_sections(
                 seen.append(tokens)
         result.append((header, filtered_lines, bullet, narrative))
     return result
+
+
+_CANONICAL_NARRATIVE_ORDER = (
+    "Intro Overview",
+    "Key Points",
+    "Detailed Findings",
+    "Care Plan & Follow-Up",
+)
+
+
+def _dedupe_cross_sections(
+    sections: Dict[str, List[str]],
+) -> Dict[str, List[str]]:
+    """Remove duplicate lines across canonical sections while preserving order."""
+
+    seen: set[str] = set()
+    ordered_headings = list(_CANONICAL_NARRATIVE_ORDER)
+    ordered_headings.extend(
+        heading for heading in sections.keys() if heading not in ordered_headings
+    )
+    deduped: Dict[str, List[str]] = {}
+    for heading in ordered_headings:
+        lines = sections.get(heading, []) or []
+        filtered: List[str] = []
+        for line in lines:
+            norm = _normalise_line_key(line)
+            if not norm or norm in seen:
+                continue
+            seen.add(norm)
+            filtered.append(line)
+        deduped[heading] = filtered
+    return deduped
 
 
 @dataclass(slots=True)
@@ -941,7 +987,7 @@ class RefactoredSummariser:
 
     def summarise(
         self, text: str, *, doc_metadata: Optional[Dict[str, Any]] = None
-    ) -> Dict[str, str]:
+    ) -> Dict[str, Any]:
         if text is None or not str(text).strip():
             raise SummarizationError("Input text empty")
         raw_text = _normalize_text(str(text))
@@ -993,10 +1039,14 @@ class RefactoredSummariser:
             )
             self._merge_payload(aggregated, payload)
 
-        summary_text, diagnoses_list, providers_list, medications_list = (
-            self._compose_summary(
-                aggregated, chunk_count=len(chunked), doc_metadata=doc_metadata
-            )
+        (
+            summary_text,
+            canonical_sections,
+            diagnoses_list,
+            providers_list,
+            medications_list,
+        ) = self._compose_summary(
+            aggregated, chunk_count=len(chunked), doc_metadata=doc_metadata
         )
 
         summary_text = _sanitise_keywords(summary_text)
@@ -1031,7 +1081,12 @@ class RefactoredSummariser:
             },
         )
 
-        display: Dict[str, str] = {
+        intro_lines = canonical_sections.get("Intro Overview", [])
+        key_points_lines = canonical_sections.get("Key Points", [])
+        detailed_lines = canonical_sections.get("Detailed Findings", [])
+        care_plan_lines = canonical_sections.get("Care Plan & Follow-Up", [])
+
+        display: Dict[str, Any] = {
             "Patient Information": (
                 doc_metadata.get("patient_info", "Not provided")
                 if doc_metadata
@@ -1052,6 +1107,15 @@ class RefactoredSummariser:
             "_providers_list": "\n".join(providers_list),
             "_medications_list": "\n".join(medications_list),
         }
+        if intro_lines:
+            display["intro_overview"] = list(intro_lines)
+            display["overview"] = intro_lines[0]
+        else:
+            display["intro_overview"] = []
+        display["key_points"] = list(key_points_lines)
+        display["detailed_findings"] = list(detailed_lines)
+        display["clinical_details"] = list(detailed_lines)
+        display["care_plan"] = list(care_plan_lines)
         _LOG.info(
             "summariser_merge_complete",
             extra={
@@ -1074,7 +1138,7 @@ class RefactoredSummariser:
         text: str,
         *,
         doc_metadata: Optional[Dict[str, Any]] = None,
-    ) -> Dict[str, str]:
+    ) -> Dict[str, Any]:
         """Async compatibility wrapper used by API workflow."""
         return await asyncio.to_thread(self.summarise, text, doc_metadata=doc_metadata)
 
@@ -1211,6 +1275,7 @@ class RefactoredSummariser:
         "exam",
         "imaging",
         "vital",
+        "blood pressure",
         "range of motion",
         "neurologic",
         "labs",
@@ -1310,7 +1375,7 @@ class RefactoredSummariser:
         *,
         chunk_count: int,
         doc_metadata: Optional[Dict[str, Any]] = None,
-    ) -> Tuple[str, List[str], List[str], List[str]]:
+    ) -> Tuple[str, Dict[str, List[str]], List[str], List[str], List[str]]:
         _ = chunk_count  # legacy signature retention; chunk count no longer surfaced verbatim.
         overview_lines = self._dedupe_ordered(
             aggregated["overview"],
@@ -1371,35 +1436,47 @@ class RefactoredSummariser:
             intro_source = _limit_sentences(f"Source: {facility}.", 1)
             if intro_source and intro_source not in intro_lines:
                 intro_lines = [intro_source] + intro_lines
-        if not intro_lines:
-            intro_lines = [
-                "The provided medical record segments were analysed to extract clinically relevant information."
-            ]
 
         key_point_lines = _filter_key_points(key_points)
+        if not key_point_lines and key_points:
+            fallback_key = _limit_sentences(key_points[0], 2)
+            if fallback_key:
+                key_point_lines = [fallback_key]
         if not key_point_lines:
             key_point_lines = ["No explicit key points were extracted."]
 
         detail_candidates = clinical_details or overview_lines
         detail_lines = _filter_details(detail_candidates)
+        if not detail_lines and detail_candidates:
+            fallback_detail = _limit_sentences(detail_candidates[0], 2)
+            if fallback_detail:
+                detail_lines = [fallback_detail]
         if not detail_lines:
             detail_lines = ["No additional diagnostic findings were emphasised."]
 
         care_lines = _filter_care_plan(care_plan)
+        if not care_lines and care_plan:
+            fallback_care = _limit_sentences(care_plan[0], 2)
+            if fallback_care:
+                care_lines = [fallback_care]
         if not care_lines:
             care_lines = ["No active plan documented in the extracted text."]
 
         diagnoses_list = _filter_diagnoses(diagnoses)
-        if not diagnoses_list:
-            diagnoses_list = ["Not explicitly documented."]
-
         providers_list = _filter_providers(providers)
-        if not providers_list:
-            providers_list = ["Not listed."]
-
         medications_list = _filter_medications(medications)
-        if not medications_list:
-            medications_list = ["No medications recorded in extracted text."]
+
+        narrative_sections = {
+            "Intro Overview": intro_lines,
+            "Key Points": key_point_lines,
+            "Detailed Findings": detail_lines,
+            "Care Plan & Follow-Up": care_lines,
+        }
+        deduped_narratives = _dedupe_cross_sections(narrative_sections)
+        intro_lines = deduped_narratives["Intro Overview"]
+        key_point_lines = deduped_narratives["Key Points"]
+        detail_lines = deduped_narratives["Detailed Findings"]
+        care_lines = deduped_narratives["Care Plan & Follow-Up"]
 
         sections_payload: List[tuple[str, List[str], bool, bool]] = [
             ("Intro Overview", intro_lines, False, True),
@@ -1411,6 +1488,9 @@ class RefactoredSummariser:
             ("Medications / Prescriptions", medications_list, True, False),
         ]
         deduped_sections = _dedupe_across_sections(sections_payload)
+        canonical_sections: Dict[str, List[str]] = {
+            header: list(lines) for header, lines, _bullet, _ in deduped_sections
+        }
 
         summary_lines: List[str] = []
         for header, lines, bullet, _ in deduped_sections:
@@ -1451,7 +1531,13 @@ class RefactoredSummariser:
                     augmented = summary_lines + ["", filler[: needed + 20]]
                     summary_lines = _strip_noise_lines(augmented)
                     summary_text = "\n".join(summary_lines).strip()
-        return summary_text, diagnoses_list, providers_list, medications_list
+        return (
+            summary_text,
+            canonical_sections,
+            diagnoses_list,
+            providers_list,
+            medications_list,
+        )
 
 
 __all__ = [

@@ -104,6 +104,15 @@ def test_refactored_summary_structure_and_length() -> None:
     assert "Care Plan & Follow-Up:" in medical_summary
     assert len(medical_summary) >= summariser.min_summary_chars
 
+    assert isinstance(summary["intro_overview"], list)
+    assert summary["intro_overview"]
+    assert isinstance(summary["key_points"], list)
+    assert summary["key_points"]
+    assert isinstance(summary["detailed_findings"], list)
+    assert summary["detailed_findings"]
+    assert isinstance(summary["care_plan"], list)
+    assert summary["care_plan"]
+
     diagnoses_lines = summary["_diagnoses_list"].splitlines()
     assert "G43.709 Chronic migraine without aura" in diagnoses_lines[0]
     assert summary["_providers_list"].strip().startswith("Dr. Alicia Carter")
@@ -130,6 +139,70 @@ def test_compose_summary_pads_short_outputs() -> None:
     summariser = RefactoredSummariser(backend=backend, min_summary_chars=300)
     result = summariser.summarise("Tdap booster provided.")
     assert len(result["Medical Summary"]) >= 300
+
+
+def test_cross_section_dedupe_removes_duplicate_lines() -> None:
+    repeated_line = "Patient denies chest discomfort at rest."
+    backend = StubBackend(
+        responses={
+            1: {
+                "overview": repeated_line,
+                "key_points": [
+                    repeated_line,
+                    "Follow-up with cardiology arranged.",
+                ],
+                "clinical_details": [
+                    repeated_line,
+                    "Imaging study demonstrates no acute findings.",
+                ],
+                "care_plan": ["Continue home blood pressure monitoring and medication log."],
+            }
+        }
+    )
+    summariser = RefactoredSummariser(
+        backend=backend,
+        min_summary_chars=150,
+        target_chars=400,
+        max_chars=800,
+    )
+    payload_text = ("Patient denies chest pain post procedure. " * 40).strip()
+    summary = summariser.summarise(payload_text)
+
+    assert repeated_line in summary["intro_overview"]
+    assert repeated_line not in summary["key_points"]
+    assert "Imaging study demonstrates no acute findings." in summary[
+        "detailed_findings"
+    ]
+    assert repeated_line not in summary["detailed_findings"]
+
+
+def test_intro_uses_facility_and_entity_lists_require_filtered_content() -> None:
+    backend = StubBackend(
+        responses={
+            1: {
+                "overview": "Document processed in 2 chunk(s).",
+                "key_points": ["Patient discharged the same day in stable condition."],
+                "clinical_details": ["Vitals remained stable throughout observation."],
+                "care_plan": ["Routine follow-up in cardiology clinic within 2 weeks."],
+            }
+        }
+    )
+    summariser = RefactoredSummariser(
+        backend=backend,
+        min_summary_chars=150,
+        target_chars=400,
+        max_chars=800,
+    )
+    text = ("Same day surgery discharge summary. " * 40).strip()
+    summary = summariser.summarise(
+        text, doc_metadata={"facility": "Sunrise Medical Center"}
+    )
+
+    assert summary["intro_overview"] == ["Source: Sunrise Medical Center."]
+    assert summary["_diagnoses_list"].strip() == ""
+    assert summary["_providers_list"].strip() == ""
+    assert summary["_medications_list"].strip() == ""
+    assert "document processed" not in summary["Medical Summary"].lower()
 
 
 def test_openai_backend_schema_mismatch_raises(monkeypatch):
