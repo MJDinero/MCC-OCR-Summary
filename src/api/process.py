@@ -6,7 +6,7 @@ import inspect
 import logging
 import os
 import uuid
-from typing import Any, Dict, Tuple, List
+from typing import Any, Dict, Tuple, List, Sequence
 
 from fastapi import APIRouter, HTTPException, Query, Request, UploadFile, status
 from fastapi.responses import JSONResponse, Response
@@ -22,10 +22,17 @@ from src.services.docai_helper import clean_ocr_output
 from src.services.supervisor import CommonSenseSupervisor
 from src.utils.summary_thresholds import compute_summary_min_chars
 from src.utils.logging_utils import structured_log
+from src.utils.pipeline_failures import publish_pipeline_failure
 
 router = APIRouter()
 
 _API_LOG = logging.getLogger("api")
+_FORBIDDEN_PDF_PHRASES = (
+    "(condensed)",
+    "structured indices",
+    "summary lists",
+    "document processed in",
+)
 
 
 def _extract_trace_id(request: Request) -> str | None:
@@ -152,6 +159,59 @@ def _assemble_sections(summarised: Dict[str, Any]) -> List[Tuple[str, str]]:
     return sections
 
 
+def _pdf_guard_enabled() -> bool:
+    explicit = os.getenv("PDF_DEV_GUARD")
+    if explicit is not None:
+        return explicit.strip().lower() in {"1", "true", "yes", "on"}
+    env_name = os.getenv("ENVIRONMENT", "").strip().lower()
+    if env_name in {"local", "dev", "test", "unit"}:
+        return True
+    if os.getenv("PYTEST_CURRENT_TEST"):
+        return True
+    testing_flag = os.getenv("UNIT_TESTING", "")
+    if isinstance(testing_flag, str) and testing_flag.lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }:
+        return True
+    return False
+
+
+def _detect_forbidden_phrases(sections: Sequence[Tuple[str, str]]) -> List[str]:
+    hits: List[str] = []
+    for heading, body in sections:
+        blob = f"{heading}\n{body}".lower()
+        for phrase in _FORBIDDEN_PDF_PHRASES:
+            if phrase in blob:
+                hits.append(phrase)
+    return hits
+
+
+def _validate_pdf_sections(
+    sections: Sequence[Tuple[str, str]], *, guard_enabled: bool
+) -> Tuple[bool, List[str]]:
+    hits = _detect_forbidden_phrases(sections)
+    if hits:
+        structured_log(
+            _API_LOG,
+            logging.WARNING,
+            "pdf_validation_forbidden_phrases_detected",
+            forbidden_phrases=hits,
+            guard_enabled=guard_enabled,
+        )
+        if guard_enabled:
+            raise HTTPException(
+                status_code=500,
+                detail=(
+                    "PDF validation guard blocked forbidden phrases: "
+                    + ", ".join(sorted(set(hits)))
+                ),
+            )
+    return (not hits, hits)
+
+
 async def _execute_pipeline(
     request: Request, *, pdf_bytes: bytes, source: str
 ) -> Tuple[bytes, Dict[str, Any], str | None]:
@@ -197,7 +257,7 @@ async def _execute_pipeline(
         pages=len(pages),
     )
 
-    min_ocr_chars = int(os.getenv("MIN_OCR_CHARS", "50"))
+    min_ocr_chars = 0 if stub_mode else int(os.getenv("MIN_OCR_CHARS", "50"))
     if ocr_len < min_ocr_chars:
         structured_log(
             _API_LOG,
@@ -215,6 +275,13 @@ async def _execute_pipeline(
     try:
         summary_raw = await app.state.summariser.summarise_async(summary_source_text)
     except SummarizationError as exc:
+        publish_pipeline_failure(
+            stage="SUMMARY_JOB",
+            job_id=None,
+            trace_id=trace_id,
+            error=exc,
+            metadata={"source": source},
+        )
         structured_log(
             _API_LOG,
             logging.ERROR,
@@ -279,10 +346,24 @@ async def _execute_pipeline(
         or "Medical Summary"
     )
     sections = _assemble_sections(summarised)
+    guard_enabled = _pdf_guard_enabled()
+    pdf_compliant, forbidden_hits = _validate_pdf_sections(
+        sections, guard_enabled=guard_enabled
+    )
+    validation["pdf_compliant"] = pdf_compliant
+    if forbidden_hits:
+        validation["pdf_forbidden_phrases"] = forbidden_hits
 
     try:
         pdf_payload = app.state.pdf_writer.build(title, sections)
     except PDFGenerationError as exc:
+        publish_pipeline_failure(
+            stage="PDF_JOB",
+            job_id=None,
+            trace_id=trace_id,
+            error=exc,
+            metadata={"source": source},
+        )
         structured_log(
             _API_LOG,
             logging.ERROR,
@@ -326,6 +407,8 @@ async def _execute_pipeline(
         supervisor_passed=validation.get("supervisor_passed"),
         summary_chars=len(summary_text),
         pdf_bytes=len(pdf_payload),
+        pdf_compliant=pdf_compliant,
+        forbidden_phrases=forbidden_hits if forbidden_hits else None,
     )
 
     return pdf_payload, validation, drive_file_id
@@ -397,6 +480,11 @@ async def process_drive(
         "request_id": request_id,
         "compose_mode": getattr(request.app.state, "summary_compose_mode", "unknown"),
     }
+    response_payload["pdf_compliant"] = bool(validation.get("pdf_compliant", True))
+    if not response_payload["pdf_compliant"]:
+        response_payload["pdf_forbidden_phrases"] = validation.get(
+            "pdf_forbidden_phrases", []
+        )
     writer_backend = getattr(
         request.app.state,
         "writer_backend",

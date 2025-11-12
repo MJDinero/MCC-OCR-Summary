@@ -2,6 +2,8 @@ import os
 from fastapi.testclient import TestClient
 
 from src.main import create_app
+from src.errors import SummarizationError, PDFGenerationError
+from src.api import process as process_module
 
 
 def _setup_env():
@@ -43,3 +45,71 @@ def test_internal_event_rejects_missing_token():
         json={"status": "OCR_DONE"},
     )
     assert resp.status_code == 401
+
+
+def test_summary_failure_triggers_pipeline_guard(monkeypatch):
+    _setup_env()
+    os.environ["STUB_MODE"] = "true"
+    app = create_app()
+    client = TestClient(app)
+
+    async def _boom(_: str) -> dict[str, str]:
+        raise SummarizationError("summary explosion")
+
+    app.state.summariser.summarise_async = _boom  # type: ignore[attr-defined]
+    published: dict[str, str] = {}
+
+    def _fake_publish(**kwargs):
+        published.update(kwargs)
+        return True
+
+    monkeypatch.setattr(process_module, "publish_pipeline_failure", _fake_publish)
+
+    resp = client.post(
+        "/process",
+        files={"file": ("doc.pdf", b"not-a-real-pdf", "application/pdf")},
+    )
+    assert resp.status_code == 502
+    assert published["stage"] == "SUMMARY_JOB"
+    assert published["trace_id"] is None
+    os.environ.pop("STUB_MODE", None)
+
+
+def test_pdf_failure_triggers_pipeline_guard(monkeypatch):
+    _setup_env()
+    os.environ["STUB_MODE"] = "true"
+    app = create_app()
+    client = TestClient(app)
+
+    async def _stub_summary(_: str) -> dict[str, any]:  # type: ignore[override]
+        return {
+            "intro_overview": ["Encounter summary."],
+            "key_points": ["Key point."],
+            "detailed_findings": ["Finding."],
+            "care_plan": ["Follow-up."],
+            "_diagnoses_list": "Dx1",
+            "_providers_list": "Dr Example",
+            "_medications_list": "MedA",
+        }
+
+    class _BrokenWriter:
+        def build(self, title, sections):
+            raise PDFGenerationError("pdf failure")
+
+    app.state.summariser.summarise_async = _stub_summary  # type: ignore[attr-defined]
+    app.state.pdf_writer = _BrokenWriter()
+    published: dict[str, str] = {}
+
+    def _fake_publish(**kwargs):
+        published.update(kwargs)
+        return True
+
+    monkeypatch.setattr(process_module, "publish_pipeline_failure", _fake_publish)
+
+    resp = client.post(
+        "/process",
+        files={"file": ("doc.pdf", b"%PDF-1.4", "application/pdf")},
+    )
+    assert resp.status_code == 500
+    assert published["stage"] == "PDF_JOB"
+    os.environ.pop("STUB_MODE", None)

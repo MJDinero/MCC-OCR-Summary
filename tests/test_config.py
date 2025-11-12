@@ -76,3 +76,32 @@ def test_config_resolves_secret(monkeypatch):
     assert cfg.doc_ai_processor_id == "resolved"
     assert cfg.openai_api_key == "resolved"
     _clear()
+
+
+def test_local_env_relaxes_bucket_requirements():
+    _clear()
+    os.environ.update(
+        {
+            "PROJECT_ID": "p",
+            "REGION": "us",
+            "DOC_AI_PROCESSOR_ID": "proc",
+            "OPENAI_API_KEY": "k",
+            "DRIVE_INPUT_FOLDER_ID": "in",
+            "DRIVE_REPORT_FOLDER_ID": "out",
+            "INTERNAL_EVENT_TOKEN": "token",
+            "ENVIRONMENT": "local",
+            "INTAKE_GCS_BUCKET": "",
+            "OUTPUT_GCS_BUCKET": "",
+            "SUMMARY_BUCKET": "",
+        }
+    )
+    cfg = AppConfig()
+    cfg.validate_required()
+    assert cfg.intake_gcs_bucket == "local-intake"
+    assert cfg.output_gcs_bucket == "local-output"
+    assert cfg.summary_bucket == "local-summary"
+    _clear()
+    os.environ.pop("ENVIRONMENT", None)
+    os.environ.pop("INTAKE_GCS_BUCKET", None)
+    os.environ.pop("OUTPUT_GCS_BUCKET", None)
+    os.environ.pop("SUMMARY_BUCKET", None)

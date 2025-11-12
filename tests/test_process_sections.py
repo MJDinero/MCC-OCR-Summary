@@ -2,6 +2,9 @@ from __future__ import annotations
 
 from typing import Any, Dict
 
+import pytest
+from fastapi import HTTPException
+
 from src.api import process
 
 
@@ -50,3 +53,23 @@ def test_assemble_sections_falls_back_when_empty() -> None:
     section_map = _section_map(sections)
     for heading, text in expected.items():
         assert section_map[heading] == text
+
+
+def test_pdf_validator_detects_forbidden_phrases() -> None:
+    sections = [
+        ("Intro Overview", "Document processed in 2 chunk(s). Overview text."),
+        ("Key Points", "- Stable vitals."),
+    ]
+    compliant, hits = process._validate_pdf_sections(
+        sections, guard_enabled=False
+    )
+    assert not compliant
+    assert "document processed in" in hits
+
+
+def test_pdf_validator_guard_raises() -> None:
+    sections = [
+        ("Intro Overview", "Structured Indices appear here."),
+    ]
+    with pytest.raises(HTTPException):
+        process._validate_pdf_sections(sections, guard_enabled=True)

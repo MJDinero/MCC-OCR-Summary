@@ -40,7 +40,10 @@ _CONFIG_LOG = logging.getLogger("config")
 
 
 class AppConfig(BaseSettings):
-    project_id: str = Field("", validation_alias="PROJECT_ID")
+    project_id: str = Field(
+        "",
+        validation_alias=AliasChoices("PROJECT_ID", "project_id"),
+    )
     region: str = Field("us", validation_alias="REGION")
     # Dedicated Document AI location (falls back to region when not provided).
     doc_ai_location: str = Field(
@@ -52,6 +55,9 @@ class AppConfig(BaseSettings):
     )
     doc_ai_splitter_id: str | None = Field(
         None, validation_alias="DOC_AI_SPLITTER_PROCESSOR_ID"
+    )
+    doc_ai_force_split_min_pages: int = Field(
+        40, validation_alias="DOC_AI_FORCE_SPLIT_MIN_PAGES"
     )
     doc_ai_legacy_layout: bool = Field(False, validation_alias="DOC_AI_LEGACY_LAYOUT")
     doc_ai_enable_image_quality_scores: bool = Field(
@@ -240,6 +246,34 @@ class AppConfig(BaseSettings):
         return parse_bool(str(raw))
 
     def validate_required(self) -> None:
+        def _is_local_or_test() -> bool:
+            env_name = os.getenv("ENVIRONMENT", "").strip().lower()
+            if env_name in {"local", "test", "unit"}:
+                return True
+            if os.getenv("PYTEST_CURRENT_TEST"):
+                return True
+            testing_flag = os.getenv("UNIT_TESTING", "")
+            if isinstance(testing_flag, str) and testing_flag.lower() in {
+                "1",
+                "true",
+                "yes",
+                "on",
+            }:
+                return True
+            return False
+
+        is_local_env = _is_local_or_test()
+        relaxed_envs = (
+            {"INTAKE_GCS_BUCKET", "OUTPUT_GCS_BUCKET", "SUMMARY_BUCKET"}
+            if is_local_env
+            else set()
+        )
+        relaxed_defaults = {
+            "intake_gcs_bucket": "local-intake",
+            "output_gcs_bucket": "local-output",
+            "summary_bucket": "local-summary",
+        }
+
         # Primary value-based validation (empty / falsy fields)
         required_pairs = [
             ("project_id", self.project_id, "PROJECT_ID"),
@@ -261,7 +295,16 @@ class AppConfig(BaseSettings):
             ("summary_bucket", self.summary_bucket, "SUMMARY_BUCKET"),
             ("internal_event_token", self.internal_event_token, "INTERNAL_EVENT_TOKEN"),
         ]
-        missing = [name for name, value, _env in required_pairs if not value]
+        missing: list[str] = []
+        for name, value, env_name in required_pairs:
+            if env_name in relaxed_envs:
+                if not value:
+                    fallback = relaxed_defaults.get(name)
+                    if fallback:
+                        setattr(self, name, fallback)
+                continue
+            if not value:
+                missing.append(name)
 
         # Secondary safeguard for test environments: if a field has a value but its
         # corresponding env var is absent entirely, treat it as missing so that tests
@@ -277,13 +320,12 @@ class AppConfig(BaseSettings):
             "OPENAI_API_KEY",
             "DRIVE_INPUT_FOLDER_ID",
             "DRIVE_REPORT_FOLDER_ID",
-            "INTAKE_GCS_BUCKET",
-            "OUTPUT_GCS_BUCKET",
-            "SUMMARY_BUCKET",
             "INTERNAL_EVENT_TOKEN",
-        }
+        } | ({"INTAKE_GCS_BUCKET", "OUTPUT_GCS_BUCKET", "SUMMARY_BUCKET"} - relaxed_envs)
         unmet_env: list[str] = []
         for name, value, env_name in required_pairs:
+            if env_name in relaxed_envs:
+                continue
             if (
                 env_name not in os.environ
                 and env_name in strict_env_presence
@@ -304,22 +346,6 @@ class AppConfig(BaseSettings):
             raise RuntimeError(
                 "Missing environment variables: " + ", ".join(sorted(set(unmet_env)))
             )
-
-        def _is_local_or_test() -> bool:
-            env_name = os.getenv("ENVIRONMENT", "").strip().lower()
-            if env_name in {"local", "test", "unit"}:
-                return True
-            if os.getenv("PYTEST_CURRENT_TEST"):
-                return True
-            testing_flag = os.getenv("UNIT_TESTING", "")
-            if isinstance(testing_flag, str) and testing_flag.lower() in {
-                "1",
-                "true",
-                "yes",
-                "on",
-            }:
-                return True
-            return False
 
         optional_pairs = [
             (
