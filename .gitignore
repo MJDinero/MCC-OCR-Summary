@@ -102,3 +102,20 @@ meta.json
 report.pdf
 report.txt
 validator.json
+
+# Generated summary outputs
+outputs/
+
+# Pipeline artifacts
+run-*.json
+report-*.pdf
+report-*.txt
+report_meta-*.json
+report_metadata.json
+report-error-*.json
+meta-*.json
+validator-*.json
+process_http.txt
+pages.json
+intake_latest.json
+tmp/
