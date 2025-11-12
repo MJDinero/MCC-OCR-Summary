@@ -146,8 +146,8 @@ Apply these with `gcloud run services update mcc-ocr-summary --region us-central
 
 - **Metrics**: Prometheus instrumentation is enabled by default (`/metrics` endpoint attached via `PrometheusMetrics.instrument_app`). Latency, throughput, DLQ counters, and job completions are emitted per stage.
 - **Logs**: Structured JSON logs now include `stage`, `service`, `latency_ms`, `error_type`, and `redaction_applied` to streamline SRE triage.
-- **Monitoring Assets**: Dashboards in `infra/monitoring/dashboard_pipeline_latency.json` and `infra/monitoring/dashboard_throughput_cpu_mem.json` visualise latency distributions and Cloud Run CPU/memory. Alert policies (`alert_dlq_backlog.json`, `alert_5xx_rate.json`, `alert_slo_breach.json`) enforce DLQ backlog, 5xx error rate, and pipeline SLOs.
-- **Verification**: After deployment, run `gcloud monitoring dashboards create` / `alert-policies create` with the JSON manifests and confirm `/metrics` exposes Prometheus samples.
+- **Monitoring Assets**: Dashboards in `infra/monitoring/dashboard_pipeline_latency.json` and `infra/monitoring/dashboard_throughput_cpu_mem.json` visualise latency distributions and Cloud Run CPU/memory. Alert policies (`alert_dlq_backlog.json`, `alert_5xx_rate.json`, `alert_slo_breach.json`) enforce DLQ backlog, 5xx error rate, and pipeline SLOs. Apply or update them with `python infra/monitoring/apply_monitoring.py --project <gcp-project>`.
+- **Verification**: After deployment, confirm `/metrics` exposes Prometheus samples (metrics are now forced on in Cloud Run) and that `infra/monitoring/apply_monitoring.py` completed without errors.
 
 ## Runtime Tuning
 
@@ -255,3 +255,15 @@ For further details, see `AGENTS.md` and `audit/technical_audit_v11j.md`.
 - [ ] Promote canary only after smoke test success; note rollback command from Cloud Build logs.
 
 Permanent thresholds: chars >= 300, supervisor pass >= 0.995
+
+## Runtime Flags
+
+- `SUMMARY_COMPOSE_MODE`: Selects summariser compose strategy (`refactored` by default, falls back to `legacy`).
+- `PDF_WRITER_MODE`: Chooses PDF renderer (`rich`, `minimal`, or `reportlab` backend); `rich` enables full formatting.
+- `ENABLE_NOISE_FILTERS`: Toggles heuristic cleanup of OCR noise; set to `true` to keep large-intake filters active.
+- `DOC_AI_FORCE_SPLIT_MIN_PAGES`: Forces DocAI splitter activation when page count meets or exceeds this threshold.
+- `DOC_AI_LOCATION`: Controls DocAI regional endpoint to satisfy data residency and latency requirements.
+
+## License
+
+This project is licensed under the Apache License, Version 2.0. See `LICENSE` for the full text and `THIRD_PARTY_NOTICES.md` for bundled dependency notices.

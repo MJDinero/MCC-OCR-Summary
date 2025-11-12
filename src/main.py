@@ -60,7 +60,16 @@ _API_LOG = logging.getLogger("api")
 _MVP_MODE = is_mvp()
 MODE = "MVP" if _MVP_MODE else "AUDIT"
 print(f"🚀 MCC-OCR-Summary starting in {MODE} mode")
-ENABLE_METRICS = not _MVP_MODE
+
+
+def _metrics_enabled(default: bool) -> bool:
+    raw = os.getenv("ENABLE_METRICS")
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+ENABLE_METRICS = _metrics_enabled(not _MVP_MODE)
 
 
 def _health_payload() -> dict[str, str]:
