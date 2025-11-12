@@ -1,33 +1,37 @@
-import os
-import tempfile
+from __future__ import annotations
+
+from io import BytesIO
+
 import pytest
+from pypdf import PdfReader
 
-from src.services.pdf_writer import PDFWriter, MinimalPDFBackend, write_summary_pdf
 from src.errors import PDFGenerationError
+from src.services.pdf_writer import PDFWriter, ReportLabBackend
 
 
-def test_minimal_backend_bytes():
-    backend = MinimalPDFBackend()
-    writer = PDFWriter(backend, title="T")
-    pdf_bytes = writer.build("Some summary text")
+def _extract_text(pdf_bytes: bytes) -> str:
+    reader = PdfReader(BytesIO(pdf_bytes))
+    contents: list[str] = []
+    for page in reader.pages:
+        extracted = page.extract_text() or ""
+        contents.append(extracted)
+    return "\n".join(contents)
+
+
+def test_reportlab_backend_emits_pdf():
+    writer = PDFWriter(ReportLabBackend(), title="T")
+    sections = [
+        ("Intro Overview", "Patient evaluated in clinic."),
+        ("Key Points", "- Key item one\n- Key item two"),
+    ]
+    pdf_bytes = writer.build("Clinical Summary", sections)
     assert pdf_bytes.startswith(b"%PDF-")
-    assert len(pdf_bytes) > 50
+    text = _extract_text(pdf_bytes)
+    assert "Clinical Summary" in text
+    assert "- Key item one" in text
 
 
-def test_empty_summary_error():
-    backend = MinimalPDFBackend()
-    writer = PDFWriter(backend)
+def test_empty_sections_error():
+    writer = PDFWriter(ReportLabBackend())
     with pytest.raises(PDFGenerationError):
-        writer.build("   ")
-
-
-def test_write_summary_pdf_helper():
-    fd, path = tempfile.mkstemp(suffix=".pdf")
-    os.close(fd)
-    try:
-        write_summary_pdf("Summary body", path)
-        with open(path, "rb") as f:
-            data = f.read()
-        assert data.startswith(b"%PDF-")
-    finally:
-        os.remove(path)
+        writer.build("Title", [])

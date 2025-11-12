@@ -23,8 +23,8 @@ from src.services.pipeline import (
 
 from src.errors import PDFGenerationError
 from src.services.pdf_writer import (
-    MinimalPDFBackend,
     PDFBackend,
+    ReportLabBackend,
     _wrap_text as _legacy_wrap_text,  # reuse the proven text wrapper
 )
 
@@ -71,26 +71,30 @@ def _normalise_summary(
             sections.append((key, value))
     existing_keys = {title for title, _ in sections}
     for key in sorted(
-        k for k in summary.keys() if k not in existing_keys and not k.startswith("_")
+        k
+        for k in summary.keys()
+        if k not in existing_keys
+        and not k.startswith("_")
+        and k not in {"Structured Indices", "Summary Lists"}
     ):
         value = (summary.get(key) or "").strip()
         if value:
             sections.append((key, value))
 
     diag_list = [
-        line.strip()
+        line.strip().lstrip("•*- ").strip()
         for line in (summary.get("_diagnoses_list", "") or "").splitlines()
-        if line.strip()
+        if line.strip().lstrip("•*- ").strip()
     ]
     prov_list = [
-        line.strip()
+        line.strip().lstrip("•*- ").strip()
         for line in (summary.get("_providers_list", "") or "").splitlines()
-        if line.strip()
+        if line.strip().lstrip("•*- ").strip()
     ]
     med_list = [
-        line.strip()
+        line.strip().lstrip("•*- ").strip()
         for line in (summary.get("_medications_list", "") or "").splitlines()
-        if line.strip()
+        if line.strip().lstrip("•*- ").strip()
     ]
     indices = {
         "Diagnoses": diag_list,
@@ -98,11 +102,15 @@ def _normalise_summary(
         "Medications / Prescriptions": med_list,
     }
 
-    if any(indices.values()):
-        sections.append(("Structured Indices", "=" * 48))
-        for heading, items in indices.items():
-            content = "N/A" if not items else "\n".join(f"• {item}" for item in items)
-            sections.append((heading, content))
+    ordered_indices = [
+        ("Diagnoses", diag_list),
+        ("Providers", prov_list),
+        ("Medications / Prescriptions", med_list),
+    ]
+    for heading, items in ordered_indices:
+        body = "N/A" if not items else "\n".join(f"- {item}" for item in items)
+        if heading not in {title for title, _ in sections}:
+            sections.append((heading, body))
     return sections, indices
 
 
@@ -289,9 +297,9 @@ def _merge_dicts(base: Dict[str, Any], patch: Dict[str, Any]) -> Dict[str, Any]:
 
 @dataclass
 class PDFWriterRefactored:
-    """Wrapper around MinimalPDFBackend that enforces PDF invariants and logging."""
+    """Wrapper around the Platypus backend that enforces PDF invariants and logging."""
 
-    backend: PDFBackend = field(default_factory=MinimalPDFBackend)
+    backend: PDFBackend = field(default_factory=ReportLabBackend)
     title: str = "Document Summary"
     wrap_width: int = 100
 
@@ -304,9 +312,6 @@ class PDFWriterRefactored:
         sections, indices = _normalise_summary(summary)
         formatted_sections: List[Tuple[str, str]] = []
         for heading, body in sections:
-            if heading == "Structured Indices" and body == "=" * 48:
-                formatted_sections.append((heading, body))
-                continue
             wrapped = "\n".join(_wrap_text(body, self.wrap_width))
             formatted_sections.append((heading, wrapped))
 

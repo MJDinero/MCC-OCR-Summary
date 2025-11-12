@@ -1,17 +1,12 @@
-"""PDF generation service with pluggable backend.
-
-Default implementation uses reportlab *if available*, else falls back to a
-very simple pure-Python minimal PDF generator (sufficient for tests) so the
-module works without optional dependencies during early development.
-"""
+"""PDF generation service with a single, Platypus-based backend."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Protocol, Sequence, Dict
 from io import BytesIO
 import logging
 import math
+from typing import Dict, Protocol, Sequence
 
 from src.errors import PDFGenerationError
 
@@ -49,8 +44,6 @@ class ReportLabBackend:
                 SimpleDocTemplate,
                 Paragraph,
                 Spacer,
-                ListFlowable,
-                ListItem,
                 PageBreak,
             )
         except Exception as exc:  # pragma: no cover
@@ -94,7 +87,6 @@ class ReportLabBackend:
             "BulletText",
             parent=body_style,
             leftIndent=18,
-            bulletIndent=10,
             spaceAfter=4,
         )
 
@@ -112,36 +104,18 @@ class ReportLabBackend:
             flowables.append(Paragraph(heading, heading_style))
             current_lines += 2
 
+            appended_content = False
             if bullets:
-                list_items = [
-                    ListItem(
-                        Paragraph(item, bullet_style),
-                        value="•",
-                    )
-                    for item in bullets
-                ]
-                flowables.append(
-                    ListFlowable(
-                        list_items,
-                        bulletType="bullet",
-                        start="bullet",
-                        leftIndent=12,
-                        bulletFontName="Helvetica",
-                        bulletFontSize=11,
-                    )
-                )
-                current_lines += len(bullets) + 1
-                if paragraphs:
-                    for para in paragraphs:
-                        flowables.append(Paragraph(para, body_style))
-                        approx_lines = max(1, math.ceil(len(para) / 90))
-                        current_lines += approx_lines
-            else:
-                content_paragraphs = paragraphs or ["N/A"]
-                for para in content_paragraphs:
-                    flowables.append(Paragraph(para, body_style))
-                    approx_lines = max(1, math.ceil(len(para) / 90))
-                    current_lines += approx_lines
+                for item in bullets:
+                    flowables.append(Paragraph(f"- {item}", bullet_style))
+                    current_lines += 1
+                    appended_content = True
+            content_paragraphs = paragraphs or ([] if appended_content else ["N/A"])
+            for para in content_paragraphs:
+                flowables.append(Paragraph(para, body_style))
+                approx_lines = max(1, math.ceil(len(para) / 90))
+                current_lines += approx_lines
+                appended_content = True
 
             flowables.append(Spacer(1, 10))
             current_lines += 1
@@ -212,85 +186,6 @@ def _estimate_section_lines(paragraphs: list[str], bullets: list[str]) -> int:
     return lines
 
 
-class MinimalPDFBackend:
-    """Tiny fallback PDF builder (not full spec) adequate for tests.
-
-    Produces a single-page textual PDF using plain text objects. Not suitable
-    for production rendering sophistication but keeps tests self-contained.
-    """
-
-    def build(self, title: str, sections: Sequence[tuple[str, str]]) -> bytes:
-        try:
-            lines = [title]
-            for heading, body in sections:
-                lines.append(heading)
-                lines.extend(_wrap_text(body, 100))
-            # Minimalistic PDF creation
-            content_stream = "\n".join(lines)
-            pdf_bytes = _simple_pdf(content_stream)
-            return pdf_bytes
-        except Exception as exc:  # pragma: no cover
-            raise PDFGenerationError(f"Failed to build minimal PDF: {exc}") from exc
-
-
-def _simple_pdf(text: str) -> bytes:
-    # This is a very naive PDF writer for testing; ensures %PDF header
-    # Reference: simplest possible PDF with one page & one text object.
-    lines = text.splitlines() or [text]
-    escaped_lines = []
-    for line in lines:
-        escaped = (
-            line.replace("\\", "\\\\")
-            .replace("(", "\\(")
-            .replace(")", "\\)")
-        )
-        escaped_lines.append(escaped)
-    content_ops = [
-        "BT",
-        "/F1 12 Tf",
-        "1 0 0 1 72 720 Tm",
-        "14 TL",
-    ]
-    for escaped in escaped_lines:
-        content_ops.append(f"({escaped}) Tj")
-        content_ops.append("T*")
-    content_ops.append("ET")
-    stream = "\n".join(content_ops)
-    objects = []
-    # 1: Catalog
-    objects.append("1 0 obj<< /Type /Catalog /Pages 2 0 R >>endobj")
-    # 2: Pages
-    objects.append("2 0 obj<< /Type /Pages /Kids [3 0 R] /Count 1 >>endobj")
-    # 3: Page
-    objects.append(
-        "3 0 obj<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources<< /Font<< /F1 5 0 R >> >> >>endobj"
-    )
-    # 4: Content
-    objects.append(
-        f"4 0 obj<< /Length {len(stream)} >>stream\n{stream}\nendstream endobj"
-    )
-    # 5: Font
-    objects.append(
-        "5 0 obj<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>endobj"
-    )
-    xref_positions = []
-    pdf = ["%PDF-1.4"]
-    for obj in objects:
-        xref_positions.append(sum(len(p) + 1 for p in pdf))
-        pdf.append(obj)
-    xref_start = sum(len(p) + 1 for p in pdf)
-    pdf.append("xref")
-    pdf.append(f"0 {len(objects)+1}")
-    pdf.append("0000000000 65535 f ")
-    for pos in xref_positions:
-        pdf.append(f"{pos:010d} 00000 n ")
-    pdf.append("trailer<< /Size 6 /Root 1 0 R >>")
-    pdf.append("startxref")
-    pdf.append(str(xref_start))
-    pdf.append("%%EOF")
-    return ("\n".join(pdf)).encode("utf-8")
-
-
 @dataclass
 class PDFWriter:
     backend: PDFBackend
@@ -298,81 +193,42 @@ class PDFWriter:
 
     def build(
         self,
-        summary_or_title: Dict[str, str] | str,
-        sections: Sequence[tuple[str, str]] | None = None,
+        title: str,
+        sections: Sequence[tuple[str, str]],
     ) -> bytes:
-        if sections is not None:
-            title = str(summary_or_title or "").strip() or self.title
-            sections_seq = []
-            for heading, body in sections:
-                heading_text = str(heading or "").strip() or "Section"
-                body_text = str(body or "").strip() or "N/A"
-                sections_seq.append((heading_text, body_text))
-            if not sections_seq:
-                raise PDFGenerationError("Summary structure empty")
-        else:
-            title = self.title
-            if isinstance(summary_or_title, str):
-                summary_text = summary_or_title.strip()
-                if not summary_text:
-                    raise PDFGenerationError("Summary text empty")
-                sections_seq = [("Summary", summary_text)]
-            else:
-                summary = summary_or_title
-                if not summary:
-                    raise PDFGenerationError("Summary structure empty")
-                order = [
-                    "Patient Information",
-                    "Medical Summary",
-                    "Billing Highlights",
-                    "Legal / Notes",
-                ]
-                sections_seq = []
-                for key in order:
-                    if key in summary:
-                        val = (summary[key] or "").strip() or "N/A"
-                        sections_seq.append((key, val))
-                for k in sorted(
-                    k for k in summary.keys() if k not in {o for o, _ in sections_seq}
-                ):
-                    sections_seq.append((k, (summary[k] or "").strip()))
-                diag_list = [
-                    s
-                    for s in (summary.get("_diagnoses_list", "").splitlines())
-                    if s.strip()
-                ]
-                prov_list = [
-                    s
-                    for s in (summary.get("_providers_list", "").splitlines())
-                    if s.strip()
-                ]
-                med_list = [
-                    s
-                    for s in (summary.get("_medications_list", "").splitlines())
-                    if s.strip()
-                ]
-                any_lists = any([diag_list, prov_list, med_list])
-                if any_lists:
-                    sections_seq.append(
-                        (
-                            "Structured Indices",
-                            "=" * 48,
-                        )
-                    )
-
-                    def _fmt_block(title: str, items: list[str]) -> str:
-                        if not items:
-                            return f"{title}:\nN/A"
-                        return f"{title}:\n" + "\n".join(f"• {i}" for i in items)
-
-                    sections_seq.append(("Diagnoses", _fmt_block("Diagnoses", diag_list)))
-                    sections_seq.append(("Providers", _fmt_block("Providers", prov_list)))
-                    sections_seq.append(
-                        (
-                            "Medications",
-                            _fmt_block("Medications / Prescriptions", med_list),
-                        )
-                    )
+        title_text = str(title or "").strip() or self.title
+        if not sections:
+            raise PDFGenerationError("Summary structure empty")
+        canonical_order: Dict[str, int] = {
+            "Intro Overview": 0,
+            "Key Points": 1,
+            "Detailed Findings": 2,
+            "Care Plan & Follow-Up": 3,
+            "Diagnoses": 4,
+            "Providers": 5,
+            "Medications / Prescriptions": 6,
+            "Patient Information": 7,
+            "Medical Summary": 8,
+            "Billing Highlights": 9,
+            "Legal / Notes": 10,
+        }
+        sections_seq: list[tuple[str, str]] = []
+        for heading, body in sections:
+            heading_text = str(heading or "").strip() or "Section"
+            body_lines = (body or "").splitlines()
+            sanitised = "\n".join(line.rstrip() for line in body_lines).strip()
+            sections_seq.append((heading_text, sanitised or "N/A"))
+        indexed = list(enumerate(sections_seq))
+        sections_seq = [
+            section
+            for _, section in sorted(
+                indexed,
+                key=lambda item: (
+                    canonical_order.get(item[1][0], len(canonical_order) + item[0]),
+                    item[0],
+                ),
+            )
+        ]
         _LOG.info(
             "pdf_writer_started",
             extra={
@@ -381,13 +237,14 @@ class PDFWriter:
                     sum(
                         1
                         for heading, _ in sections_seq
-                        if heading in {"Diagnoses", "Providers", "Medications"}
+                        if heading
+                        in {"Diagnoses", "Providers", "Medications / Prescriptions"}
                     )
                 ),
             },
         )
         try:
-            result = self.backend.build(title, sections_seq)
+            result = self.backend.build(title_text, sections_seq)
             if _PDF_CALLS:
                 _PDF_CALLS.labels(status="success").inc()
             _LOG.info(
@@ -408,18 +265,8 @@ class PDFWriter:
             raise PDFGenerationError(f"Failed generating PDF: {exc}") from exc
 
 
-def write_summary_pdf(summary: str, output_path: str) -> None:
-    """Backward compatible helper using MinimalPDFBackend."""
-    writer = PDFWriter(MinimalPDFBackend())
-    data = writer.build(summary)
-    with open(output_path, "wb") as f:  # noqa: P103
-        f.write(data)
-
-
 __all__ = [
     "PDFWriter",
     "PDFBackend",
     "ReportLabBackend",
-    "MinimalPDFBackend",
-    "write_summary_pdf",
 ]

@@ -19,7 +19,7 @@ from src.logging_setup import configure_logging
 from src.services import drive_client as drive_client_module
 from src.services.docai_helper import OCRService
 from src.services.metrics import PrometheusMetrics, NullMetrics
-from src.services.pdf_writer import MinimalPDFBackend, PDFWriter, ReportLabBackend
+from src.services.pdf_writer import PDFWriter, ReportLabBackend
 from src.services.pipeline import (
     create_state_store_from_env,
     create_workflow_launcher_from_env,
@@ -158,9 +158,14 @@ def _build_pdf_writer(*, cfg, override_mode: str | None = None) -> tuple[str, PD
         default="rich",
         allowed={"minimal", "rich", "reportlab"},
     )
+    backend_label = "reportlab" if writer_mode in {"reportlab", "minimal"} else "rich"
     if writer_mode == "minimal":
-        return writer_mode, PDFWriter(MinimalPDFBackend()), "minimal"
-    backend_label = "reportlab" if writer_mode == "reportlab" else "rich"
+        structured_log(
+            _API_LOG,
+            logging.WARNING,
+            "pdf_writer_minimal_deprecated",
+            message="Minimal PDF writer is no longer supported; falling back to reportlab.",
+        )
     return "rich", PDFWriter(ReportLabBackend()), backend_label
 
 
