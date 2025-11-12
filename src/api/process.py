@@ -35,6 +35,123 @@ def _extract_trace_id(request: Request) -> str | None:
     return request.headers.get("X-Request-ID")
 
 
+def _clean_entry(value: str) -> str:
+    return value.strip().lstrip("•*- ").strip()
+
+
+def _normalise_lines(value: Any) -> List[str]:
+    if value is None:
+        return []
+    if isinstance(value, (list, tuple, set)):
+        cleaned: List[str] = []
+        for item in value:
+            text = _clean_entry(str(item))
+            if text:
+                cleaned.append(text)
+        return cleaned
+    if isinstance(value, str):
+        parts = [_clean_entry(part) for part in value.splitlines()]
+        return [part for part in parts if part]
+    text = _clean_entry(str(value))
+    return [text] if text else []
+
+
+def _to_text(value: Any, *, bullet: bool = False) -> str:
+    if isinstance(value, (list, tuple, set)):
+        cleaned = _normalise_lines(list(value))
+        if not cleaned:
+            return ""
+        if bullet:
+            return "\n".join(f"- {item}" for item in cleaned)
+        return "\n".join(cleaned)
+    if value is None:
+        return ""
+    text = str(value).strip()
+    if not text:
+        return ""
+    if bullet:
+        parts = _normalise_lines(text)
+        if not parts:
+            return ""
+        return "\n".join(f"- {item}" for item in parts)
+    return text
+
+
+def _section(
+    heading: str,
+    value: Any,
+    *,
+    bullet: bool = False,
+    fallback: str = "N/A",
+) -> Tuple[str, str]:
+    text = _to_text(value, bullet=bullet)
+    text = text or fallback
+    return heading, text
+
+
+SECTION_FALLBACK = "No clinically meaningful content was extracted for this section."
+LIST_FALLBACK = "No clinically meaningful entries were extracted for this list."
+
+
+def _assemble_sections(summarised: Dict[str, Any]) -> List[Tuple[str, str]]:
+    sections: List[Tuple[str, str]] = []
+    sections.append(
+        _section(
+            "Intro Overview",
+            _normalise_lines(
+                summarised.get("intro_overview") or summarised.get("overview")
+            ),
+            fallback=SECTION_FALLBACK,
+        )
+    )
+    sections.append(
+        _section(
+            "Key Points",
+            _normalise_lines(summarised.get("key_points")),
+            bullet=True,
+            fallback=SECTION_FALLBACK,
+        )
+    )
+    sections.append(
+        _section(
+            "Detailed Findings",
+            _normalise_lines(
+                summarised.get("detailed_findings")
+                or summarised.get("clinical_details")
+            ),
+            bullet=True,
+            fallback=SECTION_FALLBACK,
+        )
+    )
+    sections.append(
+        _section(
+            "Care Plan & Follow-Up",
+            _normalise_lines(summarised.get("care_plan")),
+            bullet=True,
+            fallback=SECTION_FALLBACK,
+        )
+    )
+    optional_lists = [
+        (
+            "Diagnoses",
+            _normalise_lines(summarised.get("_diagnoses_list")),
+        ),
+        (
+            "Providers",
+            _normalise_lines(summarised.get("_providers_list")),
+        ),
+        (
+            "Medications / Prescriptions",
+            _normalise_lines(summarised.get("_medications_list")),
+        ),
+    ]
+    for heading, lines in optional_lists:
+        sections.append(
+            _section(heading, lines, bullet=True, fallback=LIST_FALLBACK)
+        )
+    return sections
+
+
 async def _execute_pipeline(
     request: Request, *, pdf_bytes: bytes, source: str
 ) -> Tuple[bytes, Dict[str, Any], str | None]:
@@ -155,87 +272,13 @@ async def _execute_pipeline(
 
     summarised: Dict[str, Any] = dict(summary_dict)
 
-    def _to_text(value: Any, *, bullet: bool = False) -> str:
-        if isinstance(value, list):
-            cleaned = [str(item).strip() for item in value if str(item).strip()]
-            if not cleaned:
-                return ""
-            if bullet:
-                return "\n".join(f"- {item}" for item in cleaned)
-            return "\n".join(cleaned)
-        if value is None:
-            return ""
-        return str(value).strip()
-
-    def _section(
-        heading: str,
-        value: Any,
-        *,
-        bullet: bool = False,
-        fallback: str = "N/A",
-    ) -> Tuple[str, str]:
-        text = _to_text(value, bullet=bullet)
-        text = text or fallback
-        return heading, text
-
     title = (
         ocr_result.get("title")
         or summarised.get("title")
         or summarised.get("document_title")
         or "Medical Summary"
     )
-    sections: List[Tuple[str, str]] = []
-    sections.append(
-        _section(
-            "Intro Overview",
-            summarised.get("intro_overview")
-            or summarised.get("overview")
-            or summary_text,
-        )
-    )
-    sections.append(
-        _section(
-            "Key Points",
-            summarised.get("key_points"),
-            bullet=True,
-        )
-    )
-    sections.append(
-        _section(
-            "Detailed Findings",
-            summarised.get("detailed_findings") or summarised.get("clinical_details"),
-        )
-    )
-    sections.append(
-        _section(
-            "Care Plan & Follow-Up",
-            summarised.get("care_plan"),
-            bullet=True,
-        )
-    )
-
-    optional_lists = [
-        (
-            "Diagnoses",
-            summarised.get("_diagnoses_list") or summarised.get("diagnoses", []),
-        ),
-        (
-            "Providers",
-            summarised.get("_providers_list") or summarised.get("providers", []),
-        ),
-        (
-            "Medications / Prescriptions",
-            summarised.get("_medications_list") or summarised.get("medications", []),
-        ),
-    ]
-    for heading, raw_value in optional_lists:
-        formatted = _to_text(raw_value, bullet=True)
-        if formatted:
-            sections.append((heading, formatted))
-
-    # Ensure at least one meaningful section before rendering
-    if not any(body.strip() for _heading, body in sections):
-        sections = [("Summary", summary_text or "N/A")]
+    sections = _assemble_sections(summarised)
 
     try:
         pdf_payload = app.state.pdf_writer.build(title, sections)
