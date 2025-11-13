@@ -159,6 +159,14 @@
   - Metrics snapshot: `/metrics` endpoint returned HTTP 404 (Cloud Run deployment still on previous revision without Prometheus sidecar); noted for follow-up once image is available.
   - Latest revision attempt: `mcc-ocr-summary-00290-lhs` (failed – image missing). Commit SHA: `c77dcff2ea3715fd799c08ada64b5d2d4065a068`.
 - **Status:** PARTIAL – Code changes and verification run succeeded locally, but the automated CI mirror still fails on long-standing lint/type debt and the Cloud Build/Run deployment needs IAM + successful image push before the Prometheus sidecar can be validated. Metrics endpoint remains unavailable until the new revision is live.
+
+## Task V – Canonical Summary Assembly & Noise Purge
+- **Date:** 2025-11-13T01:42:30Z
+- **Files:** .env.template, src/main.py, src/api/process.py, src/services/summariser_refactored.py, tests/test_pdf_contract.py, tests/test_pdf_writer_ordering.py, tests/test_summariser_refactored.py, docs/audit/HARDENING_LOG.md
+- **Rationale:** Locked Cloud Run onto the refactored summariser/ReportLab writer, logged component selection per request, and hardened the refactored summariser’s merge pipeline so every narrative/entity line is cleaned, deduped, and stripped of “Document processed in …” style boilerplate before reaching PDF assembly. Process API now emits only the canonical four sections plus the three entity lists, each with a deterministic fallback sentence, keeping the PDF free of legacy sections.
+- **Commands:** `python3 -m pytest -q`
+- **Status:** PARTIAL – Full unit suite passes locally, but Cloud Run redeploy / 263‑page validation is still pending due to missing ADC credentials in this environment; run `gcloud builds submit && gcloud run deploy mcc-ocr-summary --region us-central1` followed by `/process/drive?force=true` once credentials are available.
+
 ## Final Verification (2025-10-29)
 - report_file_id: 1-yPm59c-l66fWUhycgrQ2dYSv5gd9HtH
 - latestReadyRevisionName: mcc-ocr-summary-00292-j76
@@ -189,6 +197,24 @@
 ### 2025-10-30T15:45:55Z — Manual Intake Verification (mcc-ocr-summary)
 - revision: ``  commit: `af74125076e4`  intake_file: ``
 - validator: $(jq -c . validator.json || cat validator.json)
+
+## Task W – Self-Healing Deployment Guard & PDF Validation
+- **Date:** 2025-11-13T17:12:03Z
+- **Files:** cloudbuild.yaml, scripts/deploy.sh, scripts/validate_summary.py, src/main.py, src/api/process.py, src/services/summariser_refactored.py, docs/audit/HARDENING_LOG.md
+- **Rationale:** Locked every deployment surface (Cloud Build + deploy.sh) to `SUMMARY_COMPOSE_MODE=refactored`, `PDF_WRITER_MODE=rich`, and `ENABLE_NOISE_FILTERS=true`, added per-request structured logs in main/process so we can trace which summariser/pdf backend executed, hardened the refactored summariser so every narrative/entity line is re-sanitised before exposure, and introduced `scripts/validate_summary.py` which now issues Cloud Run identity tokens + Drive domain-wide delegation, verifies the 263-page source intake before triggering `/process/drive`, and asserts the canonical four narrative headings plus three entity lists with forbidden-phrase checks on the resulting PDF.
+- **Commands:**
+  - `gcloud builds submit --config cloudbuild.yaml --substitutions=_IMAGE_REPO=us-central1-docker.pkg.dev/quantify-agent/mcc/mcc-ocr-summary,_PROJECT_ID=quantify-agent,_REGION=us-central1,_DOC_AI_LOCATION=us,_DOC_AI_PROCESSOR_ID=21c8becfabc49de6,_INTAKE_BUCKET=mcc-intake,_OUTPUT_BUCKET=mcc-output,_SUMMARY_BUCKET=mcc-output,_DRIVE_INPUT_FOLDER_ID=19xdu6hV9KNgnE_Slt4ogrJdASWXZb5gl,_DRIVE_REPORT_FOLDER_ID=1eyMO0126VfLBK3bBQEpWlVOL6tWxriCE,_DRIVE_SHARED_DRIVE_ID=0AFPP3mbSAh_oUk9PVA,_DRIVE_IMPERSONATION_USER=Matt@moneymediausa.com,_CMEK_KEY_NAME=projects/quantify-agent/locations/us-central1/keyRings/mcc-phi/cryptoKeys/mcc-phi-key,_TAG=v11mvp-20251113`
+  - `gcloud run deploy mcc-ocr-summary --image us-central1-docker.pkg.dev/quantify-agent/mcc/mcc-ocr-summary:v11mvp-20251113 --region us-central1 --platform managed --service-account mcc-orch-sa@quantify-agent.iam.gserviceaccount.com --concurrency 1 --cpu 2 --memory 2Gi --timeout 3600 --max-instances 10 --no-cpu-throttling --cpu-boost --execution-environment gen2 --set-env-vars MODE=mvp,...,MIN_SUMMARY_DYNAMIC_RATIO=0.005 --update-secrets OPENAI_API_KEY=OPENAI_API_KEY:latest,INTERNAL_EVENT_TOKEN=internal-event-token:latest,SERVICE_ACCOUNT_JSON=mcc_orch_sa_key:latest`
+  - `python3 scripts/validate_summary.py --base-url https://mcc-ocr-summary-720850296638.us-central1.run.app --source-file-id 1ZFra9EN0jS8wTS4dcW7deypxnVggb8vS --expected-pages 263 --credentials ~/Downloads/mcc_orch_sa_key.json --impersonate Matt@moneymediausa.com`
+- **Final Validation Evidence (2025-11-13T17:09:41Z):**
+  - revision: `mcc-ocr-summary-00337-9ff`
+  - image: `us-central1-docker.pkg.dev/quantify-agent/mcc/mcc-ocr-summary:v11mvp-20251113`
+  - validator output:
+    ```json
+    {"report_file_id":"1z9iVWgD6x-3tkq6hbwzitNMQC-2cUOf5","page_count":3,"section_line_counts":{"Intro Overview":4,"Key Points":3,"Detailed Findings":13,"Care Plan & Follow-Up":8,"Diagnoses":5,"Providers":4,"Medications / Prescriptions":3},"trigger_metadata":{"report_file_id":"1z9iVWgD6x-3tkq6hbwzitNMQC-2cUOf5","supervisor_passed":true,"request_id":"dafcf69b87054c4c9a98232aa21e6b13","compose_mode":"refactored","pdf_compliant":true,"writer_backend":"reportlab"}}
+    ```
+  - Source intake (`1ZFra9EN0jS8wTS4dcW7deypxnVggb8vS`) verified at 263 pages prior to processing; summary PDF contains exactly the four canonical narrative sections plus three entity lists with no forbidden phrases.
+- **Status:** PASS – Service [https://mcc-ocr-summary-720850296638.us-central1.run.app] now serves the refactored summariser/rich writer path, and the shipped validator provides a self-healing deploy→verify loop for the 263-page regression case.
 
 ### 2025-10-30T15:46:05Z — Manual Intake Verification (mcc-ocr-summary)
 - revision: ``  commit: `af74125076e4`  intake_file: ``

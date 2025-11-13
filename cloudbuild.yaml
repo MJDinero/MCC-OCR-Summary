@@ -12,14 +12,25 @@ steps:
       - --region=us-central1
       - --platform=managed
       - --quiet
-      - --set-env-vars=MODE=mvp,STUB_MODE=false,USE_REFACTORED_SUMMARISER=true,SUMMARY_COMPOSE_MODE=refactored,PDF_WRITER_MODE=rich,ENABLE_NOISE_FILTERS=1,SUPERVISOR_MODE=simple,DRIVE_ENABLED=true,WRITE_TO_DRIVE=true,PDF_ENABLED=true,SHEETS_ENABLED=false,ENABLE_METRICS=true,PROJECT_ID=quantify-agent,REGION=us-central1,DOC_AI_LOCATION=us,DOC_AI_PROCESSOR_ID=21c8becfabc49de6,DOC_AI_OCR_PROCESSOR_ID=21c8becfabc49de6,DRIVE_INPUT_FOLDER_ID=19xdu6hV9KNgnE_Slt4ogrJdASWXZb5gl,DRIVE_REPORT_FOLDER_ID=1eyMO0126VfLBK3bBQEpWlVOL6tWxriCE,DRIVE_SHARED_DRIVE_ID=0AFPP3mbSAh_oUk9PVA,CMEK_KEY_NAME=$_CMEK_KEY_NAME,INTAKE_GCS_BUCKET=mcc-intake,OUTPUT_GCS_BUCKET=mcc-output,SUMMARY_BUCKET=mcc-output,DRIVE_IMPERSONATION_USER=Matt@moneymediausa.com,GOOGLE_APPLICATION_CREDENTIALS=/tmp/google-application-credentials.json,MIN_SUMMARY_CHARS=300,MIN_SUMMARY_DYNAMIC_RATIO=0.005
+      - --set-env-vars=MODE=mvp,STUB_MODE=false,USE_REFACTORED_SUMMARISER=true,SUMMARY_COMPOSE_MODE=refactored,PDF_WRITER_MODE=rich,ENABLE_NOISE_FILTERS=true,SUPERVISOR_MODE=simple,DRIVE_ENABLED=true,WRITE_TO_DRIVE=true,PDF_ENABLED=true,SHEETS_ENABLED=false,ENABLE_METRICS=true,PROJECT_ID=$_PROJECT_ID,REGION=$_REGION,DOC_AI_LOCATION=$_DOC_AI_LOCATION,DOC_AI_PROCESSOR_ID=$_DOC_AI_PROCESSOR_ID,DOC_AI_OCR_PROCESSOR_ID=$_DOC_AI_PROCESSOR_ID,DRIVE_INPUT_FOLDER_ID=$_DRIVE_INPUT_FOLDER_ID,DRIVE_REPORT_FOLDER_ID=$_DRIVE_REPORT_FOLDER_ID,DRIVE_SHARED_DRIVE_ID=$_DRIVE_SHARED_DRIVE_ID,CMEK_KEY_NAME=$_CMEK_KEY_NAME,INTAKE_GCS_BUCKET=$_INTAKE_BUCKET,OUTPUT_GCS_BUCKET=$_OUTPUT_BUCKET,SUMMARY_BUCKET=$_SUMMARY_BUCKET,DRIVE_IMPERSONATION_USER=$_DRIVE_IMPERSONATION_USER,GOOGLE_APPLICATION_CREDENTIALS=/tmp/google-application-credentials.json,MIN_SUMMARY_CHARS=300,MIN_SUMMARY_DYNAMIC_RATIO=0.005
       - --remove-secrets=GOOGLE_APPLICATION_CREDENTIALS
       - --update-secrets=OPENAI_API_KEY=OPENAI_API_KEY:latest,SERVICE_ACCOUNT_JSON=mcc_orch_sa_key:latest,INTERNAL_EVENT_TOKEN=internal-event-token:latest
 
 substitutions:
   _TAG: v11mvp
-  _IMAGE_REPO: us-central1-docker.pkg.dev/quantify-agent/mcc/mcc-ocr-summary
-  _CMEK_KEY_NAME: projects/quantify-agent/locations/us-central1/keyRings/mcc-phi/cryptoKeys/mcc-phi-key
+  _IMAGE_REPO: us-central1-docker.pkg.dev/your-gcp-project-id/mcc/mcc-ocr-summary
+  _CMEK_KEY_NAME: projects/your-gcp-project/locations/LOCATION/keyRings/YOUR_KEYRING/cryptoKeys/YOUR_KEY
+  _PROJECT_ID: your-gcp-project-id
+  _REGION: us-central1
+  _DOC_AI_LOCATION: us
+  _DOC_AI_PROCESSOR_ID: your-docai-processor-id
+  _INTAKE_BUCKET: your-intake-bucket
+  _OUTPUT_BUCKET: your-output-bucket
+  _SUMMARY_BUCKET: your-summary-bucket
+  _DRIVE_INPUT_FOLDER_ID: your-drive-input-folder-id
+  _DRIVE_REPORT_FOLDER_ID: your-drive-report-folder-id
+  _DRIVE_SHARED_DRIVE_ID: your-drive-shared-drive-id
+  _DRIVE_IMPERSONATION_USER: someone@example.com
 
 images:
   - $_IMAGE_REPO:$_TAG
