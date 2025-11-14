@@ -266,3 +266,11 @@
 - **Rationale:** Removed hard-coded project IDs, Drive folders, CMEK paths, and bucket names from the core config surface so new environments rely on environment variables or documented placeholders instead of Quantify-specific infrastructure.
 - **Commands:** `git status -sb`; `python3 -m pytest -q` *(fails: current summariser output still includes forbidden phrase)*; `python3 -m ruff check` *(fails: legacy lint debt to address later phases)*; `python3 -m pytest -q tests/test_config.py` *(fails: repo-wide coverage gate enforces 70% threshold during targeted runs)*.
 - **Status:** PARTIAL – Baseline hygiene landed; remaining test/lint gaps will be addressed in later phases alongside summariser noise fixes.
+
+## Task AK – Phase 1 Identifier Hardening
+- **Date:** 2025-11-14T07:15:00Z
+- **Commit:** ba8212e917f1c9706df701b4d11b64bdcc02cf22
+- **Files:** src/config.py, src/services/docai_batch_helper.py, src/services/docai_helper.py, scripts/autoheal.sh, scripts/deploy.sh, scripts/validate_summary.py, pipeline.yaml, infra/iam.sh, infra/runtime.env.sample, infra/monitoring/dashboard_structured_logs.json, README.md, REPORT.md, audit/*.md/json, docs/examples/pipeline_job_record.json, tests/test_config.py, tests/test_config_module.py, tests/test_drive_client.py, tests/test_infra_manifest.py, docs/audit/HARDENING_LOG.md
+- **Rationale:** Parameterised every bucket/Drive/DocAI/service-account identifier via AppConfig + deployment scripts, created local-safe defaults for tests, relaxed validation only for local/unit modes, removed stale patch artifacts containing project IDs, and scrubbed historical docs/logs so no literal project/bucket/Drive IDs or user emails remain in the repo.
+- **Commands:** `python3 -m pytest -q` *(fails: `tests/test_format_contract.py` still catches “Greater Plains Orthopedic” noise pending Phase 4 filters)*; `python3 -m ruff check` *(fails with legacy unused-import warnings in benchmarking/summariser modules)*; `python3 -m mypy --strict src`.
+- **Status:** PARTIAL – Identifier sanitisation complete but summariser noise filter + lint clean-up deferred to phases 4/3 respectively.
