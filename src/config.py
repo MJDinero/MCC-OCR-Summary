@@ -9,7 +9,7 @@ Retained variables (env names in parentheses):
  - DOC_AI_PROCESSOR_ID
  - OPENAI_API_KEY
  - DRIVE_INPUT_FOLDER_ID
- - DRIVE_REPORT_FOLDER_ID (MedCostContain Output Folder `130jJzsl3OBzMD8weGfBOaXikfEnD2KVg`)
+ - DRIVE_REPORT_FOLDER_ID (Drive folder used to store generated summaries)
  - GOOGLE_APPLICATION_CREDENTIALS (used implicitly by Google clients)
 
 All legacy flags (metrics, sheets, multiple processor fallbacks, CORS, etc.) removed.
@@ -87,15 +87,9 @@ class AppConfig(BaseSettings):
     drive_impersonation_user: str | None = Field(
         None, validation_alias="DRIVE_IMPERSONATION_USER"
     )
-    intake_gcs_bucket: str = Field(
-        "quantify-agent-intake", validation_alias="INTAKE_GCS_BUCKET"
-    )
-    output_gcs_bucket: str = Field(
-        "quantify-agent-output", validation_alias="OUTPUT_GCS_BUCKET"
-    )
-    summary_bucket: str = Field(
-        "quantify-agent-output", validation_alias="SUMMARY_BUCKET"
-    )
+    intake_gcs_bucket: str = Field("", validation_alias="INTAKE_GCS_BUCKET")
+    output_gcs_bucket: str = Field("", validation_alias="OUTPUT_GCS_BUCKET")
+    summary_bucket: str = Field("", validation_alias="SUMMARY_BUCKET")
     pipeline_pubsub_topic: str | None = Field(
         None, validation_alias="PIPELINE_PUBSUB_TOPIC"
     )
@@ -162,7 +156,7 @@ class AppConfig(BaseSettings):
         "summaries", validation_alias="SUMMARY_BIGQUERY_TABLE"
     )
     summary_output_bucket: str = Field(
-        "quantify-agent-summary", validation_alias="SUMMARY_OUTPUT_BUCKET"
+        "local-summary-output", validation_alias="SUMMARY_OUTPUT_BUCKET"
     )
     service_account_json: str | None = Field(
         None, validation_alias="SERVICE_ACCOUNT_JSON"
