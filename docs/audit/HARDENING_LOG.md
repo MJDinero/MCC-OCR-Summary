@@ -258,3 +258,11 @@
 - validator: {"ok": true, "sections_ok": true, "noise_found": false, "length": 22616}
 - pages: 6
 - note: docai_decision log captured in remediation/logs/docai_decision-20251030-233444.json; Prometheus sidecar scrapes /metrics (service private).
+
+## Task AJ – Phase 0 Config Sanitisation
+- **Date:** 2025-11-14T06:58:00Z
+- **Commit:** 6db18a6906dd98e13524a8d0685acedf8a09cb14
+- **Files:** .env.template, Makefile, cloudbuild.yaml, src/config.py
+- **Rationale:** Removed hard-coded project IDs, Drive folders, CMEK paths, and bucket names from the core config surface so new environments rely on environment variables or documented placeholders instead of Quantify-specific infrastructure.
+- **Commands:** `git status -sb`; `python3 -m pytest -q` *(fails: current summariser output still includes forbidden phrase)*; `python3 -m ruff check` *(fails: legacy lint debt to address later phases)*; `python3 -m pytest -q tests/test_config.py` *(fails: repo-wide coverage gate enforces 70% threshold during targeted runs)*.
+- **Status:** PARTIAL – Baseline hygiene landed; remaining test/lint gaps will be addressed in later phases alongside summariser noise fixes.
