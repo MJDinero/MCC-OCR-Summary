@@ -38,10 +38,23 @@ def parse_bool(value: str | None) -> bool:
 
 _CONFIG_LOG = logging.getLogger("config")
 
+LOCAL_PROJECT_ID = "demo-gcp-project"
+LOCAL_INTAKE_BUCKET = "local-intake"
+LOCAL_OUTPUT_BUCKET = "local-output"
+LOCAL_SUMMARY_BUCKET = "local-summary"
+LOCAL_SUMMARY_OUTPUT_BUCKET = "local-summary-output"
+LOCAL_DOC_AI_PROCESSOR_ID = "projects/demo/locations/us/processors/processor-id"
+LOCAL_DRIVE_INPUT_FOLDER_ID = "drive-input-folder-id"
+LOCAL_DRIVE_REPORT_FOLDER_ID = "drive-report-folder-id"
+LOCAL_DRIVE_SHARED_DRIVE_ID = "shared-drive-id"
+LOCAL_DRIVE_IMPERSONATION_USER = "user@example.com"
+LOCAL_OPENAI_API_KEY = "stub-openai-key"
+LOCAL_INTERNAL_EVENT_TOKEN = "stub-internal-token"
+
 
 class AppConfig(BaseSettings):
     project_id: str = Field(
-        "",
+        LOCAL_PROJECT_ID,
         validation_alias=AliasChoices("PROJECT_ID", "project_id"),
     )
     region: str = Field("us", validation_alias="REGION")
@@ -50,7 +63,7 @@ class AppConfig(BaseSettings):
         "us", validation_alias=AliasChoices("DOC_AI_LOCATION", "REGION")
     )
     doc_ai_processor_id: str = Field(
-        "",
+        LOCAL_DOC_AI_PROCESSOR_ID,
         validation_alias=AliasChoices("DOC_AI_PROCESSOR_ID", "DOC_AI_OCR_PROCESSOR_ID"),
     )
     doc_ai_splitter_id: str | None = Field(
@@ -63,9 +76,13 @@ class AppConfig(BaseSettings):
     doc_ai_enable_image_quality_scores: bool = Field(
         True, validation_alias="DOC_AI_ENABLE_IMAGE_QUALITY_SCORES"
     )
-    openai_api_key: str | None = Field(None, validation_alias="OPENAI_API_KEY")
+    openai_api_key: str | None = Field(
+        LOCAL_OPENAI_API_KEY, validation_alias="OPENAI_API_KEY"
+    )
     openai_model: str | None = Field(None, validation_alias="OPENAI_MODEL")
-    internal_event_token: str = Field("", validation_alias="INTERNAL_EVENT_TOKEN")
+    internal_event_token: str = Field(
+        LOCAL_INTERNAL_EVENT_TOKEN, validation_alias="INTERNAL_EVENT_TOKEN"
+    )
     use_refactored_summariser_raw: str | bool | None = Field(
         False, validation_alias="USE_REFACTORED_SUMMARISER"
     )
@@ -76,20 +93,28 @@ class AppConfig(BaseSettings):
     enable_noise_filters_raw: str | bool | None = Field(
         True, validation_alias="ENABLE_NOISE_FILTERS"
     )
-    drive_input_folder_id: str = Field("", validation_alias="DRIVE_INPUT_FOLDER_ID")
-    drive_report_folder_id: str = Field("", validation_alias="DRIVE_REPORT_FOLDER_ID")
+    drive_input_folder_id: str = Field(
+        LOCAL_DRIVE_INPUT_FOLDER_ID, validation_alias="DRIVE_INPUT_FOLDER_ID"
+    )
+    drive_report_folder_id: str = Field(
+        LOCAL_DRIVE_REPORT_FOLDER_ID, validation_alias="DRIVE_REPORT_FOLDER_ID"
+    )
     drive_shared_drive_id: str | None = Field(
-        None,
+        LOCAL_DRIVE_SHARED_DRIVE_ID,
         validation_alias=AliasChoices(
             "DRIVE_SHARED_DRIVE_ID", "DRIVE_REPORT_DRIVE_ID", "SHARED_DRIVE_ID"
         ),
     )
     drive_impersonation_user: str | None = Field(
-        None, validation_alias="DRIVE_IMPERSONATION_USER"
+        LOCAL_DRIVE_IMPERSONATION_USER, validation_alias="DRIVE_IMPERSONATION_USER"
     )
-    intake_gcs_bucket: str = Field("", validation_alias="INTAKE_GCS_BUCKET")
-    output_gcs_bucket: str = Field("", validation_alias="OUTPUT_GCS_BUCKET")
-    summary_bucket: str = Field("", validation_alias="SUMMARY_BUCKET")
+    intake_gcs_bucket: str = Field(
+        LOCAL_INTAKE_BUCKET, validation_alias="INTAKE_GCS_BUCKET"
+    )
+    output_gcs_bucket: str = Field(
+        LOCAL_OUTPUT_BUCKET, validation_alias="OUTPUT_GCS_BUCKET"
+    )
+    summary_bucket: str = Field(LOCAL_SUMMARY_BUCKET, validation_alias="SUMMARY_BUCKET")
     pipeline_pubsub_topic: str | None = Field(
         None, validation_alias="PIPELINE_PUBSUB_TOPIC"
     )
@@ -156,7 +181,7 @@ class AppConfig(BaseSettings):
         "summaries", validation_alias="SUMMARY_BIGQUERY_TABLE"
     )
     summary_output_bucket: str = Field(
-        "local-summary-output", validation_alias="SUMMARY_OUTPUT_BUCKET"
+        LOCAL_SUMMARY_OUTPUT_BUCKET, validation_alias="SUMMARY_OUTPUT_BUCKET"
     )
     service_account_json: str | None = Field(
         None, validation_alias="SERVICE_ACCOUNT_JSON"
@@ -257,16 +282,31 @@ class AppConfig(BaseSettings):
             return False
 
         is_local_env = _is_local_or_test()
-        relaxed_envs = (
-            {"INTAKE_GCS_BUCKET", "OUTPUT_GCS_BUCKET", "SUMMARY_BUCKET"}
-            if is_local_env
-            else set()
-        )
-        relaxed_defaults = {
-            "intake_gcs_bucket": "local-intake",
-            "output_gcs_bucket": "local-output",
-            "summary_bucket": "local-summary",
-        }
+        relaxed_envs: set[str] = set()
+        relaxed_defaults: dict[str, str] = {}
+        if is_local_env:
+            relaxed_envs = {
+                "PROJECT_ID",
+                "INTAKE_GCS_BUCKET",
+                "OUTPUT_GCS_BUCKET",
+                "SUMMARY_BUCKET",
+                "DOC_AI_PROCESSOR_ID",
+                "OPENAI_API_KEY",
+                "DRIVE_INPUT_FOLDER_ID",
+                "DRIVE_REPORT_FOLDER_ID",
+                "INTERNAL_EVENT_TOKEN",
+            }
+            relaxed_defaults = {
+                "project_id": LOCAL_PROJECT_ID,
+                "intake_gcs_bucket": LOCAL_INTAKE_BUCKET,
+                "output_gcs_bucket": LOCAL_OUTPUT_BUCKET,
+                "summary_bucket": LOCAL_SUMMARY_BUCKET,
+                "doc_ai_processor_id": LOCAL_DOC_AI_PROCESSOR_ID,
+                "openai_api_key": LOCAL_OPENAI_API_KEY,
+                "drive_input_folder_id": LOCAL_DRIVE_INPUT_FOLDER_ID,
+                "drive_report_folder_id": LOCAL_DRIVE_REPORT_FOLDER_ID,
+                "internal_event_token": LOCAL_INTERNAL_EVENT_TOKEN,
+            }
 
         # Primary value-based validation (empty / falsy fields)
         required_pairs = [

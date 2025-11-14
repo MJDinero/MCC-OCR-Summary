@@ -19,7 +19,7 @@ import uuid
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Dict, Iterable, Optional, Protocol, Sequence, cast
+from typing import Any, Callable, Dict, Iterable, Optional, Protocol, Sequence, cast, List
 
 from tenacity import (
     retry,
@@ -180,7 +180,7 @@ def _extract_document_dict(result: Any) -> Dict[str, Any]:
 
 
 def _normalise(doc: Dict[str, Any]) -> Dict[str, Any]:
-    pages_out = []
+    pages_out: List[Dict[str, Any]] = []
     pages = doc.get("pages") or []
     for idx, p in enumerate(pages, start=1):
         text = p.get("layout", {}).get("text", "") if isinstance(p, dict) else ""
@@ -188,9 +188,54 @@ def _normalise(doc: Dict[str, Any]) -> Dict[str, Any]:
             # Some simplified fixtures may already provide 'text'
             text = p.get("text", "") if isinstance(p, dict) else ""
         pages_out.append({"page_number": idx, "text": _strip_noise(text)})
-    full_text_source = doc.get("text") or " ".join(pg["text"] for pg in pages_out)
+    full_text_source = doc.get("text") or " ".join(
+        pg.get("text", "") for pg in pages_out
+    )
     full_text = _strip_noise(full_text_source)
     return {"text": full_text, "pages": pages_out}
+
+
+def _full_processor_path(project: str, location: str, processor_id: str) -> str:
+    return f"projects/{project}/locations/{location}/processors/{processor_id}"
+
+
+def _get_page_count(pdf_bytes: bytes) -> int:
+    if not pdf_bytes:
+        return 0
+    if PdfReader is None:
+        return -1
+    try:
+        reader = PdfReader(io.BytesIO(pdf_bytes))
+        return len(reader.pages)
+    except Exception:
+        return -1
+
+
+def _log_decision(
+    *,
+    pages: int,
+    decision: str,
+    cfg: AppConfig,
+    request_id: str,
+    retry_on_page_limit: bool = False,
+) -> None:
+    try:
+        _LOG.info(
+            "docai_decision",
+            extra={
+                "pages_total": pages,
+                "decision": decision,
+                "processor_id": getattr(cfg, "doc_ai_processor_id", None),
+                "splitter_processor_id": getattr(cfg, "doc_ai_splitter_id", None),
+                "location": getattr(
+                    cfg, "doc_ai_location", getattr(cfg, "region", "us")
+                ),
+                "retry_on_page_limit": bool(retry_on_page_limit),
+                "request_id": request_id,
+            },
+        )
+    except Exception:
+        pass
 
 
 def _split_pdf_bytes(
@@ -367,6 +412,10 @@ class OCRService:
     processor_id: str
     config: Optional[AppConfig] = None
     client_factory: Optional[Callable[[str], _DocAIClientProtocol]] = None
+    doc_ai_splitter_id: Optional[str] = None
+    doc_ai_location: Optional[str] = None
+    force_split_min_pages: Optional[int] = None
+    gcp_project_id: Optional[str] = None
     request_timeout: float = 90.0
 
     def __post_init__(self) -> None:
@@ -374,7 +423,24 @@ class OCRService:
             raise ValueError("processor_id required")
         self._cfg = self.config or get_config()
         self._client_factory = self.client_factory or _default_client
-        self._docai_location = getattr(self._cfg, "doc_ai_location", self._cfg.region)
+        self.gcp_project_id = self.gcp_project_id or getattr(
+            self._cfg, "project_id", ""
+        )
+        location = self.doc_ai_location or getattr(
+            self._cfg, "doc_ai_location", getattr(self._cfg, "region", "us")
+        )
+        self.doc_ai_location = location
+        self.doc_ai_splitter_id = self.doc_ai_splitter_id or getattr(
+            self._cfg, "doc_ai_splitter_id", None
+        )
+        threshold = self.force_split_min_pages or getattr(
+            self._cfg, "doc_ai_force_split_min_pages", None
+        )
+        try:
+            self.force_split_min_pages = int(threshold) if threshold is not None else 40
+        except (TypeError, ValueError):
+            self.force_split_min_pages = 40
+        self._docai_location = location
         self._endpoint = f"{self._docai_location}-documentai.googleapis.com"
         self._client = self._client_factory(self._endpoint)
         self._kms_key = getattr(self._cfg, "cmek_key_name", None)
@@ -391,6 +457,276 @@ class OCRService:
         except (RuntimeError, OSError):  # swallow close errors
             _LOG.debug("Failed to close client", exc_info=True)
 
+    def _resolve_request_id(
+        self,
+        request_id: Optional[str],
+        metadata: Optional[Dict[str, Any]],
+    ) -> str:
+        if request_id:
+            return str(request_id)
+        if metadata and metadata.get("request_id"):
+            try:
+                return str(metadata["request_id"])
+            except Exception:
+                pass
+        try:
+            from src.logging_setup import request_id_var  # type: ignore
+
+            context_id = request_id_var.get()
+            if context_id:
+                return str(context_id)
+        except Exception:
+            pass
+        return uuid.uuid4().hex
+
+    def _run_batch_process(
+        self,
+        *,
+        pdf_bytes: bytes,
+        source_path: Optional[Path],
+        page_count_for_logging: int,
+        project_id: str,
+        location: str,
+    ) -> Dict[str, Any]:
+        temp_path: Optional[Path] = None
+        try:
+            if source_path is None:
+                with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
+                    tmp.write(pdf_bytes)
+                    temp_path = Path(tmp.name)
+                src_for_batch = str(temp_path)
+            else:
+                src_for_batch = str(source_path)
+            batch_result = batch_process_documents_gcs(
+                src_for_batch,
+                None,
+                self.processor_id,
+                location,
+                project_id=project_id,
+            )
+            meta = batch_result.setdefault("batch_metadata", {})
+            meta.setdefault("batch_mode", "async_auto")
+            meta.setdefault("pages_estimated", page_count_for_logging)
+            return batch_result
+        except ValidationError:
+            raise
+        except Exception as exc:
+            raise OCRServiceError(f"Batch OCR failed: {exc}") from exc
+        finally:
+            if temp_path:
+                try:
+                    temp_path.unlink(missing_ok=True)  # type: ignore[attr-defined]
+                except Exception:  # pragma: no cover - cleanup best effort
+                    pass
+
+    def _run_local_split_with_retries(
+        self,
+        *,
+        pdf_bytes: bytes,
+        total_pages: int,
+        size_bytes: int,
+        project_id: str,
+        location: str,
+    ) -> Dict[str, Any]:
+        if PdfReader is None or PdfWriter is None:
+            raise OCRServiceError(
+                "pypdf is required to split oversized PDFs but is not available"
+            )
+        chunk_limits = [
+            DEFAULT_CHUNK_MAX_PAGES,
+            FALLBACK_CHUNK_MAX_PAGES,
+            MIN_CHUNK_MAX_PAGES,
+        ]
+        last_exc: Exception | None = None
+        for attempt, chunk_limit in enumerate(chunk_limits, start=1):
+            try:
+                return self._process_large_pdf(
+                    pdf_bytes=pdf_bytes,
+                    total_pages=total_pages,
+                    size_bytes=size_bytes,
+                    project_id=project_id,
+                    location=location,
+                    chunk_page_limit=chunk_limit,
+                )
+            except _ChunkPageLimitExceeded as chunk_exc:
+                last_exc = chunk_exc
+                next_limit = (
+                    chunk_limits[attempt] if attempt < len(chunk_limits) else None
+                )
+                _LOG.warning(
+                    "docai_chunk_page_limit_exceeded",
+                    extra={
+                        "attempt": attempt,
+                        "failed_limit": chunk_limit,
+                        "next_limit": next_limit,
+                        "total_pages": total_pages,
+                        "size_bytes": size_bytes,
+                        "error": str(chunk_exc),
+                    },
+                )
+                continue
+            except OCRServiceError as ocr_exc:
+                message = str(ocr_exc)
+                if "PAGE_LIMIT_EXCEEDED" in message or "page limit" in message.lower():
+                    last_exc = ocr_exc
+                    next_limit = (
+                        chunk_limits[attempt] if attempt < len(chunk_limits) else None
+                    )
+                    _LOG.warning(
+                        "docai_chunk_page_limit_exceeded",
+                        extra={
+                            "attempt": attempt,
+                            "failed_limit": chunk_limit,
+                            "next_limit": next_limit,
+                            "total_pages": total_pages,
+                            "size_bytes": size_bytes,
+                            "error": message,
+                        },
+                    )
+                    continue
+                raise
+        raise OCRServiceError(
+            "DocAI chunking failed after exhausting page limit fallbacks"
+        ) from last_exc
+
+    def _handle_page_limit_retry(
+        self,
+        *,
+        pdf_bytes: bytes,
+        total_pages: int,
+        size_bytes: int,
+        project_id: str,
+        location: str,
+        request_id: str,
+        trace_id: Optional[str],
+    ) -> Dict[str, Any]:
+        splitter_available = bool(self.doc_ai_splitter_id)
+        decision = "splitter_retry" if splitter_available else "local_pypdf_split_retry"
+        _log_decision(
+            pages=total_pages,
+            decision=decision,
+            cfg=self._cfg,
+            request_id=request_id,
+            retry_on_page_limit=True,
+        )
+        if splitter_available:
+            try:
+                return self._process_with_docai_splitter(
+                    pdf_bytes=pdf_bytes,
+                    total_pages=total_pages,
+                    size_bytes=size_bytes,
+                    project_id=project_id,
+                    location=location,
+                    request_id=request_id,
+                    trace_id=trace_id,
+                )
+            except Exception:
+                _log_decision(
+                    pages=total_pages,
+                    decision="local_pypdf_split_retry",
+                    cfg=self._cfg,
+                    request_id=request_id,
+                    retry_on_page_limit=True,
+                )
+                return self._run_local_split_with_retries(
+                    pdf_bytes=pdf_bytes,
+                    total_pages=total_pages,
+                    size_bytes=size_bytes,
+                    project_id=project_id,
+                    location=location,
+                )
+        return self._run_local_split_with_retries(
+            pdf_bytes=pdf_bytes,
+            total_pages=total_pages,
+            size_bytes=size_bytes,
+            project_id=project_id,
+            location=location,
+        )
+
+    def _process_with_docai_splitter(
+        self,
+        *,
+        pdf_bytes: bytes,
+        total_pages: int,
+        size_bytes: int,
+        project_id: str,
+        location: str,
+        request_id: str,
+        trace_id: Optional[str],
+    ) -> Dict[str, Any]:
+        splitter_id = self.doc_ai_splitter_id
+        if not splitter_id:
+            raise OCRServiceError("Splitter ID not configured")
+        try:
+            from google.cloud import storage  # type: ignore
+        except Exception as exc:  # pragma: no cover - optional dependency
+            raise OCRServiceError(f"google-cloud-storage unavailable: {exc}") from exc
+
+        bucket_name = (getattr(self._cfg, "intake_gcs_bucket", "") or "").strip()
+        if not bucket_name:
+            raise OCRServiceError("Intake GCS bucket not configured for splitter mode")
+        blob_name = f"split-inline/{uuid.uuid4().hex}.pdf"
+        client = storage.Client()
+        bucket = client.bucket(bucket_name)
+        blob = bucket.blob(blob_name)
+        if self._kms_key:
+            setattr(blob, "kms_key_name", self._kms_key)
+        blob.upload_from_string(pdf_bytes, content_type="application/pdf")
+        source_uri = f"gs://{bucket_name}/{blob_name}"
+
+        shards: list[str] = []
+        try:
+            split_result = run_splitter(
+                source_uri,
+                processor_id=splitter_id,
+                project_id=project_id,
+                location=location,
+                trace_id=trace_id,
+            )
+            shards = split_result.get("shards") or []
+            if not shards:
+                raise OCRServiceError("Document AI splitter produced no shards")
+
+            results_by_index: dict[int, Dict[str, Any]] = {}
+            for idx, shard_uri in enumerate(shards, start=1):
+                shard_bucket, shard_object = _split_gcs_uri(shard_uri)
+                shard_blob = client.bucket(shard_bucket).blob(shard_object)
+                shard_bytes = shard_blob.download_as_bytes()
+                try:
+                    chunk_result = _process_chunk_with_docai(
+                        client=self._client,
+                        pdf_bytes=shard_bytes,
+                        project_id=project_id,
+                        location=location,
+                        processor_id=self.processor_id,
+                        cfg=self._cfg,
+                    )
+                except _ChunkPageLimitExceeded as exc:
+                    raise OCRServiceError(
+                        f"Splitter shard {idx} exceeded page limits: {exc}"
+                    ) from exc
+                results_by_index[idx] = chunk_result or {}
+
+            combined = _combine_chunk_results(results_by_index)
+            metadata = combined.setdefault("splitter_metadata", {})
+            if isinstance(metadata, dict):
+                metadata.setdefault("shard_count", len(shards))
+                metadata.setdefault("source_uri", source_uri)
+                metadata.setdefault("decision_request_id", request_id)
+            return combined
+        finally:
+            try:
+                blob.delete()
+            except Exception:
+                pass
+            for shard_uri in shards:
+                try:
+                    shard_bucket, shard_object = _split_gcs_uri(shard_uri)
+                    client.bucket(shard_bucket).blob(shard_object).delete()
+                except Exception:
+                    # Leave shard in bucket on cleanup failure; best-effort only.
+                    continue
+
     # Retry on transient service availability / deadline conditions.
     @retry(
         wait=wait_exponential(multiplier=0.5, max=8),
@@ -398,25 +734,30 @@ class OCRService:
         retry=retry_if_exception_type((gexc.ServiceUnavailable, gexc.DeadlineExceeded)),
         reraise=True,
     )
-    def process(self, file_source: Any) -> Dict[str, Any]:
+    def process(
+        self,
+        file_source: Any,
+        *,
+        metadata: Optional[Dict[str, Any]] = None,
+        trace_id: Optional[str] = None,
+        request_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
         """Run OCR on provided PDF path or bytes.
 
         Returns a normalised dictionary: { text: str, pages: [{page_number, text}, ...] }
         Raises OCRServiceError / ValidationError.
         """
-        # Thresholds for switching to batch mode (asynchronous Document AI)
-        PAGES_BATCH_THRESHOLD = 30
-        SIZE_BATCH_THRESHOLD = 40 * 1024 * 1024  # 40MB
+        metadata = metadata or {}
+        request_id_val = self._resolve_request_id(request_id, metadata)
+        cfg = self._cfg
+        project_id = self.gcp_project_id or cfg.project_id
+        if not project_id:
+            raise ValidationError("PROJECT_ID not configured for OCR execution")
+        location = self.doc_ai_location or getattr(cfg, "doc_ai_location", cfg.region)
+        if not location:
+            raise ValidationError("DOC_AI_LOCATION not configured for OCR execution")
 
-        project_id = self._cfg.project_id
-        location = getattr(
-            self,
-            "_docai_location",
-            getattr(self._cfg, "doc_ai_location", self._cfg.region),
-        )
-
-        # Pre-read bytes to estimate size & pages for batching decision.
-        pdf_bytes: Optional[bytes] = None
+        pdf_bytes: bytes
         source_path: Optional[Path] = None
         if isinstance(file_source, (bytes, bytearray)):
             pdf_bytes = bytes(file_source)
@@ -434,168 +775,142 @@ class OCRService:
             )
 
         size_bytes = len(pdf_bytes)
-        # Heuristic page count estimation: count /Type /Page occurrences
-        # Heuristic page count (defensive default to 1 if unexpected)
         estimated_pages = len(re.findall(rb"/Type\s*/Page(?!s)", pdf_bytes)) or 1
+        actual_pages: Optional[int] = _get_page_count(pdf_bytes)
+        if actual_pages and actual_pages > 0:
+            pages_total = actual_pages
+        else:
+            actual_pages = None
+            pages_total = estimated_pages
+        pages_for_logging = max(pages_total, 1)
 
-        actual_pages: Optional[int] = None
-        if PdfReader is not None:
+        force_threshold = max(1, self.force_split_min_pages or 40)
+        splitter_available = bool(self.doc_ai_splitter_id)
+
+        if pages_total >= force_threshold:
+            decision = "splitter" if splitter_available else "local_pypdf_split"
+            _log_decision(
+                pages=pages_for_logging,
+                decision=decision,
+                cfg=cfg,
+                request_id=request_id_val,
+            )
             try:
-                actual_pages = len(PdfReader(io.BytesIO(pdf_bytes)).pages)
-            except Exception:
-                _LOG.warning("pdf_page_count_parse_failed", exc_info=True)
-        page_count_for_logging = actual_pages or estimated_pages
-
-        use_batch = size_bytes > SIZE_BATCH_THRESHOLD
-        # Escalation: if heuristic says small but actual PDF may exceed limits, re-parse to get real page count.
-        splitter_enabled = bool(self._cfg.doc_ai_splitter_id)
-        if splitter_enabled and page_count_for_logging >= 199:
-            _LOG.info(
-                "docai_splitter_escalation",
-                extra={
-                    "estimated_pages": estimated_pages,
-                    "actual_pages": actual_pages,
-                    "size_bytes": size_bytes,
-                    "splitter_processor": self._cfg.doc_ai_splitter_id,
-                },
-            )
-            use_batch = True
-        elif actual_pages is None and estimated_pages > PAGES_BATCH_THRESHOLD:
-            use_batch = True
-
-        if use_batch:
-            _LOG.info(
-                "docai_route_batch",
-                extra={
-                    "estimated_pages": estimated_pages,
-                    "actual_pages": actual_pages,
-                    "size_bytes": size_bytes,
-                    "threshold_pages": PAGES_BATCH_THRESHOLD,
-                    "threshold_size": SIZE_BATCH_THRESHOLD,
-                    "batch_route": True,
-                },
-            )
-            temp_path: Optional[Path] = None
-            try:
-                if source_path is None:
-                    with tempfile.NamedTemporaryFile(
-                        suffix=".pdf", delete=False
-                    ) as tmp:
-                        tmp.write(pdf_bytes)
-                        temp_path = Path(tmp.name)
-                    src_for_batch = str(temp_path)
-                else:
-                    src_for_batch = str(source_path)
-                batch_result = batch_process_documents_gcs(
-                    src_for_batch,
-                    None,
-                    self.processor_id,
-                    location,
-                    project_id=project_id,
-                )
-                meta = batch_result.setdefault("batch_metadata", {})
-                meta.setdefault("batch_mode", "async_auto")
-                meta.setdefault("pages_estimated", page_count_for_logging)
-                return batch_result
-            except ValidationError:
-                raise
-            except Exception as exc:
-                raise OCRServiceError(f"Batch OCR failed: {exc}") from exc
-            finally:
-                if temp_path:
-                    try:
-                        temp_path.unlink(missing_ok=True)  # type: ignore[attr-defined]
-                    except Exception:  # pragma: no cover - cleanup best effort
-                        pass
-
-        should_split = (actual_pages or estimated_pages) > PAGES_BATCH_THRESHOLD
-        if should_split:
-            if PdfReader is None or PdfWriter is None:
-                raise OCRServiceError(
-                    "pypdf is required to split oversized PDFs but is not available"
-                )
-            total_pages = actual_pages or estimated_pages
-            _LOG.info(
-                "Oversized PDF detected: %s pages",
-                total_pages,
-                extra={
-                    "pages": total_pages,
-                    "chunk_max_pages": DEFAULT_CHUNK_MAX_PAGES,
-                    "size_bytes": size_bytes,
-                    "processor": self.processor_id,
-                },
-            )
-            chunk_limits = [
-                DEFAULT_CHUNK_MAX_PAGES,
-                FALLBACK_CHUNK_MAX_PAGES,
-                MIN_CHUNK_MAX_PAGES,
-            ]
-            last_exc: Exception | None = None
-            for attempt, chunk_limit in enumerate(chunk_limits, start=1):
-                try:
-                    return self._process_large_pdf(
+                if decision == "splitter":
+                    return self._process_with_docai_splitter(
                         pdf_bytes=pdf_bytes,
-                        total_pages=total_pages,
+                        total_pages=pages_total,
                         size_bytes=size_bytes,
                         project_id=project_id,
                         location=location,
-                        chunk_page_limit=chunk_limit,
+                        request_id=request_id_val,
+                        trace_id=trace_id,
                     )
-                except _ChunkPageLimitExceeded as chunk_exc:
-                    last_exc = chunk_exc
-                    next_limit = (
-                        chunk_limits[attempt] if attempt < len(chunk_limits) else None
-                    )
+                return self._run_local_split_with_retries(
+                    pdf_bytes=pdf_bytes,
+                    total_pages=pages_total,
+                    size_bytes=size_bytes,
+                    project_id=project_id,
+                    location=location,
+                )
+            except OCRServiceError as exc:
+                if decision == "splitter":
                     _LOG.warning(
-                        "docai_chunk_page_limit_exceeded",
-                        extra={
-                            "attempt": attempt,
-                            "failed_limit": chunk_limit,
-                            "next_limit": next_limit,
-                            "total_pages": total_pages,
-                            "size_bytes": size_bytes,
-                            "error": str(chunk_exc),
-                        },
+                        "docai_splitter_primary_failed",
+                        extra={"error": str(exc), "pages": pages_total},
                     )
-                    continue
-                except OCRServiceError as ocr_exc:
-                    message = str(ocr_exc)
-                    if (
-                        "PAGE_LIMIT_EXCEEDED" in message
-                        or "page limit" in message.lower()
-                    ):
-                        last_exc = ocr_exc
-                        next_limit = (
-                            chunk_limits[attempt]
-                            if attempt < len(chunk_limits)
-                            else None
-                        )
-                        _LOG.warning(
-                            "docai_chunk_page_limit_exceeded",
-                            extra={
-                                "attempt": attempt,
-                                "failed_limit": chunk_limit,
-                                "next_limit": next_limit,
-                                "total_pages": total_pages,
-                                "size_bytes": size_bytes,
-                                "error": message,
-                            },
-                        )
-                        continue
-                    raise
-            raise OCRServiceError(
-                "DocAI chunking failed after exhausting page limit fallbacks"
-            ) from last_exc
+                    _log_decision(
+                        pages=pages_for_logging,
+                        decision="local_pypdf_split_retry",
+                        cfg=cfg,
+                        request_id=request_id_val,
+                        retry_on_page_limit=True,
+                    )
+                    return self._run_local_split_with_retries(
+                        pdf_bytes=pdf_bytes,
+                        total_pages=pages_total,
+                        size_bytes=size_bytes,
+                        project_id=project_id,
+                        location=location,
+                    )
+                raise
+            except Exception as exc:
+                if decision == "splitter":
+                    _log_decision(
+                        pages=pages_for_logging,
+                        decision="local_pypdf_split_retry",
+                        cfg=cfg,
+                        request_id=request_id_val,
+                        retry_on_page_limit=True,
+                    )
+                    return self._run_local_split_with_retries(
+                        pdf_bytes=pdf_bytes,
+                        total_pages=pages_total,
+                        size_bytes=size_bytes,
+                        project_id=project_id,
+                        location=location,
+                    )
+                raise OCRServiceError(f"OCR pre-split failed: {exc}") from exc
 
-        # Synchronous path (existing behaviour)
-        return _process_chunk_with_docai(
-            client=self._client,
-            pdf_bytes=pdf_bytes,
-            project_id=project_id,
-            location=location,
-            processor_id=self.processor_id,
-            cfg=self._cfg,
+        PAGES_BATCH_THRESHOLD = 30
+        SIZE_BATCH_THRESHOLD = 40 * 1024 * 1024  # 40MB
+        use_batch = size_bytes > SIZE_BATCH_THRESHOLD or (
+            actual_pages is None and pages_total > PAGES_BATCH_THRESHOLD
         )
+        if use_batch:
+            _log_decision(
+                pages=pages_for_logging,
+                decision="batch_process",
+                cfg=cfg,
+                request_id=request_id_val,
+            )
+            return self._run_batch_process(
+                pdf_bytes=pdf_bytes,
+                source_path=source_path,
+                page_count_for_logging=pages_for_logging,
+                project_id=project_id,
+                location=location,
+            )
+
+        _log_decision(
+            pages=pages_for_logging,
+            decision="online_process",
+            cfg=cfg,
+            request_id=request_id_val,
+        )
+        try:
+            return _process_chunk_with_docai(
+                client=self._client,
+                pdf_bytes=pdf_bytes,
+                project_id=project_id,
+                location=location,
+                processor_id=self.processor_id,
+                cfg=cfg,
+            )
+        except _ChunkPageLimitExceeded:
+            return self._handle_page_limit_retry(
+                pdf_bytes=pdf_bytes,
+                total_pages=pages_for_logging,
+                size_bytes=size_bytes,
+                project_id=project_id,
+                location=location,
+                request_id=request_id_val,
+                trace_id=trace_id,
+            )
+        except OCRServiceError as exc:
+            if _is_page_limit_error(exc):
+                return self._handle_page_limit_retry(
+                    pdf_bytes=pdf_bytes,
+                    total_pages=pages_for_logging,
+                    size_bytes=size_bytes,
+                    project_id=project_id,
+                    location=location,
+                    request_id=request_id_val,
+                    trace_id=trace_id,
+                )
+            raise
+        except Exception as exc:
+            raise OCRServiceError(f"DocAI process failed: {exc}") from exc
 
     def _process_large_pdf(
         self,
@@ -672,52 +987,57 @@ class OCRService:
                     ) from exc
                 results_by_index[info["index"]] = chunk_result or {}
 
-        combined_pages: list[Dict[str, Any]] = []
-        combined_texts: list[str] = []
-        page_offset = 0
+        return _combine_chunk_results(results_by_index)
 
-        for idx in sorted(results_by_index.keys()):
-            chunk_result = results_by_index[idx]
-            chunk_pages = chunk_result.get("pages", [])
-            chunk_text = chunk_result.get("text", "")
-            if chunk_text:
-                combined_texts.append(_strip_noise(chunk_text))
 
-            if chunk_pages:
-                for page in chunk_pages:
-                    page_number = page.get("page_number", 0)
-                    absolute_page = (
-                        page_number + page_offset
-                        if page_number > 0
-                        else len(combined_pages) + 1
-                    )
-                    combined_pages.append(
-                        {
-                            "page_number": absolute_page,
-                            "text": _strip_noise(page.get("text", "")),
-                        }
-                    )
-                page_offset += len(chunk_pages)
-            elif chunk_text:
-                fallback_page = {
-                    "page_number": page_offset + 1,
-                    "text": _strip_noise(chunk_text),
-                }
-                combined_pages.append(fallback_page)
-                page_offset += 1
+def _combine_chunk_results(
+    results_by_index: dict[int, Dict[str, Any]],
+) -> Dict[str, Any]:
+    combined_pages: list[Dict[str, Any]] = []
+    combined_texts: list[str] = []
+    page_offset = 0
 
-        if not combined_pages and combined_texts:
-            combined_pages = [
-                {"page_number": idx + 1, "text": text}
-                for idx, text in enumerate(combined_texts)
-            ]
+    for idx in sorted(results_by_index.keys()):
+        chunk_result = results_by_index[idx] or {}
+        chunk_pages = chunk_result.get("pages", [])
+        chunk_text = chunk_result.get("text", "")
+        if chunk_text:
+            combined_texts.append(_strip_noise(chunk_text))
 
-        full_text = "\n".join(text for text in combined_texts if text)
-        if not full_text and combined_pages:
-            full_text = " ".join(page.get("text", "") for page in combined_pages)
-        full_text = _strip_noise(full_text)
+        if chunk_pages:
+            for page in chunk_pages:
+                page_number = page.get("page_number", 0)
+                absolute_page = (
+                    page_number + page_offset
+                    if page_number > 0
+                    else len(combined_pages) + 1
+                )
+                combined_pages.append(
+                    {
+                        "page_number": absolute_page,
+                        "text": _strip_noise(page.get("text", "")),
+                    }
+                )
+            page_offset += len(chunk_pages)
+        elif chunk_text:
+            fallback_page = {
+                "page_number": page_offset + 1,
+                "text": _strip_noise(chunk_text),
+            }
+            combined_pages.append(fallback_page)
+            page_offset += 1
 
-        return {"text": full_text, "pages": combined_pages}
+    if not combined_pages and combined_texts:
+        combined_pages = [
+            {"page_number": idx + 1, "text": text}
+            for idx, text in enumerate(combined_texts)
+        ]
+
+    full_text = "\n".join(text for text in combined_texts if text)
+    if not full_text and combined_pages:
+        full_text = " ".join(page.get("text", "") for page in combined_pages)
+    full_text = _strip_noise(full_text)
+    return {"text": full_text, "pages": combined_pages}
 
 
 def _resolve_state_store(
@@ -931,9 +1251,21 @@ def run_splitter(  # pylint: disable=too-many-arguments
     cfg = get_config()
     project_id = project_id or cfg.project_id
     location = location or getattr(cfg, "doc_ai_location", cfg.region)
-    processor_id = processor_id or cfg.doc_ai_splitter_id
-    if not processor_id:
+    if not project_id:
+        raise ValidationError("PROJECT_ID not configured for DocAI splitter execution")
+    if not location:
+        raise ValidationError(
+            "DOC_AI_LOCATION not configured for DocAI splitter execution"
+        )
+    processor_raw = processor_id or cfg.doc_ai_splitter_id
+    if not processor_raw:
         raise OCRServiceError("DOC_AI_SPLITTER_PROCESSOR_ID not configured")
+    if processor_raw.startswith("projects/"):
+        processor_name = processor_raw
+        processor_id = processor_raw.rsplit("/", 1)[-1]
+    else:
+        processor_id = processor_raw
+        processor_name = _full_processor_path(project_id, location, processor_id)
     output_bucket = output_bucket or cfg.intake_gcs_bucket
     base_prefix = output_prefix or f"split/{job_id or uuid.uuid4().hex}/"
     destination_uri = f"gs://{output_bucket.rstrip('/')}/{base_prefix.lstrip('/')}"
@@ -942,7 +1274,7 @@ def run_splitter(  # pylint: disable=too-many-arguments
         extra={
             "input": gcs_uri,
             "output_prefix": destination_uri,
-            "processor": processor_id,
+            "processor": processor_name,
             "job_id": job_id,
             "trace_id": trace_id,
         },
@@ -957,7 +1289,7 @@ def run_splitter(  # pylint: disable=too-many-arguments
     if kms_key:
         gcs_output["kms_key_name"] = kms_key
     request = {
-        "name": f"projects/{project_id}/locations/{location}/processors/{processor_id}",
+        "name": processor_name,
         "input_documents": {
             "gcs_documents": {
                 "documents": [{"gcs_uri": gcs_uri, "mime_type": "application/pdf"}]

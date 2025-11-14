@@ -5,7 +5,7 @@
   "status": "SUMMARY_DONE",
   "trace_id": "6a3ef29f9fdc4cf898d9a2de9a9c12ab",
   "request_id": "5fb9ce7ddcb149e2b6b03d9edc14e8bb",
-  "workflow_execution": "projects/proj/locations/us-central1/workflows/mcc-ocr-pipeline/executions/000001",
+  "workflow_execution": "projects/proj/locations/us-central1/workflows/summary-pipeline/executions/000001",
   "metadata": {
     "source": "drive-webhook",
     "drive_file_id": "1aBcDeFg",

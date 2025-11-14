@@ -43,4 +43,4 @@ gcloud run services update-traffic mcc-ocr-summary --region=us-central1 --to-lat
 
 After deployment, confirm Cloud Run logs show the full sequence:
 `summariser_generation_complete → supervisor_validation_started → pdf_writer_complete → drive_upload_complete`
-and verify the PDF in `gs://quantify-agent-mcc-phi-artifacts/output/`.
+and verify the PDF in `gs://demo-gcp-project-summary-artifacts/output/`.

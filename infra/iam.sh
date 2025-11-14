@@ -17,10 +17,10 @@ set -euo pipefail
 #   SUMMARY_BIGQUERY_DATASET     BigQuery dataset for summary table
 #
 # Optional overrides:
-#   OCR_SA_NAME            (default: mcc-ocr-sa)
-#   SUMMARISER_SA_NAME     (default: mcc-summariser-sa)
-#   STORAGE_SA_NAME        (default: mcc-storage-sa)
-#   WORKFLOW_SA_NAME       (default: mcc-workflow-sa)
+#   OCR_SA_NAME            (default: summary-ocr-sa)
+#   SUMMARISER_SA_NAME     (default: summary-summariser-sa)
+#   STORAGE_SA_NAME        (default: summary-storage-sa)
+#   WORKFLOW_SA_NAME       (default: summary-workflow-sa)
 
 PROJECT_ID="${PROJECT_ID:?PROJECT_ID is required}"
 REGION="${REGION:?REGION is required}"
@@ -30,10 +30,10 @@ SUMMARY_BUCKET="${SUMMARY_BUCKET:?SUMMARY_BUCKET is required}"
 STATE_BUCKET="${STATE_BUCKET:?STATE_BUCKET is required}"
 SUMMARY_BIGQUERY_DATASET="${SUMMARY_BIGQUERY_DATASET:?SUMMARY_BIGQUERY_DATASET is required}"
 
-OCR_SA_NAME="${OCR_SA_NAME:-mcc-ocr-sa}"
-SUMMARISER_SA_NAME="${SUMMARISER_SA_NAME:-mcc-summariser-sa}"
-STORAGE_SA_NAME="${STORAGE_SA_NAME:-mcc-storage-sa}"
-WORKFLOW_SA_NAME="${WORKFLOW_SA_NAME:-mcc-workflow-sa}"
+OCR_SA_NAME="${OCR_SA_NAME:-summary-ocr-sa}"
+SUMMARISER_SA_NAME="${SUMMARISER_SA_NAME:-summary-summariser-sa}"
+STORAGE_SA_NAME="${STORAGE_SA_NAME:-summary-storage-sa}"
+WORKFLOW_SA_NAME="${WORKFLOW_SA_NAME:-summary-workflow-sa}"
 
 create_sa() {
   local sa_name="${1}"
@@ -48,10 +48,10 @@ create_sa() {
 }
 
 echo "⏳ Creating service accounts"
-create_sa "${OCR_SA_NAME}" "MCC OCR service"
-create_sa "${SUMMARISER_SA_NAME}" "MCC Summariser service"
-create_sa "${STORAGE_SA_NAME}" "MCC Storage service"
-create_sa "${WORKFLOW_SA_NAME}" "MCC Workflow Orchestrator"
+create_sa "${OCR_SA_NAME}" "Summary OCR service"
+create_sa "${SUMMARISER_SA_NAME}" "Summary pipeline - summariser"
+create_sa "${STORAGE_SA_NAME}" "Summary pipeline - storage"
+create_sa "${WORKFLOW_SA_NAME}" "Summary Workflow Orchestrator"
 
 OCR_SA="${OCR_SA_NAME}@${PROJECT_ID}.iam.gserviceaccount.com"
 SUMMARISER_SA="${SUMMARISER_SA_NAME}@${PROJECT_ID}.iam.gserviceaccount.com"

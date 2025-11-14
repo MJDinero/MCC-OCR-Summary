@@ -17,6 +17,6 @@
 1. Build and deploy (`v11k-patch`) to Cloud Run.  
 2. Trigger `/process_drive` for a staging file.  
 3. Confirm logs show the full sequence: `summariser_generation_complete` → `supervisor_validation_started` → `pdf_writer_complete` → `Drive upload complete`.  
-4. Verify artifact presence in `gs://quantify-agent-mcc-phi-artifacts/output/`.
+4. Verify artifact presence in `gs://demo-gcp-project-summary-artifacts/output/`.
 
 No further runtime errors are expected once the patched revision is deployed.

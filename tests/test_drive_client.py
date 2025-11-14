@@ -103,7 +103,7 @@ def patch_google(monkeypatch, tmp_path):
     output_folder = "130jJzsl3OBzMD8weGfBOaXikfEnD2KVg"
     monkeypatch.setenv("DRIVE_REPORT_FOLDER_ID", output_folder)
     monkeypatch.setenv("OUTPUT_FOLDER_ID", output_folder)
-    monkeypatch.setenv("DRIVE_SHARED_DRIVE_ID", "0AFPP3mbSAh_oUk9PVA")
+    monkeypatch.setenv("DRIVE_SHARED_DRIVE_ID", "shared-drive-id")
     monkeypatch.setenv("DRIVE_INPUT_FOLDER_ID", "in-folder")
     monkeypatch.setenv("PROJECT_ID", "proj")
     monkeypatch.setenv("REGION", "us")
@@ -151,7 +151,7 @@ def patch_google(monkeypatch, tmp_path):
 
     def _fake_resolve(fid):
         assert fid == output_folder
-        return {"id": fid, "driveId": "0AFPP3mbSAh_oUk9PVA"}
+        return {"id": fid, "driveId": "shared-drive-id"}
 
     monkeypatch.setattr(dc, "_resolve_folder_metadata", _fake_resolve)
     yield
@@ -181,13 +181,13 @@ def test_download_pdf_sets_headers(monkeypatch):
 
     data = dc.download_pdf(
         "file123",
-        quota_project="quantify-agent",
+        quota_project="demo-gcp-project",
         resource_key="rk-1234567890",
     )
     assert data.startswith(b"%PDF-")
     request = service._files.last_request
     assert request is not None
-    assert request.headers["X-Goog-User-Project"] == "quantify-agent"
+    assert request.headers["X-Goog-User-Project"] == "demo-gcp-project"
     assert request.headers["X-Goog-Drive-Resource-Keys"] == "file123/rk-1234567890"
 
 

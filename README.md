@@ -49,7 +49,7 @@ Modular, event-driven pipeline that converts medical PDF intake documents into r
 - `gcloud` CLI with authenticated project access
 - Document AI processor (OCR)
 - Secret Manager secrets:
-  - `mcc-ocr-openai-key` (or equivalent Gemini credential)
+  - `summary-openai-key` (or equivalent Gemini credential)
   - CMEK key references for intake/summary/output buckets
 
 ### Local Development
@@ -104,29 +104,31 @@ All services consume the same config module, enabling override via `ConfigMap` o
 
 ## Drive Configuration & Runtime Mapping
 
-- **Shared Drive (MedCostContain – Team Drive)**: `0AFPP3mbSAh_oUk9PVA`
-- **Intake Folder (Eventarc staging)**: `19xdu6hV9KNgnE_Slt4ogrJdASWXZb5gl`
-- **Output Folder (Final summaries)**: `130jJzsI3OBzMDBweGfBOaXikfEnD2KVg`
-- **Legacy Folder**: `MCC artifacts` (`1eyMOO126vfLBk3bBQE…`) — decommissioned; remove from configs and env vars.
+Populate the following environment variables (see `.env.template`) with deployment-specific identifiers:
+
+- `DRIVE_SHARED_DRIVE_ID=<shared-drive-id>`
+- `DRIVE_INPUT_FOLDER_ID=<intake-folder-id>`
+- `DRIVE_REPORT_FOLDER_ID=<report-folder-id>`
+- `DRIVE_IMPERSONATION_USER=user@example.com`
 
 ### Domain-Wide Delegation & Impersonation
 
-1. Grant `mcc-orch-sa@quantify-agent.iam.gserviceaccount.com` **Content manager** access to the shared drive.
+1. Grant `orchestrator-sa@<PROJECT_ID>.iam.gserviceaccount.com` **Content manager** access to the shared drive.
 2. In Google Workspace Admin Console → Security → API controls → Domain-wide delegation, authorise the service account client ID with scope `https://www.googleapis.com/auth/drive`.
-3. Set `DRIVE_IMPERSONATION_USER=Matt@moneymediausa.com` for Cloud Run, ensuring the runtime impersonates a user with quota.
-4. Rotate the service-account key stored at `/secrets/mcc-orch-sa-key.json`; protect it with CMEK (Secret Manager supports CMEK on create/update).
+3. Set `DRIVE_IMPERSONATION_USER=user@example.com` (or your Workspace delegate) for Cloud Run so uploads run under a quota-bearing user.
+4. Rotate the service-account key stored at `/secrets/orchestrator-sa-key.json`; protect it with CMEK (Secret Manager supports CMEK on create/update).
 
 ### Cloud Run Environment Mapping
 
 Provision the service with:
 
-- `DRIVE_SHARED_DRIVE_ID=0AFPP3mbSAh_oUk9PVA`
-- `DRIVE_REPORT_FOLDER_ID=130jJzsI3OBzMDBweGfBOaXikfEnD2KVg`
-- `DRIVE_IMPERSONATION_USER=Matt@moneymediausa.com`
-- `DOC_AI_OCR_PROCESSOR_ID=21c8becfabc49de6`
-- `PROJECT_ID=quantify-agent`
+- `DRIVE_SHARED_DRIVE_ID=<shared-drive-id>`
+- `DRIVE_REPORT_FOLDER_ID=<report-folder-id>`
+- `DRIVE_IMPERSONATION_USER=user@example.com`
+- `DOC_AI_OCR_PROCESSOR_ID=projects/<PROJECT_ID>/locations/<REGION>/processors/<processor-id>`
+- `PROJECT_ID=demo-gcp-project`
 - `DOC_AI_LOCATION=us`
-- `GOOGLE_APPLICATION_CREDENTIALS=/secrets/mcc-orch-sa-key.json`
+- `GOOGLE_APPLICATION_CREDENTIALS=/secrets/orchestrator-sa-key.json`
 
 Apply these with `gcloud run services update mcc-ocr-summary --region us-central1 --set-env-vars ...` before triggering deployments.
 
@@ -137,7 +139,7 @@ Apply these with `gcloud run services update mcc-ocr-summary --region us-central
 - **Secrets**: Retrieved at runtime from Secret Manager (see `src/utils/secrets.py`). Use `scripts/verify_cmek.sh` to validate CMEK coverage before releases.
 - **Encryption**: Intake, summary, output, and state buckets plus the BigQuery dataset all enforce CMEK (`CMEK_KEY_NAME`).
 - **Redaction**: All logs pass through `utils/redact.py` before emitting messages that contain user-provided text.
-- **IAM**: Stage-scoped identities (`mcc-ocr-sa`, `mcc-summariser-sa`, `mcc-storage-sa`) are created via `infra/iam.sh` with least-privilege, and Cloud Build impersonates them only via `roles/iam.serviceAccountUser`.
+- **IAM**: Stage-scoped identities (`summary-ocr-sa`, `summary-summariser-sa`, `summary-storage-sa`) are created via `infra/iam.sh` with least-privilege, and Cloud Build impersonates them only via `roles/iam.serviceAccountUser`.
 - **Diagnostics**: `ENABLE_DIAG_ENDPOINTS=false` by default; enable only for controlled debugging sessions.
 
 ---
@@ -197,7 +199,7 @@ For further details, see `AGENTS.md` and `audit/technical_audit_v11j.md`.
 
 - **Smoke Test (staging / prod)**
   ```bash
-  PROJECT_ID=... REGION=... INTAKE_BUCKET=... SERVICE_URL=https://mcc-ocr-summary-... \
+  PROJECT_ID=... REGION=... INTAKE_BUCKET=... SERVICE_URL=https://demo-ocr-summary-... \
   ./scripts/e2e_smoke.sh
   ```
   The script uploads a fixture PDF, waits for `/status` to reach `UPLOADED`, validates the signed URL,
@@ -258,8 +260,8 @@ Permanent thresholds: chars >= 300, supervisor pass >= 0.995
 
 ## Runtime Flags
 
-- `SUMMARY_COMPOSE_MODE`: Selects summariser compose strategy (`refactored` by default, falls back to `legacy`).
-- `PDF_WRITER_MODE`: Chooses PDF renderer (`rich`, `minimal`, or `reportlab` backend); `rich` enables full formatting.
+- `SUMMARY_COMPOSE_MODE`: (Deprecated) Refactored summariser is always used; non-`refactored` values are ignored with a warning.
+- `PDF_WRITER_MODE`: (Deprecated) Canonical PDF rendering always uses the rich ReportLab backend; overrides trigger a warning and are ignored.
 - `ENABLE_NOISE_FILTERS`: Toggles heuristic cleanup of OCR noise; set to `true` to keep large-intake filters active.
 - `DOC_AI_FORCE_SPLIT_MIN_PAGES`: Forces DocAI splitter activation when page count meets or exceeds this threshold.
 - `DOC_AI_LOCATION`: Controls DocAI regional endpoint to satisfy data residency and latency requirements.

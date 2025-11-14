@@ -12,7 +12,10 @@ def test_parse_bool_variants():
     assert not parse_bool(None)
 
 
-def test_app_config_properties_and_validation(monkeypatch):
+def test_app_config_properties_and_validation(monkeypatch, tmp_path):
+    monkeypatch.setenv("ENVIRONMENT", "production")
+    monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)
+    monkeypatch.delenv("UNIT_TESTING", raising=False)
     required_env = {
         "PROJECT_ID": "proj-env",
         "REGION": "us-central1",
@@ -27,6 +30,10 @@ def test_app_config_properties_and_validation(monkeypatch):
     }
     for key, value in required_env.items():
         monkeypatch.setenv(key, value)
+
+    creds_file = tmp_path / "creds.json"
+    creds_file.write_text("{}")
+    monkeypatch.setenv("GOOGLE_APPLICATION_CREDENTIALS", str(creds_file))
 
     monkeypatch.setenv("RUN_PIPELINE_INLINE", "off")
 
@@ -46,6 +53,7 @@ def test_app_config_properties_and_validation(monkeypatch):
         intake_gcs_bucket="bucket-intake",
         output_gcs_bucket="bucket-output",
         summary_bucket="bucket-output",
+        google_application_credentials=str(creds_file),
     )
     with pytest.raises(RuntimeError) as excinfo:
         cfg_missing.validate_required()

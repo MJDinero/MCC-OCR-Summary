@@ -151,10 +151,12 @@ def batch_process_documents_gcs(
     kms_key = getattr(cfg, "cmek_key_name", None)
 
     # Ensure input is in GCS
-    intake_bucket = (cfg.intake_gcs_bucket or "").strip() or "quantify-agent-intake"
-    output_bucket = (
-        cfg.output_gcs_bucket or cfg.summary_bucket or ""
-    ).strip() or "quantify-agent-output"
+    intake_bucket = (cfg.intake_gcs_bucket or "").strip()
+    output_bucket = (cfg.output_gcs_bucket or cfg.summary_bucket or "").strip()
+    if not intake_bucket:
+        raise ValidationError("INTAKE_GCS_BUCKET must be configured")
+    if not output_bucket:
+        raise ValidationError("OUTPUT_GCS_BUCKET or SUMMARY_BUCKET must be configured")
 
     if input_uri.startswith("gs://"):
         gcs_input_uri = input_uri

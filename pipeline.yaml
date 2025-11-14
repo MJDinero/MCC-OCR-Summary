@@ -12,7 +12,7 @@ spec:
       containers:
         # App container
         - name: app
-          image: us-central1-docker.pkg.dev/quantify-agent/mcc/mcc-orchestrator:latest
+          image: us-central1-docker.pkg.dev/demo-gcp-project/mcc/mcc-orchestrator:latest
           ports:
             - name: http1
               containerPort: 8080
@@ -26,6 +26,6 @@ spec:
             - name: TARGET
               value: "http://localhost:8080/metrics"
             - name: PROJECT_ID
-              value: "quantify-agent"
+              value: "demo-gcp-project"
       containerConcurrency: 4
       timeoutSeconds: 1200

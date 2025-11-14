@@ -12,4 +12,4 @@ def test_gmp_sidecar_present():
     )
     env = {item["name"]: item["value"] for item in sidecar.get("env", [])}
     assert env["TARGET"].endswith("/metrics")
-    assert env["PROJECT_ID"] == "quantify-agent"
+    assert env["PROJECT_ID"] == "demo-gcp-project"

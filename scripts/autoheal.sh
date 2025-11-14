@@ -2,10 +2,10 @@
 set -Eeuo pipefail
 
 SERVICE="${SERVICE:-mcc-ocr-summary}"
-PROJECT="${PROJECT:-quantify-agent}"
+PROJECT="${PROJECT:-demo-gcp-project}"
 REGION="${REGION:-us-central1}"
-RUN_URL="${RUN_URL:-https://mcc-ocr-summary-6vupjpy5la-uc.a.run.app}"
-FILE_ID="${FILE_ID:-1ZFra9EN0jS8wTS4dcW7deypxnVggb8vS}"
+RUN_URL="${RUN_URL:-https://demo-ocr-summary-uc.a.run.app}"
+FILE_ID="${FILE_ID:-drive-source-file-id}"
 MAX_ITERS="${MAX_ITERS:-20}"
 
 export CLOUDSDK_CORE_DISABLE_PROMPTS=1

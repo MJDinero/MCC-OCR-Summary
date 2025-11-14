@@ -100,13 +100,13 @@ index 0000000000000000000000000000000000000000..03d4b19318b091557414e4ac8a46b2a2
 +      "src/services/docai_batch_helper.py",
 +      "src/utils/pdf_splitter.py"
 +    ],
-+    "rationale": "Both helpers always write to quantify-agent-* buckets, preventing deployment to other projects and risking accidental data disclosure.",
++    "rationale": "Both helpers always write to demo-gcp-project-* buckets, preventing deployment to other projects and risking accidental data disclosure.",
 +    "evidence": [
 +      "F:src/services/docai_batch_helper.py\u2020L20-L123",
 +      "F:src/utils/pdf_splitter.py\u2020L30-L118"
 +    ],
 +    "proposed_fix": "Parameterise intake/output buckets via AppConfig or function arguments with sensible defaults overridden by environment variables.",
-+    "proposed_diff": "diff --git a/src/services/docai_batch_helper.py b/src/services/docai_batch_helper.py\n@@\n-INTAKE_BUCKET = \"quantify-agent-intake\"\n-OUTPUT_BUCKET = \"quantify-agent-output\"\n+INTAKE_BUCKET = os.getenv(\"DOC_AI_BATCH_INTAKE_BUCKET\", \"quantify-agent-intake\")\n+OUTPUT_BUCKET = os.getenv(\"DOC_AI_BATCH_OUTPUT_BUCKET\", \"quantify-agent-output\")",
++    "proposed_diff": "diff --git a/src/services/docai_batch_helper.py b/src/services/docai_batch_helper.py\n@@\n-INTAKE_BUCKET = \"demo-gcp-project-intake\"\n-OUTPUT_BUCKET = \"demo-gcp-project-output\"\n+INTAKE_BUCKET = os.getenv(\"DOC_AI_BATCH_INTAKE_BUCKET\", \"demo-gcp-project-intake\")\n+OUTPUT_BUCKET = os.getenv(\"DOC_AI_BATCH_OUTPUT_BUCKET\", \"demo-gcp-project-output\")",
 +    "tests": [
 +      "tests/test_docai_batch_helper.py",
 +      "tests/test_pdf_splitter.py"

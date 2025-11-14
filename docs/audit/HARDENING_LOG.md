@@ -143,19 +143,19 @@
 ## Task U – Prometheus Sidecar, Drive Resource Keys, DocAI toggles & Final Verification
 - **Date:** 2025-10-29T17:55:00Z
 - **Files:** pipeline.yaml, tests/test_infra_manifest.py, src/services/drive_client.py, tests/test_drive_client.py, src/utils/docai_request_builder.py, src/services/docai_helper.py, tests/test_docai_request_builder.py, src/config.py, tests/test_docai_helper.py
-- **Rationale:** Added the Managed Service for Prometheus sidecar to the Cloud Run manifest with a regression test, extended the Drive client to emit `X-Goog-User-Project` and resource-key headers, and exposed DocAI `legacy_layout` / `enableImageQualityScores` toggles through configuration and the request builder. Captured a fresh final-verification run on Drive file `1ZFra9EN0jS8wTS4dcW7deypxnVggb8vS`.
+- **Rationale:** Added the Managed Service for Prometheus sidecar to the Cloud Run manifest with a regression test, extended the Drive client to emit `X-Goog-User-Project` and resource-key headers, and exposed DocAI `legacy_layout` / `enableImageQualityScores` toggles through configuration and the request builder. Captured a fresh final-verification run on Drive file `drive-source-file-id`.
 - **Commands:**
   - `python3 -m pytest tests/test_infra_manifest.py tests/test_drive_client.py tests/test_docai_request_builder.py tests/test_docai_helper.py`
   - `python3 -m ruff check .` (fails due to pre-existing lint violations in bench/ and scripts/)
   - `python3 -m black --check .` (fails – repository not black-formatted historically)
   - `python3 -m mypy src` (fails on legacy typing issues in docai_helper/api_ingest)
-  - `gcloud builds submit --tag us-central1-docker.pkg.dev/quantify-agent/mcc/mcc-ocr-summary:prometheus-drive-docai` (submitted; log streaming blocked by IAM)
-  - `gcloud run deploy mcc-ocr-summary --image us-central1-docker.pkg.dev/quantify-agent/mcc/mcc-ocr-summary:prometheus-drive-docai --region us-central1` (failed – image not found because build status unknown)
+  - `gcloud builds submit --tag us-central1-docker.pkg.dev/demo-gcp-project/mcc/mcc-ocr-summary:prometheus-drive-docai` (submitted; log streaming blocked by IAM)
+  - `gcloud run deploy mcc-ocr-summary --image us-central1-docker.pkg.dev/demo-gcp-project/mcc/mcc-ocr-summary:prometheus-drive-docai --region us-central1` (failed – image not found because build status unknown)
   - Final verification snippet (see Quick Start) – succeeded locally with ADC.
 - **Final Verification Evidence:**
   - Run JSON: `{"report_file_id":"1-yPm59c-l66fWUhycgrQ2dYSv5gd9HtH","supervisor_passed":true,"request_id":"ea7706444c27435b8cfa65174335e97f"}`
   - Validator JSON: `{"length":1917,"sections_ok":true,"noise_found":false,"ok":true}`
-  - Drive metadata: `{"id":"1-yPm59c-l66fWUhycgrQ2dYSv5gd9HtH","name":"summary-498333be847a9018.pdf","driveId":"0AFPP3mbSAh_oUk9PVA"}` (no resourceKey required)
+  - Drive metadata: `{"id":"1-yPm59c-l66fWUhycgrQ2dYSv5gd9HtH","name":"summary-498333be847a9018.pdf","driveId":"shared-drive-id"}` (no resourceKey required)
   - Metrics snapshot: `/metrics` endpoint returned HTTP 404 (Cloud Run deployment still on previous revision without Prometheus sidecar); noted for follow-up once image is available.
   - Latest revision attempt: `mcc-ocr-summary-00290-lhs` (failed – image missing). Commit SHA: `c77dcff2ea3715fd799c08ada64b5d2d4065a068`.
 - **Status:** PARTIAL – Code changes and verification run succeeded locally, but the automated CI mirror still fails on long-standing lint/type debt and the Cloud Build/Run deployment needs IAM + successful image push before the Prometheus sidecar can be validated. Metrics endpoint remains unavailable until the new revision is live.
@@ -203,18 +203,18 @@
 - **Files:** cloudbuild.yaml, scripts/deploy.sh, scripts/validate_summary.py, src/main.py, src/api/process.py, src/services/summariser_refactored.py, docs/audit/HARDENING_LOG.md
 - **Rationale:** Locked every deployment surface (Cloud Build + deploy.sh) to `SUMMARY_COMPOSE_MODE=refactored`, `PDF_WRITER_MODE=rich`, and `ENABLE_NOISE_FILTERS=true`, added per-request structured logs in main/process so we can trace which summariser/pdf backend executed, hardened the refactored summariser so every narrative/entity line is re-sanitised before exposure, and introduced `scripts/validate_summary.py` which now issues Cloud Run identity tokens + Drive domain-wide delegation, verifies the 263-page source intake before triggering `/process/drive`, and asserts the canonical four narrative headings plus three entity lists with forbidden-phrase checks on the resulting PDF.
 - **Commands:**
-  - `gcloud builds submit --config cloudbuild.yaml --substitutions=_IMAGE_REPO=us-central1-docker.pkg.dev/quantify-agent/mcc/mcc-ocr-summary,_PROJECT_ID=quantify-agent,_REGION=us-central1,_DOC_AI_LOCATION=us,_DOC_AI_PROCESSOR_ID=21c8becfabc49de6,_INTAKE_BUCKET=mcc-intake,_OUTPUT_BUCKET=mcc-output,_SUMMARY_BUCKET=mcc-output,_DRIVE_INPUT_FOLDER_ID=19xdu6hV9KNgnE_Slt4ogrJdASWXZb5gl,_DRIVE_REPORT_FOLDER_ID=1eyMO0126VfLBK3bBQEpWlVOL6tWxriCE,_DRIVE_SHARED_DRIVE_ID=0AFPP3mbSAh_oUk9PVA,_DRIVE_IMPERSONATION_USER=Matt@moneymediausa.com,_CMEK_KEY_NAME=projects/quantify-agent/locations/us-central1/keyRings/mcc-phi/cryptoKeys/mcc-phi-key,_TAG=v11mvp-20251113`
-  - `gcloud run deploy mcc-ocr-summary --image us-central1-docker.pkg.dev/quantify-agent/mcc/mcc-ocr-summary:v11mvp-20251113 --region us-central1 --platform managed --service-account mcc-orch-sa@quantify-agent.iam.gserviceaccount.com --concurrency 1 --cpu 2 --memory 2Gi --timeout 3600 --max-instances 10 --no-cpu-throttling --cpu-boost --execution-environment gen2 --set-env-vars MODE=mvp,...,MIN_SUMMARY_DYNAMIC_RATIO=0.005 --update-secrets OPENAI_API_KEY=OPENAI_API_KEY:latest,INTERNAL_EVENT_TOKEN=internal-event-token:latest,SERVICE_ACCOUNT_JSON=mcc_orch_sa_key:latest`
-  - `python3 scripts/validate_summary.py --base-url https://mcc-ocr-summary-720850296638.us-central1.run.app --source-file-id 1ZFra9EN0jS8wTS4dcW7deypxnVggb8vS --expected-pages 263 --credentials ~/Downloads/mcc_orch_sa_key.json --impersonate Matt@moneymediausa.com`
+  - `gcloud builds submit --config cloudbuild.yaml --substitutions=_IMAGE_REPO=us-central1-docker.pkg.dev/demo-gcp-project/mcc/mcc-ocr-summary,_PROJECT_ID=demo-gcp-project,_REGION=us-central1,_DOC_AI_LOCATION=us,_DOC_AI_PROCESSOR_ID=processor-id,_INTAKE_BUCKET=demo-intake-bucket,_OUTPUT_BUCKET=demo-output-bucket,_SUMMARY_BUCKET=demo-output-bucket,_DRIVE_INPUT_FOLDER_ID=drive-input-folder-id,_DRIVE_REPORT_FOLDER_ID=drive-report-folder-id,_DRIVE_SHARED_DRIVE_ID=shared-drive-id,_DRIVE_IMPERSONATION_USER=user@example.com,_CMEK_KEY_NAME=projects/demo-gcp-project/locations/us-central1/keyRings/demo-kms/cryptoKeys/summary-key,_TAG=v11mvp-20251113`
+  - `gcloud run deploy mcc-ocr-summary --image us-central1-docker.pkg.dev/demo-gcp-project/mcc/mcc-ocr-summary:v11mvp-20251113 --region us-central1 --platform managed --service-account orchestrator-sa@demo-gcp-project.iam.gserviceaccount.com --concurrency 1 --cpu 2 --memory 2Gi --timeout 3600 --max-instances 10 --no-cpu-throttling --cpu-boost --execution-environment gen2 --set-env-vars MODE=mvp,...,MIN_SUMMARY_DYNAMIC_RATIO=0.005 --update-secrets OPENAI_API_KEY=OPENAI_API_KEY:latest,INTERNAL_EVENT_TOKEN=internal-event-token:latest,SERVICE_ACCOUNT_JSON=orchestrator_sa_key:latest`
+  - `python3 scripts/validate_summary.py --base-url https://demo-ocr-summary-uc.a.run.app --source-file-id drive-source-file-id --expected-pages 263 --credentials ~/Downloads/orchestrator_sa_key.json --impersonate user@example.com`
 - **Final Validation Evidence (2025-11-13T17:09:41Z):**
   - revision: `mcc-ocr-summary-00337-9ff`
-  - image: `us-central1-docker.pkg.dev/quantify-agent/mcc/mcc-ocr-summary:v11mvp-20251113`
+  - image: `us-central1-docker.pkg.dev/demo-gcp-project/mcc/mcc-ocr-summary:v11mvp-20251113`
   - validator output:
     ```json
     {"report_file_id":"1z9iVWgD6x-3tkq6hbwzitNMQC-2cUOf5","page_count":3,"section_line_counts":{"Intro Overview":4,"Key Points":3,"Detailed Findings":13,"Care Plan & Follow-Up":8,"Diagnoses":5,"Providers":4,"Medications / Prescriptions":3},"trigger_metadata":{"report_file_id":"1z9iVWgD6x-3tkq6hbwzitNMQC-2cUOf5","supervisor_passed":true,"request_id":"dafcf69b87054c4c9a98232aa21e6b13","compose_mode":"refactored","pdf_compliant":true,"writer_backend":"reportlab"}}
     ```
-  - Source intake (`1ZFra9EN0jS8wTS4dcW7deypxnVggb8vS`) verified at 263 pages prior to processing; summary PDF contains exactly the four canonical narrative sections plus three entity lists with no forbidden phrases.
-- **Status:** PASS – Service [https://mcc-ocr-summary-720850296638.us-central1.run.app] now serves the refactored summariser/rich writer path, and the shipped validator provides a self-healing deploy→verify loop for the 263-page regression case.
+  - Source intake (`drive-source-file-id`) verified at 263 pages prior to processing; summary PDF contains exactly the four canonical narrative sections plus three entity lists with no forbidden phrases.
+- **Status:** PASS – Service [https://demo-ocr-summary-uc.a.run.app] now serves the refactored summariser/rich writer path, and the shipped validator provides a self-healing deploy→verify loop for the 263-page regression case.
 
 ### 2025-10-30T15:46:05Z — Manual Intake Verification (mcc-ocr-summary)
 - revision: ``  commit: `af74125076e4`  intake_file: ``
@@ -225,7 +225,7 @@
 - run.json:
 {"report_file_id":"1-nQTt9H1py8i4HN81Sh_P3ZY_uEODc2H","supervisor_passed":true,"request_id":"25b5a7395dd94062937a2234c5acaefd"}
 - report_metadata.json:
-{"id":"1-nQTt9H1py8i4HN81Sh_P3ZY_uEODc2H","name":"summary-f57da7f096c9e613.pdf","driveId":"0AFPP3mbSAh_oUk9PVA"}
+{"id":"1-nQTt9H1py8i4HN81Sh_P3ZY_uEODc2H","name":"summary-f57da7f096c9e613.pdf","driveId":"shared-drive-id"}
 - validator:
 {"ok":true,"sections_ok":true,"noise_found":false,"length":5320}
 
@@ -237,7 +237,7 @@
 {"ok": false, "sections_ok": false, "noise_found": false, "length": 4667}
 - pages: 1
 - docai_decision:
-{"decision":"local_pypdf_split","pages_total":263,"retry_on_page_limit":false,"request_id":"83b10848ba1548f8ac1fd7aa45ccf0b9","location":"us","processor_id":"21c8becfabc49de6","splitter_processor_id":null,"ts":"2025-10-30T21:35:05.404144+00:00"}
+{"decision":"local_pypdf_split","pages_total":263,"retry_on_page_limit":false,"request_id":"83b10848ba1548f8ac1fd7aa45ccf0b9","location":"us","processor_id":"processor-id","splitter_processor_id":null,"ts":"2025-10-30T21:35:05.404144+00:00"}
 - metrics: /metrics scraped internally via Prometheus sidecar; service remains private.
 
 ### 2025-10-30T22:42:27Z — Large PDF OCR unblock verification (mcc-ocr-summary)
@@ -248,7 +248,7 @@
 {"ok": true, "sections_ok": true, "noise_found": false, "length": 22616}
 - pages: 6
 - docai_decision:
-{"decision":"local_pypdf_split","pages_total":263,"retry_on_page_limit":false,"processor_id":"21c8becfabc49de6","splitter_processor_id":null,"location":"us","request_id":"1617c98380bf4878bb01074a5070076e"}
+{"decision":"local_pypdf_split","pages_total":263,"retry_on_page_limit":false,"processor_id":"processor-id","splitter_processor_id":null,"location":"us","request_id":"1617c98380bf4878bb01074a5070076e"}
 - metrics: /metrics scraped internally via Prometheus sidecar; service remains private.
 
 

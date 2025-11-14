@@ -244,7 +244,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--base-url",
         default=os.getenv("MCC_BASE_URL"),
-        help="Base URL for the deployed service (e.g. https://mcc-ocr-summary-xyz.a.run.app)",
+        help="Base URL for the deployed service (e.g. https://demo-ocr-summary-xyz.a.run.app)",
     )
     parser.add_argument(
         "--source-file-id",

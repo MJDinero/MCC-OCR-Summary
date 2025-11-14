@@ -3,7 +3,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from src.config import AppConfig
+from src.config import AppConfig, LOCAL_PROJECT_ID
 from src.utils import secrets as secrets_mod
 
 
@@ -23,8 +23,11 @@ def _clear():
         os.environ.pop(k, None)
 
 
-def test_config_missing_required():
+def test_config_missing_required(monkeypatch):
     _clear()
+    monkeypatch.setenv("ENVIRONMENT", "production")
+    monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)
+    monkeypatch.delenv("UNIT_TESTING", raising=False)
     os.environ["PROJECT_ID"] = "p"
     cfg = AppConfig()
     with pytest.raises(RuntimeError):
@@ -76,6 +79,15 @@ def test_config_resolves_secret(monkeypatch):
     assert cfg.doc_ai_processor_id == "resolved"
     assert cfg.openai_api_key == "resolved"
     _clear()
+
+
+def test_config_allows_local_defaults(monkeypatch):
+    _clear()
+    monkeypatch.setenv("ENVIRONMENT", "local")
+    monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)
+    cfg = AppConfig()
+    cfg.validate_required()  # should not raise for local/test environments
+    assert cfg.project_id == LOCAL_PROJECT_ID
 
 
 def test_local_env_relaxes_bucket_requirements():
