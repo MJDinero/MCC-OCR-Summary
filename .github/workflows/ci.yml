@@ -25,6 +25,18 @@ jobs:
           pip install -r requirements-dev.txt
           pip install cyclonedx-bom
 
+      # Run Ruff linting before pytest so style regressions fail fast
+      - name: Ruff lint
+        run: python -m ruff check src tests
+
+      # Enforce mypy --strict early to keep typing regressions out of main
+      - name: Mypy strict type check
+        run: python -m mypy --strict src
+
+      # Validate the MCC Bible PDF contract locally to guard each PR/commit
+      - name: Validate Bible PDF contract
+        run: python scripts/validate_summary.py --pdf-path tests/fixtures/validator_sample.pdf --expected-pages 1
+
       - name: Prepare artifact directory
         run: mkdir -p artifacts
 
