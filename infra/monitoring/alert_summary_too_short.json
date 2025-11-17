@@ -1,5 +1,5 @@
 {
-  "displayName": "Summary Too Short > 0 per hour",
+  "displayName": "Summary Too Short > 0 per hour (${ENV})",
   "combiner": "OR",
   "conditions": [
     {
@@ -18,5 +18,12 @@
       }
     }
   ],
-  "notificationChannels": []
+  "notificationChannels": [
+    "projects/${PROJECT_ID}/notificationChannels/${ENV}-pagerduty",
+    "projects/${PROJECT_ID}/notificationChannels/${ENV}-email"
+  ],
+  "documentation": {
+    "content": "Runbook: https://runbooks.mcc/ocr/${ENV}/summary-too-short",
+    "mimeType": "text/markdown"
+  }
 }

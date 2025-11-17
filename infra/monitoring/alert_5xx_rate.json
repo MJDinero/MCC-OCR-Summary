@@ -1,5 +1,5 @@
 {
-  "displayName": "MCC OCR Cloud Run 5xx Rate",
+  "displayName": "MCC OCR Cloud Run 5xx Rate (${ENV})",
   "combiner": "OR",
   "conditions": [
     {
@@ -10,7 +10,14 @@
       }
     }
   ],
-  "notificationChannels": [],
+  "notificationChannels": [
+    "projects/${PROJECT_ID}/notificationChannels/${ENV}-pagerduty",
+    "projects/${PROJECT_ID}/notificationChannels/${ENV}-email"
+  ],
+  "documentation": {
+    "content": "Runbook: https://runbooks.mcc/ocr/${ENV}/cloud-run-5xx",
+    "mimeType": "text/markdown"
+  },
   "alertStrategy": {
     "autoClose": "3600s"
   },

@@ -1,5 +1,5 @@
 {
-  "displayName": "MCC OCR Pipeline SLO Breach",
+  "displayName": "MCC OCR Pipeline SLO Breach (${ENV})",
   "combiner": "OR",
   "conditions": [
     {
@@ -10,7 +10,14 @@
       }
     }
   ],
-  "notificationChannels": [],
+  "notificationChannels": [
+    "projects/${PROJECT_ID}/notificationChannels/${ENV}-pagerduty",
+    "projects/${PROJECT_ID}/notificationChannels/${ENV}-email"
+  ],
+  "documentation": {
+    "content": "Runbook: https://runbooks.mcc/ocr/${ENV}/pipeline-slo",
+    "mimeType": "text/markdown"
+  },
   "alertStrategy": {
     "autoClose": "7200s"
   },

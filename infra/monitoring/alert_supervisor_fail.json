@@ -1,5 +1,5 @@
 {
-  "displayName": "Supervisor fails detected (6h)",
+  "displayName": "Supervisor fails detected (6h) (${ENV})",
   "combiner": "OR",
   "conditions": [
     {
@@ -18,5 +18,12 @@
       }
     }
   ],
-  "notificationChannels": []
+  "notificationChannels": [
+    "projects/${PROJECT_ID}/notificationChannels/${ENV}-pagerduty",
+    "projects/${PROJECT_ID}/notificationChannels/${ENV}-email"
+  ],
+  "documentation": {
+    "content": "Runbook: https://runbooks.mcc/ocr/${ENV}/supervisor-failures",
+    "mimeType": "text/markdown"
+  }
 }

@@ -69,6 +69,59 @@ python3 -m pytest tests/test_summarization_service_pipeline.py -q
 
 Environment variables can be set via `.env` (see `.env.template`). Core configuration lives in `src/config.py`; overrides can come from env or YAML.
 
+### Dependency Management
+
+Runtime dependencies live in `requirements.in` and compile into `requirements.txt` via [`pip-tools`](https://github.com/jazzband/pip-tools). Developer tooling lives in `requirements-dev.in` → `requirements-dev.txt`.
+
+```bash
+python -m pip install pip-tools
+pip-compile requirements.in
+pip-compile requirements-dev.in
+```
+
+`Dockerfile` installs only `requirements.txt`, so keep dev-only packages in the `.dev` files.
+Dependabot (`.github/dependabot.yml`) monitors the pip ecosystem weekly and raises PRs for both `requirements.in` and `requirements-dev.in`; after merging those branches rerun `pip-compile` so the pinned `.txt` files stay in sync.
+
+### Summary Validator (Bible Compliance)
+
+Run the validator locally whenever you touch the summariser, formatter, or PDF pipeline. The script now accepts either a local PDF or Drive IDs:
+
+```bash
+# Generate a quick sample PDF (optional helper)
+python - <<'PY'
+from pathlib import Path
+from src.services.pdf_writer import PDFWriter, ReportLabBackend
+sections = [
+    ("Provider Seen", "Dr. Rivera, MD"),
+    ("Reason for Visit", "- Hypertension follow-up\n- Medication tolerance check"),
+    ("Clinical Findings", "- Blood pressure 128/78 mmHg\n- Lungs clear"),
+    ("Treatment / Follow-up Plan", "- Continue lisinopril 20 mg daily"),
+    ("Diagnoses", "- I10 Essential hypertension"),
+    ("Healthcare Providers", "- Dr. Marisol Rivera"),
+    ("Medications / Prescriptions", "- Lisinopril 20 mg tablet"),
+]
+writer = PDFWriter(ReportLabBackend(), title="Sample Medical Summary")
+Path("sample_bible.pdf").write_bytes(writer.build("Sample Summary", sections))
+PY
+
+# Validate a local PDF (no Drive/API dependencies)
+python scripts/validate_summary.py --pdf-path sample_bible.pdf --expected-pages 1
+
+# Validate a deployed Cloud Run instance + Drive file (263-page regression)
+python scripts/validate_summary.py \
+  --base-url https://YOUR-SERVICE.a.run.app \
+  --source-file-id DRIVE_SOURCE_FILE \
+  --expected-pages 263 \
+  --credentials ~/Downloads/orchestrator_sa_key.json \
+  --impersonate user@example.com
+```
+
+CI runs the local `--pdf-path` flow on every PR, and Cloud Build should execute the Drive-based command after deployments to guarantee MCC “Bible” compliance.
+The final step in `cloudbuild.yaml` fetches a validator service-account key from `_VALIDATION_CREDENTIALS_SECRET`, calls `_VALIDATION_BASE_URL`, and processes the canonical 263-page Drive file `_VALIDATION_SOURCE_FILE_ID` (set `_VALIDATION_IMPERSONATE` if you rely on domain-wide delegation). Override those substitutions when triggering builds so the post-deploy validator points at your environment.
+
+> **Bible guardrails:** The PDF assembler always emits the MCC Bible sections in the canonical order (`Provider Seen → Reason for Visit → Clinical Findings → Treatment / Follow-up Plan → Diagnoses → Healthcare Providers → Medications / Prescriptions`) even when upstream summaries omit structured sections. The `/process` API now enforces the forbidden-phrase PDF guard by default in every environment; set `PDF_GUARD_DISABLED=true` (or `PDF_DEV_GUARD=false` for legacy scripts) only when debugging locally.
+> Canonical headings and forbidden-phrase lists live in `src/services/summarization/bible.py` and are imported by the API, pipeline, formatter, and validator so a single edit updates every enforcement point.
+
 ### Cloud Run Deployment
 
 1. Build the image:
@@ -148,7 +201,7 @@ Apply these with `gcloud run services update mcc-ocr-summary --region us-central
 
 - **Metrics**: Prometheus instrumentation is enabled by default (`/metrics` endpoint attached via `PrometheusMetrics.instrument_app`). Latency, throughput, DLQ counters, and job completions are emitted per stage.
 - **Logs**: Structured JSON logs now include `stage`, `service`, `latency_ms`, `error_type`, and `redaction_applied` to streamline SRE triage.
-- **Monitoring Assets**: Dashboards in `infra/monitoring/dashboard_pipeline_latency.json` and `infra/monitoring/dashboard_throughput_cpu_mem.json` visualise latency distributions and Cloud Run CPU/memory. Alert policies (`alert_dlq_backlog.json`, `alert_5xx_rate.json`, `alert_slo_breach.json`) enforce DLQ backlog, 5xx error rate, and pipeline SLOs. Apply or update them with `python infra/monitoring/apply_monitoring.py --project <gcp-project>`.
+- **Monitoring Assets**: Dashboards in `infra/monitoring/dashboard_pipeline_latency.json` and `infra/monitoring/dashboard_throughput_cpu_mem.json` visualise latency distributions and Cloud Run CPU/memory. Alert policies (`alert_dlq_backlog.json`, `alert_5xx_rate.json`, `alert_slo_breach.json`, `alert_summary_too_short.json`, `alert_supervisor_fail.json`) now ship with per-environment notification channels (`projects/${PROJECT_ID}/notificationChannels/${ENV}-pagerduty` + `${ENV}-email`) and runbook links (`https://runbooks.mcc/ocr/<env>/...`). Apply or update them with `python infra/monitoring/apply_monitoring.py --project <gcp-project> --environment prod` so `${ENV}` / `${PROJECT_ID}` placeholders resolve before deployment.
 - **Verification**: After deployment, confirm `/metrics` exposes Prometheus samples (metrics are now forced on in Cloud Run) and that `infra/monitoring/apply_monitoring.py` completed without errors.
 
 ## Runtime Tuning
@@ -255,16 +308,34 @@ For further details, see `AGENTS.md` and `audit/technical_audit_v11j.md`.
 - [ ] Ensure alert policies deployed (`gcloud monitoring policies create --policy-from-file=infra/monitoring/alert_policies.yaml`).
 - [ ] Validate IAM via `infra/iam.sh` and `gcloud projects get-iam-policy`.
 - [ ] Promote canary only after smoke test success; note rollback command from Cloud Build logs.
+- [ ] Run `scripts/validate_summary.py` against Drive file `1ZFra9EN0jS8wTS4dcW7deypxnVggb8vS` (expect Provider→Reason→Clinical→Treatment headings + zero forbidden phrases).
 
 Permanent thresholds: chars >= 300, supervisor pass >= 0.995
 
 ## Runtime Flags
 
-- `SUMMARY_COMPOSE_MODE`: (Deprecated) Refactored summariser is always used; non-`refactored` values are ignored with a warning.
-- `PDF_WRITER_MODE`: (Deprecated) Canonical PDF rendering always uses the rich ReportLab backend; overrides trigger a warning and are ignored.
-- `ENABLE_NOISE_FILTERS`: Toggles heuristic cleanup of OCR noise; set to `true` to keep large-intake filters active.
+- `SUMMARY_COMPOSE_MODE`: The refactored MCC Bible summariser is enforced in all environments. Keep set to `refactored` for clarity; other values are ignored with a warning.
+- `PDF_WRITER_MODE`: The rich ReportLab writer is enforced for consistency; keep at `rich` to avoid guard warnings.
+- `PDF_GUARD_ENABLED`: Defaults to `true` and should remain enabled in prod/staging so `/process` responses are scrubbed for intake/consent phrases.
+- `ENABLE_NOISE_FILTERS`: Toggles heuristic cleanup of OCR noise; leave `true` to keep large-intake filters active.
 - `DOC_AI_FORCE_SPLIT_MIN_PAGES`: Forces DocAI splitter activation when page count meets or exceeds this threshold.
 - `DOC_AI_LOCATION`: Controls DocAI regional endpoint to satisfy data residency and latency requirements.
+
+### Validator
+
+Cloud Build and release candidates must pass the Drive validator against the 263-page regression PDF:
+
+```bash
+BASE_URL=$(gcloud run services describe mcc-ocr-summary --region us-central1 --format='value(status.url)')
+python3 scripts/validate_summary.py \
+  --base-url "$BASE_URL" \
+  --source-file-id "1ZFra9EN0jS8wTS4dcW7deypxnVggb8vS" \
+  --expected-pages 263 \
+  --credentials ~/Downloads/mcc_orch_sa_key.json \
+  --impersonate Matt@moneymediausa.com
+```
+
+The resulting JSON must show the Provider→Reason→Clinical→Treatment headings in order and zero `pdf_forbidden_phrases`.
 
 ## License
 

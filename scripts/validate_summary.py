@@ -8,35 +8,29 @@ import json
 import os
 import sys
 from io import BytesIO
-from typing import Dict, Iterable, List, Tuple
+from pathlib import Path
+from typing import Dict, Iterable, List, Tuple, Optional
 
 import requests
 from google.auth.transport.requests import AuthorizedSession, Request
 from google.oauth2 import service_account
 from pypdf import PdfReader
 
-EXPECTED_HEADINGS: Tuple[str, ...] = (
-    "Intro Overview",
-    "Key Points",
-    "Detailed Findings",
-    "Care Plan & Follow-Up",
-    "Diagnoses",
-    "Providers",
-    "Medications / Prescriptions",
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from src.services.bible import (
+    CANONICAL_ENTITY_ORDER,
+    CANONICAL_NARRATIVE_ORDER,
+    CANONICAL_SECTION_ORDER,
+    ENTITY_FORBIDDEN_TOKENS,
+    FORBIDDEN_PDF_PHRASES,
 )
-NARRATIVE_HEADINGS = EXPECTED_HEADINGS[:4]
-ENTITY_HEADINGS = EXPECTED_HEADINGS[4:]
-FORBIDDEN_PHRASES = (
-    "document processed in",
-    "structured indices",
-    "summary notes",
-)
-ENTITY_FORBIDDEN_TOKENS = (
-    "document",
-    "page",
-    "instructions",
-    "summary",
-)
+
+EXPECTED_HEADINGS: Tuple[str, ...] = CANONICAL_SECTION_ORDER
+NARRATIVE_HEADINGS = CANONICAL_NARRATIVE_ORDER
+ENTITY_HEADINGS = CANONICAL_ENTITY_ORDER
 
 
 def _build_drive_session(
@@ -163,7 +157,7 @@ def _validate_sections(order: List[str], sections: Dict[str, List[str]]) -> Dict
 
 def _ensure_forbidden_absent(lines: Iterable[str]) -> None:
     blob = "\n".join(lines).lower()
-    hits = [phrase for phrase in FORBIDDEN_PHRASES if phrase in blob]
+    hits = [phrase for phrase in FORBIDDEN_PDF_PHRASES if phrase in blob]
     if hits:
         raise AssertionError(f"Forbidden phrases detected: {hits}")
 
@@ -186,53 +180,66 @@ def _trigger_process(
 
 
 def _run(args: argparse.Namespace) -> None:
-    if not args.report_file_id and not args.source_file_id:
-        raise SystemExit("--source-file-id or --report-file-id must be provided")
-
-    drive_session = _build_drive_session(
-        args.credentials, impersonate=args.impersonate
-    )
-    process_session = _build_process_session(
-        args.base_url, args.credentials, impersonate=args.impersonate
-    )
-
-    if args.expected_pages:
-        if not args.source_file_id:
-            raise SystemExit(
-                "--expected-pages requires --source-file-id so the input PDF can be inspected"
-            )
-        source_pdf = _download_drive_pdf(
-            drive_session,
-            file_id=args.source_file_id,
-        )
-        source_page_count = _count_pages(source_pdf)
-        if source_page_count != args.expected_pages:
-            raise AssertionError(
-                f"Source PDF page count mismatch: got {source_page_count}, expected {args.expected_pages}"
-            )
-
-    report_file_id = args.report_file_id
+    pdf_bytes: Optional[bytes] = None
     metadata: Dict[str, str] = {}
-    if not report_file_id:
-        metadata = _trigger_process(
-            args.base_url,
-            file_id=args.source_file_id,
-            timeout=args.timeout,
-            session=process_session,
-        )
-        report_file_id = metadata.get("report_file_id")
 
-    pdf_bytes = _download_drive_pdf(drive_session, file_id=report_file_id)
+    if args.pdf_path:
+        pdf_path = Path(args.pdf_path)
+        if not pdf_path.exists():
+            raise FileNotFoundError(f"PDF not found: {pdf_path}")
+        pdf_bytes = pdf_path.read_bytes()
+    else:
+        if not args.report_file_id and not args.source_file_id:
+            raise SystemExit("--source-file-id or --report-file-id must be provided")
+        drive_session = _build_drive_session(
+            args.credentials, impersonate=args.impersonate
+        )
+        process_session = _build_process_session(
+            args.base_url, args.credentials, impersonate=args.impersonate
+        )
+
+        if args.expected_pages and args.source_file_id:
+            source_pdf = _download_drive_pdf(
+                drive_session,
+                file_id=args.source_file_id,
+            )
+            source_page_count = _count_pages(source_pdf)
+            if source_page_count != args.expected_pages:
+                raise AssertionError(
+                    f"Source PDF page count mismatch: got {source_page_count}, expected {args.expected_pages}"
+                )
+
+        report_file_id = args.report_file_id
+        if not report_file_id:
+            metadata = _trigger_process(
+                args.base_url,
+                file_id=args.source_file_id,
+                timeout=args.timeout,
+                session=process_session,
+            )
+            report_file_id = metadata.get("report_file_id")
+
+        pdf_bytes = _download_drive_pdf(drive_session, file_id=report_file_id)
+
+    if pdf_bytes is None:
+        raise RuntimeError("Unable to load PDF bytes for validation")
+
     lines, page_count = _extract_lines(pdf_bytes)
+    if args.expected_pages and args.pdf_path:
+        if page_count != args.expected_pages:
+            raise AssertionError(
+                f"PDF page count mismatch: got {page_count}, expected {args.expected_pages}"
+            )
     _ensure_forbidden_absent(lines)
     order, sections = _segment_sections(lines)
     stats = _validate_sections(order, sections)
 
     output = {
-        "report_file_id": report_file_id,
+        "report_file_id": args.report_file_id,
         "page_count": page_count,
         "section_line_counts": stats,
         "trigger_metadata": metadata,
+        "source": args.pdf_path or "drive",
     }
     print(json.dumps(output, indent=2))
 
@@ -253,6 +260,10 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--report-file-id",
         help="Existing Drive report file to validate (skip pipeline trigger).",
+    )
+    parser.add_argument(
+        "--pdf-path",
+        help="Local PDF path to validate (bypasses Drive + process calls).",
     )
     parser.add_argument(
         "--credentials",
@@ -280,10 +291,15 @@ def _build_parser() -> argparse.ArgumentParser:
 def main() -> None:  # pragma: no cover - integration helper
     parser = _build_parser()
     args = parser.parse_args()
-    if not args.base_url:
-        parser.error("--base-url is required (set MCC_BASE_URL env var or pass flag)")
-    if not args.credentials:
-        parser.error("Missing --credentials (GOOGLE_APPLICATION_CREDENTIALS not set)")
+    if not args.pdf_path:
+        if not args.base_url:
+            parser.error(
+                "--base-url is required (set MCC_BASE_URL env var or pass flag)"
+            )
+        if not args.credentials:
+            parser.error(
+                "Missing --credentials (GOOGLE_APPLICATION_CREDENTIALS not set)"
+            )
     try:
         _run(args)
     except Exception as exc:  # pylint: disable=broad-except

@@ -7,7 +7,7 @@ import argparse
 import json
 import subprocess
 from pathlib import Path
-from typing import Iterable
+from typing import Any, Iterable
 
 
 ROOT = Path(__file__).resolve().parent
@@ -65,9 +65,25 @@ def _lookup_resource(
     return rid.splitlines()[0] if rid else None
 
 
-def _apply_dashboards(project: str | None = None) -> None:
+def _render_template(path: Path, *, environment: str | None, project: str | None) -> dict[str, Any]:
+    text = path.read_text(encoding="utf-8")
+    if environment:
+        text = text.replace("${ENV}", environment)
+    else:
+        text = (
+            text.replace(" (${ENV})", "")
+            .replace("${ENV}", "")
+        )
+    if project:
+        text = text.replace("${PROJECT_ID}", project)
+    else:
+        text = text.replace("${PROJECT_ID}", "")
+    return json.loads(text)
+
+
+def _apply_dashboards(project: str | None = None, *, environment: str | None) -> None:
     for path in DASHBOARD_FILES:
-        data = json.loads(path.read_text(encoding="utf-8"))
+        data = _render_template(path, environment=environment, project=project)
         display = data.get("displayName", path.name)
         existing = _lookup_resource("dashboard", display, project=project)
         if existing:
@@ -98,9 +114,9 @@ def _apply_dashboards(project: str | None = None) -> None:
         result.check_returncode()
 
 
-def _apply_alerts(project: str | None = None) -> None:
+def _apply_alerts(project: str | None = None, *, environment: str | None) -> None:
     for path in ALERT_FILES:
-        data = json.loads(path.read_text(encoding="utf-8"))
+        data = _render_template(path, environment=environment, project=project)
         display = data.get("displayName", path.name)
         existing = _lookup_resource("alert", display, project=project)
         if existing:
@@ -139,11 +155,15 @@ def main(argv: Iterable[str] | None = None) -> None:
         "--project",
         help="Optional GCP project ID. Falls back to gcloud's active project when omitted.",
     )
+    parser.add_argument(
+        "--environment",
+        help="Optional environment label used to render ${ENV} placeholders (e.g. prod, staging).",
+    )
     args = parser.parse_args(argv)
     if not DASHBOARD_FILES and not ALERT_FILES:
         parser.error("No dashboard or alert JSON files found under infra/monitoring")
-    _apply_dashboards(project=args.project)
-    _apply_alerts(project=args.project)
+    _apply_dashboards(project=args.project, environment=args.environment)
+    _apply_alerts(project=args.project, environment=args.environment)
     print("Monitoring assets applied successfully.")
 
 

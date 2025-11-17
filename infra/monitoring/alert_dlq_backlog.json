@@ -1,5 +1,5 @@
 {
-  "displayName": "MCC OCR DLQ Backlog",
+  "displayName": "MCC OCR DLQ Backlog (${ENV})",
   "combiner": "OR",
   "conditions": [
     {
@@ -21,7 +21,14 @@
       }
     }
   ],
-  "notificationChannels": [],
+  "notificationChannels": [
+    "projects/${PROJECT_ID}/notificationChannels/${ENV}-pagerduty",
+    "projects/${PROJECT_ID}/notificationChannels/${ENV}-email"
+  ],
+  "documentation": {
+    "content": "Runbook: https://runbooks.mcc/ocr/${ENV}/dlq-backlog",
+    "mimeType": "text/markdown"
+  },
   "alertStrategy": {
     "autoClose": "3600s"
   },
