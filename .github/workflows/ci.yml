@@ -13,7 +13,6 @@ env:
 
 permissions:
   contents: read
-
 jobs:
   lint:
     runs-on: ubuntu-latest
@@ -122,6 +121,7 @@ jobs:
           USE_REFACTORED_SUMMARISER: "true"
           GOOGLE_APPLICATION_CREDENTIALS: /tmp/mock-sa.json
           SERVICE_ACCOUNT_JSON: '{"type":"service_account","project_id":"test"}'
+        run: python -m pytest
         run: python -m pytest
 
   security:
