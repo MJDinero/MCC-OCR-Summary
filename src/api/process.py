@@ -6,9 +6,9 @@ import inspect
 import logging
 import os
 import uuid
-from typing import Any, Dict, Tuple, List, Sequence
+from typing import Any, Dict, Tuple
 
-from fastapi import APIRouter, HTTPException, Query, Request, UploadFile, status
+from fastapi import APIRouter, HTTPException, Query, Request, UploadFile
 from fastapi.responses import JSONResponse, Response
 
 from src.errors import (
@@ -22,17 +22,10 @@ from src.services.docai_helper import clean_ocr_output
 from src.services.supervisor import CommonSenseSupervisor
 from src.utils.summary_thresholds import compute_summary_min_chars
 from src.utils.logging_utils import structured_log
-from src.utils.pipeline_failures import publish_pipeline_failure
 
 router = APIRouter()
 
 _API_LOG = logging.getLogger("api")
-_FORBIDDEN_PDF_PHRASES = (
-    "(condensed)",
-    "structured indices",
-    "summary lists",
-    "document processed in",
-)
 
 
 def _extract_trace_id(request: Request) -> str | None:
@@ -40,176 +33,6 @@ def _extract_trace_id(request: Request) -> str | None:
     if trace_header and "/" in trace_header:
         return trace_header.split("/", 1)[0]
     return request.headers.get("X-Request-ID")
-
-
-def _clean_entry(value: str) -> str:
-    return value.strip().lstrip("•*- ").strip()
-
-
-def _normalise_lines(value: Any) -> List[str]:
-    if value is None:
-        return []
-    if isinstance(value, (list, tuple, set)):
-        cleaned: List[str] = []
-        for item in value:
-            text = _clean_entry(str(item))
-            if text:
-                cleaned.append(text)
-        return cleaned
-    if isinstance(value, str):
-        parts = [_clean_entry(part) for part in value.splitlines()]
-        return [part for part in parts if part]
-    text = _clean_entry(str(value))
-    return [text] if text else []
-
-
-def _to_text(value: Any, *, bullet: bool = False) -> str:
-    if isinstance(value, (list, tuple, set)):
-        cleaned = _normalise_lines(list(value))
-        if not cleaned:
-            return ""
-        if bullet:
-            return "\n".join(f"- {item}" for item in cleaned)
-        return "\n".join(cleaned)
-    if value is None:
-        return ""
-    text = str(value).strip()
-    if not text:
-        return ""
-    if bullet:
-        parts = _normalise_lines(text)
-        if not parts:
-            return ""
-        return "\n".join(f"- {item}" for item in parts)
-    return text
-
-
-def _section(
-    heading: str,
-    value: Any,
-    *,
-    bullet: bool = False,
-    fallback: str = "N/A",
-) -> Tuple[str, str]:
-    text = _to_text(value, bullet=bullet)
-    text = text or fallback
-    return heading, text
-
-
-SECTION_FALLBACK = "No clinically meaningful content was extracted for this section."
-LIST_FALLBACK = "No clinically meaningful entries were extracted for this list."
-
-
-def _assemble_sections(summarised: Dict[str, Any]) -> List[Tuple[str, str]]:
-    sections: List[Tuple[str, str]] = []
-    sections.append(
-        _section(
-            "Intro Overview",
-            _normalise_lines(
-                summarised.get("intro_overview") or summarised.get("overview")
-            ),
-            fallback=SECTION_FALLBACK,
-        )
-    )
-    sections.append(
-        _section(
-            "Key Points",
-            _normalise_lines(summarised.get("key_points")),
-            bullet=True,
-            fallback=SECTION_FALLBACK,
-        )
-    )
-    sections.append(
-        _section(
-            "Detailed Findings",
-            _normalise_lines(
-                summarised.get("detailed_findings")
-                or summarised.get("clinical_details")
-            ),
-            bullet=True,
-            fallback=SECTION_FALLBACK,
-        )
-    )
-    sections.append(
-        _section(
-            "Care Plan & Follow-Up",
-            _normalise_lines(summarised.get("care_plan")),
-            bullet=True,
-            fallback=SECTION_FALLBACK,
-        )
-    )
-    optional_lists = [
-        (
-            "Diagnoses",
-            _normalise_lines(summarised.get("_diagnoses_list")),
-        ),
-        (
-            "Providers",
-            _normalise_lines(summarised.get("_providers_list")),
-        ),
-        (
-            "Medications / Prescriptions",
-            _normalise_lines(summarised.get("_medications_list")),
-        ),
-    ]
-    for heading, lines in optional_lists:
-        sections.append(
-            _section(heading, lines, bullet=True, fallback=LIST_FALLBACK)
-        )
-    return sections
-
-
-def _pdf_guard_enabled() -> bool:
-    explicit = os.getenv("PDF_DEV_GUARD")
-    if explicit is not None:
-        return explicit.strip().lower() in {"1", "true", "yes", "on"}
-    env_name = os.getenv("ENVIRONMENT", "").strip().lower()
-    if env_name in {"local", "dev", "test", "unit"}:
-        return True
-    if os.getenv("PYTEST_CURRENT_TEST"):
-        return True
-    testing_flag = os.getenv("UNIT_TESTING", "")
-    if isinstance(testing_flag, str) and testing_flag.lower() in {
-        "1",
-        "true",
-        "yes",
-        "on",
-    }:
-        return True
-    return False
-
-
-def _detect_forbidden_phrases(sections: Sequence[Tuple[str, str]]) -> List[str]:
-    hits: List[str] = []
-    for heading, body in sections:
-        blob = f"{heading}\n{body}".lower()
-        for phrase in _FORBIDDEN_PDF_PHRASES:
-            if phrase in blob:
-                hits.append(phrase)
-    return hits
-
-
-def _validate_pdf_sections(
-    sections: Sequence[Tuple[str, str]], *, guard_enabled: bool
-) -> Tuple[bool, List[str]]:
-    hits = _detect_forbidden_phrases(sections)
-    if hits:
-        structured_log(
-            _API_LOG,
-            logging.WARNING,
-            "pdf_validation_forbidden_phrases_detected",
-            forbidden_phrases=hits,
-            guard_enabled=guard_enabled,
-        )
-        if guard_enabled:
-            raise HTTPException(
-                status_code=500,
-                detail=(
-                    "PDF validation guard blocked forbidden phrases: "
-                    + ", ".join(sorted(set(hits)))
-                ),
-            )
-    return (not hits, hits)
 
 
 async def _execute_pipeline(
@@ -243,7 +66,9 @@ async def _execute_pipeline(
             source=source,
             error=str(exc),
         )
-        raise
+        raise HTTPException(
+            status_code=502, detail="Document AI processing failed"
+        ) from exc
     ocr_text = (ocr_result.get("text") or "").strip()
     ocr_len = len(ocr_text)
     pages = ocr_result.get("pages") or []
@@ -257,7 +82,7 @@ async def _execute_pipeline(
         pages=len(pages),
     )
 
-    min_ocr_chars = 0 if stub_mode else int(os.getenv("MIN_OCR_CHARS", "50"))
+    min_ocr_chars = int(os.getenv("MIN_OCR_CHARS", "50"))
     if ocr_len < min_ocr_chars:
         structured_log(
             _API_LOG,
@@ -275,13 +100,6 @@ async def _execute_pipeline(
     try:
         summary_raw = await app.state.summariser.summarise_async(summary_source_text)
     except SummarizationError as exc:
-        publish_pipeline_failure(
-            stage="SUMMARY_JOB",
-            job_id=None,
-            trace_id=trace_id,
-            error=exc,
-            metadata={"source": source},
-        )
         structured_log(
             _API_LOG,
             logging.ERROR,
@@ -337,33 +155,9 @@ async def _execute_pipeline(
             **validation,
         )
 
-    summarised: Dict[str, Any] = dict(summary_dict)
-
-    title = (
-        ocr_result.get("title")
-        or summarised.get("title")
-        or summarised.get("document_title")
-        or "Medical Summary"
-    )
-    sections = _assemble_sections(summarised)
-    guard_enabled = _pdf_guard_enabled()
-    pdf_compliant, forbidden_hits = _validate_pdf_sections(
-        sections, guard_enabled=guard_enabled
-    )
-    validation["pdf_compliant"] = pdf_compliant
-    if forbidden_hits:
-        validation["pdf_forbidden_phrases"] = forbidden_hits
-
     try:
-        pdf_payload = app.state.pdf_writer.build(title, sections)
+        pdf_payload = app.state.pdf_writer.build(dict(summary_dict))
     except PDFGenerationError as exc:
-        publish_pipeline_failure(
-            stage="PDF_JOB",
-            job_id=None,
-            trace_id=trace_id,
-            error=exc,
-            metadata={"source": source},
-        )
         structured_log(
             _API_LOG,
             logging.ERROR,
@@ -407,8 +201,6 @@ async def _execute_pipeline(
         supervisor_passed=validation.get("supervisor_passed"),
         summary_chars=len(summary_text),
         pdf_bytes=len(pdf_payload),
-        pdf_compliant=pdf_compliant,
-        forbidden_phrases=forbidden_hits if forbidden_hits else None,
     )
 
     return pdf_payload, validation, drive_file_id
@@ -422,15 +214,9 @@ async def health_check(_: Request) -> JSONResponse:
 @router.post("", tags=["process"])
 async def process_pdf(request: Request, file: UploadFile) -> Response:
     pdf_bytes = await file.read()
-    try:
-        payload, _validation, _drive_id = await _execute_pipeline(
-            request, pdf_bytes=pdf_bytes, source="upload"
-        )
-    except OCRServiceError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="Document AI processing failed",
-        ) from exc
+    payload, _validation, _drive_id = await _execute_pipeline(
+        request, pdf_bytes=pdf_bytes, source="upload"
+    )
     return Response(payload, media_type="application/pdf")
 
 
@@ -461,48 +247,17 @@ async def process_drive(
             status_code=502, detail="Failed to download file from Drive"
         ) from exc
 
-    try:
-        _payload, validation, drive_file_id = await _execute_pipeline(
-            request, pdf_bytes=pdf_bytes, source="drive"
-        )
-    except OCRServiceError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="Document AI processing failed",
-        ) from exc
+    _payload, validation, drive_file_id = await _execute_pipeline(
+        request, pdf_bytes=pdf_bytes, source="drive"
+    )
     if drive_file_id is None:
         raise HTTPException(status_code=503, detail="Drive upload disabled")
 
     request_id = uuid.uuid4().hex
-    response_payload: Dict[str, Any] = {
-        "report_file_id": drive_file_id,
-        "supervisor_passed": bool(validation.get("supervisor_passed")),
-        "request_id": request_id,
-        "compose_mode": getattr(request.app.state, "summary_compose_mode", "unknown"),
-    }
-    response_payload["pdf_compliant"] = bool(validation.get("pdf_compliant", True))
-    if not response_payload["pdf_compliant"]:
-        response_payload["pdf_forbidden_phrases"] = validation.get(
-            "pdf_forbidden_phrases", []
-        )
-    writer_backend = getattr(
-        request.app.state,
-        "writer_backend",
-        getattr(request.app.state, "pdf_writer_mode", None),
+    return JSONResponse(
+        {
+            "report_file_id": drive_file_id,
+            "supervisor_passed": bool(validation.get("supervisor_passed")),
+            "request_id": request_id,
+        }
     )
-    if writer_backend:
-        response_payload["writer_backend"] = writer_backend
-
-    # Diagnostics to confirm compose/writer at runtime - errors must not break API
-    try:
-        if "writer_backend" not in response_payload:
-            backend_cls = getattr(
-                request.app.state.pdf_writer.backend,
-                "__class__",
-                type("Unknown", (), {}),
-            )
-            response_payload["writer_backend"] = backend_cls.__name__
-    except Exception:  # pragma: no cover
-        pass
-
-    return JSONResponse(response_payload)
