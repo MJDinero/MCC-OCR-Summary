@@ -19,8 +19,8 @@
     }
   ],
   "notificationChannels": [
-    "projects/${PROJECT_ID}/notificationChannels/${ENV}-pagerduty",
-    "projects/${PROJECT_ID}/notificationChannels/${ENV}-email"
+    "projects/${PROJECT_ID}/notificationChannels/${PAGERDUTY_CHANNEL}",
+    "projects/${PROJECT_ID}/notificationChannels/${EMAIL_CHANNEL}"
   ],
   "documentation": {
     "content": "Runbook: https://runbooks.mcc/ocr/${ENV}/supervisor-failures",

@@ -20,7 +20,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from src.services.bible import (
+from src.services.bible import (  # noqa: E402
     CANONICAL_ENTITY_ORDER,
     CANONICAL_NARRATIVE_ORDER,
     CANONICAL_SECTION_ORDER,
