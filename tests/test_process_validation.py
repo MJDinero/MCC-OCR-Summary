@@ -3,7 +3,7 @@ from fastapi.testclient import TestClient
 
 from src.main import create_app
 from src.errors import SummarizationError, PDFGenerationError
-from src.api import process as process_module
+from src.services import process_pipeline as pipeline_module
 
 
 def _setup_env():
@@ -63,7 +63,7 @@ def test_summary_failure_triggers_pipeline_guard(monkeypatch):
         published.update(kwargs)
         return True
 
-    monkeypatch.setattr(process_module, "publish_pipeline_failure", _fake_publish)
+    monkeypatch.setattr(pipeline_module, "publish_pipeline_failure", _fake_publish)
 
     resp = client.post(
         "/process",
@@ -83,10 +83,10 @@ def test_pdf_failure_triggers_pipeline_guard(monkeypatch):
 
     async def _stub_summary(_: str) -> dict[str, any]:  # type: ignore[override]
         return {
-            "intro_overview": ["Encounter summary."],
-            "key_points": ["Key point."],
-            "detailed_findings": ["Finding."],
-            "care_plan": ["Follow-up."],
+            "provider_seen": ["Encounter summary."],
+            "reason_for_visit": ["Key point."],
+            "clinical_findings": ["Finding."],
+            "treatment_plan": ["Follow-up."],
             "_diagnoses_list": "Dx1",
             "_providers_list": "Dr Example",
             "_medications_list": "MedA",
@@ -98,13 +98,14 @@ def test_pdf_failure_triggers_pipeline_guard(monkeypatch):
 
     app.state.summariser.summarise_async = _stub_summary  # type: ignore[attr-defined]
     app.state.pdf_writer = _BrokenWriter()
+    app.state.process_pipeline._pdf_writer = app.state.pdf_writer  # type: ignore[attr-defined]
     published: dict[str, str] = {}
 
     def _fake_publish(**kwargs):
         published.update(kwargs)
         return True
 
-    monkeypatch.setattr(process_module, "publish_pipeline_failure", _fake_publish)
+    monkeypatch.setattr(pipeline_module, "publish_pipeline_failure", _fake_publish)
 
     resp = client.post(
         "/process",

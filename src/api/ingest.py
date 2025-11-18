@@ -335,15 +335,14 @@ async def ingest(request: Request):
             workflow_parameters["drive_file_id"] = payload.drive_file_id
         if cfg.drive_shared_drive_id:
             workflow_parameters["drive_shared_drive_id"] = cfg.drive_shared_drive_id
-        launch_kwargs = {
-            "job": job,
-            "parameters": workflow_parameters,
-            "trace_context": trace_header,
-        }
         if hasattr(dispatcher, "launch"):
-            launch_result = dispatcher.launch(**launch_kwargs)
+            launch_result = dispatcher.launch(
+                job=job, parameters=workflow_parameters, trace_context=trace_header
+            )
         elif callable(dispatcher):
-            launch_result = dispatcher(**launch_kwargs)
+            launch_result = dispatcher(
+                job=job, parameters=workflow_parameters, trace_context=trace_header
+            )
         else:
             raise TypeError("workflow_launcher does not support launch(job=...)")
 

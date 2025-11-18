@@ -1,4 +1,4 @@
-INFO:     169.254.169.126:20532 - "GET /process_drive?file_id=1ZFra9EN0jS8wTS4dcW7deypxnVggb8vS HTTP/1.1" 500 Internal Server Error
+INFO:     169.254.169.126:20532 - "GET /process_drive?file_id=drive-source-file-id HTTP/1.1" 500 Internal Server Error
 Traceback (most recent call last):
   File "/app/src/main.py", line 211, in process_drive
     raise SummarizationError(validation.get('reason') or 'Supervisor rejected summary')

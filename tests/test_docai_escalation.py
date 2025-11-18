@@ -51,7 +51,12 @@ def test_escalation_triggers_batch(monkeypatch):
         monkeypatch.setattr(doc_helper_mod, "batch_process_documents_gcs", fake_batch)
 
     client = DummyClient()
-    svc = OCRService("pid", config=make_cfg(), client_factory=lambda _ep: client)
+    svc = OCRService(
+        "pid",
+        config=make_cfg(),
+        client_factory=lambda _ep: client,
+        force_split_min_pages=200,
+    )
     out = svc.process(pdf_bytes)
 
     assert out["text"] == "batched"

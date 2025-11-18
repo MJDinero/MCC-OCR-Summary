@@ -8,10 +8,10 @@ from src.services.pdf_writer import PDFWriter, ReportLabBackend
 def test_pdf_writer_structured_sections():
     writer = PDFWriter(ReportLabBackend())
     sections = [
-        ("Intro Overview", "Jane Doe, 54, presented for routine visit."),
-        ("Key Points", "- Stable examination today."),
-        ("Detailed Findings", "No acute issues identified."),
-        ("Care Plan & Follow-Up", "- Return in 3 months."),
+        ("Provider Seen", "Jane Doe, 54, presented for routine visit."),
+        ("Reason for Visit", "- Stable examination today."),
+        ("Clinical Findings", "No acute issues identified."),
+        ("Treatment / Follow-up Plan", "- Return in 3 months."),
     ]
     data = writer.build("Encounter Summary", sections)
     assert data.startswith(b"%PDF-")

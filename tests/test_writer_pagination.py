@@ -9,11 +9,11 @@ def test_writer_produces_multiple_pages_for_long_content(tmp_path):
     long_paras = " ".join(["para"] * 1000)
     bullets = "\n".join([f"- item {i}" for i in range(100)])
     sections = [
-        ("Intro Overview", "Short intro."),
-        ("Key Points", bullets),
-        ("Detailed Findings", long_paras),
+        ("Provider Seen", "Short intro."),
+        ("Reason for Visit", bullets),
+        ("Clinical Findings", long_paras),
         (
-            "Care Plan & Follow-Up",
+            "Treatment / Follow-up Plan",
             "Follow-up in two weeks.\nRepeat labs as needed.",
         ),
     ]

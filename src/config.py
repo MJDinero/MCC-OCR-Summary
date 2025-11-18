@@ -44,12 +44,18 @@ LOCAL_OUTPUT_BUCKET = "local-output"
 LOCAL_SUMMARY_BUCKET = "local-summary"
 LOCAL_SUMMARY_OUTPUT_BUCKET = "local-summary-output"
 LOCAL_DOC_AI_PROCESSOR_ID = "projects/demo/locations/us/processors/processor-id"
-LOCAL_DRIVE_INPUT_FOLDER_ID = "drive-input-folder-id"
-LOCAL_DRIVE_REPORT_FOLDER_ID = "drive-report-folder-id"
+LOCAL_DRIVE_INPUT_FOLDER_ID = "1eyMO0126VfLBK3bBQEpWlVOL6tWxriCE"
+LOCAL_DRIVE_REPORT_FOLDER_ID = "130jJzsl3OBzMD8weGfBOaXikfEnD2KVg"
 LOCAL_DRIVE_SHARED_DRIVE_ID = "shared-drive-id"
 LOCAL_DRIVE_IMPERSONATION_USER = "user@example.com"
 LOCAL_OPENAI_API_KEY = "stub-openai-key"
 LOCAL_INTERNAL_EVENT_TOKEN = "stub-internal-token"
+DRIVE_INPUT_ENV_ALIASES = ("DRIVE_INPUT_FOLDER_ID", "PDF_INPUT_FOLDER_ID")
+DRIVE_REPORT_ENV_ALIASES = (
+    "DRIVE_REPORT_FOLDER_ID",
+    "DRIVE_OUTPUT_FOLDER_ID",
+    "PDF_OUTPUT_FOLDER_ID",
+)
 
 
 class AppConfig(BaseSettings):
@@ -94,10 +100,12 @@ class AppConfig(BaseSettings):
         True, validation_alias="ENABLE_NOISE_FILTERS"
     )
     drive_input_folder_id: str = Field(
-        LOCAL_DRIVE_INPUT_FOLDER_ID, validation_alias="DRIVE_INPUT_FOLDER_ID"
+        LOCAL_DRIVE_INPUT_FOLDER_ID,
+        validation_alias=AliasChoices(*DRIVE_INPUT_ENV_ALIASES),
     )
     drive_report_folder_id: str = Field(
-        LOCAL_DRIVE_REPORT_FOLDER_ID, validation_alias="DRIVE_REPORT_FOLDER_ID"
+        LOCAL_DRIVE_REPORT_FOLDER_ID,
+        validation_alias=AliasChoices(*DRIVE_REPORT_ENV_ALIASES),
     )
     drive_shared_drive_id: str | None = Field(
         LOCAL_DRIVE_SHARED_DRIVE_ID,
@@ -125,7 +133,7 @@ class AppConfig(BaseSettings):
         None, validation_alias="PIPELINE_WORKFLOW_NAME"
     )
     summary_schema_version: str = Field(
-        "2025-10-01", validation_alias="SUMMARY_SCHEMA_VERSION"
+        "2025-11-16", validation_alias="SUMMARY_SCHEMA_VERSION"
     )
     max_shard_concurrency: int = Field(12, validation_alias="MAX_SHARD_CONCURRENCY")
     # Google credentials path is read by google-auth automatically; keep for documentation completeness
@@ -282,19 +290,19 @@ class AppConfig(BaseSettings):
             return False
 
         is_local_env = _is_local_or_test()
-        relaxed_envs: set[str] = set()
+        relaxed_fields: set[str] = set()
         relaxed_defaults: dict[str, str] = {}
         if is_local_env:
-            relaxed_envs = {
-                "PROJECT_ID",
-                "INTAKE_GCS_BUCKET",
-                "OUTPUT_GCS_BUCKET",
-                "SUMMARY_BUCKET",
-                "DOC_AI_PROCESSOR_ID",
-                "OPENAI_API_KEY",
-                "DRIVE_INPUT_FOLDER_ID",
-                "DRIVE_REPORT_FOLDER_ID",
-                "INTERNAL_EVENT_TOKEN",
+            relaxed_fields = {
+                "project_id",
+                "intake_gcs_bucket",
+                "output_gcs_bucket",
+                "summary_bucket",
+                "doc_ai_processor_id",
+                "openai_api_key",
+                "drive_input_folder_id",
+                "drive_report_folder_id",
+                "internal_event_token",
             }
             relaxed_defaults = {
                 "project_id": LOCAL_PROJECT_ID,
@@ -310,28 +318,36 @@ class AppConfig(BaseSettings):
 
         # Primary value-based validation (empty / falsy fields)
         required_pairs = [
-            ("project_id", self.project_id, "PROJECT_ID"),
-            ("region", self.region, "REGION"),
-            ("doc_ai_processor_id", self.doc_ai_processor_id, "DOC_AI_PROCESSOR_ID"),
-            ("openai_api_key", self.openai_api_key, "OPENAI_API_KEY"),
+            ("project_id", self.project_id, ("PROJECT_ID",)),
+            ("region", self.region, ("REGION",)),
+            (
+                "doc_ai_processor_id",
+                self.doc_ai_processor_id,
+                ("DOC_AI_PROCESSOR_ID",),
+            ),
+            ("openai_api_key", self.openai_api_key, ("OPENAI_API_KEY",)),
             (
                 "drive_input_folder_id",
                 self.drive_input_folder_id,
-                "DRIVE_INPUT_FOLDER_ID",
+                DRIVE_INPUT_ENV_ALIASES,
             ),
             (
                 "drive_report_folder_id",
                 self.drive_report_folder_id,
-                "DRIVE_REPORT_FOLDER_ID",
+                DRIVE_REPORT_ENV_ALIASES,
             ),
-            ("intake_gcs_bucket", self.intake_gcs_bucket, "INTAKE_GCS_BUCKET"),
-            ("output_gcs_bucket", self.output_gcs_bucket, "OUTPUT_GCS_BUCKET"),
-            ("summary_bucket", self.summary_bucket, "SUMMARY_BUCKET"),
-            ("internal_event_token", self.internal_event_token, "INTERNAL_EVENT_TOKEN"),
+            ("intake_gcs_bucket", self.intake_gcs_bucket, ("INTAKE_GCS_BUCKET",)),
+            ("output_gcs_bucket", self.output_gcs_bucket, ("OUTPUT_GCS_BUCKET",)),
+            ("summary_bucket", self.summary_bucket, ("SUMMARY_BUCKET",)),
+            (
+                "internal_event_token",
+                self.internal_event_token,
+                ("INTERNAL_EVENT_TOKEN",),
+            ),
         ]
         missing: list[str] = []
-        for name, value, env_name in required_pairs:
-            if env_name in relaxed_envs:
+        for name, value, _env_names in required_pairs:
+            if name in relaxed_fields:
                 if not value:
                     fallback = relaxed_defaults.get(name)
                     if fallback:
@@ -348,29 +364,27 @@ class AppConfig(BaseSettings):
         # explicit env var to be present when a non-empty value already exists. This
         # prevents startup failures in environments where REGION was omitted but a
         # sensible default is acceptable. All other variables remain strictly required.
-        strict_env_presence = {
-            "PROJECT_ID",
-            "DOC_AI_PROCESSOR_ID",
-            "OPENAI_API_KEY",
-            "DRIVE_INPUT_FOLDER_ID",
-            "DRIVE_REPORT_FOLDER_ID",
-            "INTERNAL_EVENT_TOKEN",
-        } | ({"INTAKE_GCS_BUCKET", "OUTPUT_GCS_BUCKET", "SUMMARY_BUCKET"} - relaxed_envs)
+        strict_fields = {
+            "project_id",
+            "doc_ai_processor_id",
+            "openai_api_key",
+            "drive_input_folder_id",
+            "drive_report_folder_id",
+            "internal_event_token",
+        } | ({"intake_gcs_bucket", "output_gcs_bucket", "summary_bucket"} - relaxed_fields)
         unmet_env: list[str] = []
-        for name, value, env_name in required_pairs:
-            if env_name in relaxed_envs:
+        for name, value, env_names in required_pairs:
+            if name in relaxed_fields or name not in strict_fields:
                 continue
-            if (
-                env_name not in os.environ
-                and env_name in strict_env_presence
-                and name not in missing
-            ):
-                if value not in (None, ""):
-                    # Even if value is non-empty but came from a default and env is absent
-                    # we enforce explicit provisioning for strict vars.
-                    missing.append(name)
-                else:
-                    unmet_env.append(env_name)
+            env_declared = any(
+                os.getenv(env_name) not in (None, "") for env_name in env_names
+            )
+            if env_declared or name in missing:
+                continue
+            if value not in (None, ""):
+                missing.append(name)
+            else:
+                unmet_env.append(" or ".join(env_names))
         if missing:
             raise RuntimeError(
                 "Missing required configuration values: "

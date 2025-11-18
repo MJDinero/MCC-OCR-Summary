@@ -77,7 +77,7 @@ def test_upload_pdf_stubs(monkeypatch, fail_shared_drive):
     monkeypatch.setattr(
         drive_client,
         "_resolve_folder_metadata",
-        lambda fid: {"id": fid, "driveId": "0AFPP3mbSAh_oUk9PVA"},
+        lambda fid: {"id": fid, "driveId": "shared-drive-id"},
     )
 
     class _UploadStub:
@@ -90,8 +90,8 @@ def test_upload_pdf_stubs(monkeypatch, fail_shared_drive):
 
     class _Cfg:
         drive_report_folder_id = "folder-id"
-        drive_shared_drive_id = "0AFPP3mbSAh_oUk9PVA"
-        summary_schema_version = "2025-10-01"
+        drive_shared_drive_id = "shared-drive-id"
+        summary_schema_version = "2025-11-16"
         project_id = "test-project"
 
     monkeypatch.setattr(drive_client, "get_config", lambda: _Cfg())
@@ -110,13 +110,13 @@ def test_upload_pdf_normalises_folder_id(monkeypatch):
     monkeypatch.setattr(
         drive_client,
         "_resolve_folder_metadata",
-        lambda fid: {"id": fid, "driveId": "0AFPP3mbSAh_oUk9PVA"},
+        lambda fid: {"id": fid, "driveId": "shared-drive-id"},
     )
 
     class _Cfg:
-        drive_report_folder_id = " https://drive.google.com/drive/folders/19xdu6hV9KNgnE_Slt4ogrJdASWXZb5gl?usp=sharing "
+        drive_report_folder_id = " https://drive.google.com/drive/folders/drive-input-folder-id?usp=sharing "
         drive_shared_drive_id = None
-        summary_schema_version = "2025-10-01"
+        summary_schema_version = "2025-11-16"
         project_id = "test-project"
 
     class _UploadStub:
@@ -131,7 +131,7 @@ def test_upload_pdf_normalises_folder_id(monkeypatch):
     file_id = drive_client.upload_pdf(b"%PDF-1.4\n...", "report.pdf")
     assert file_id == "generated-id"
     payload = service.created_payloads[-1]
-    assert payload["parents"] == ["19xdu6hV9KNgnE_Slt4ogrJdASWXZb5gl"]
+    assert payload["parents"] == ["drive-input-folder-id"]
     assert "driveId" not in payload
 
 
@@ -141,13 +141,13 @@ def test_upload_pdf_supports_json_secret(monkeypatch):
     monkeypatch.setattr(
         drive_client,
         "_resolve_folder_metadata",
-        lambda fid: {"id": fid, "driveId": "0AFPP3mbSAh_oUk9PVA"},
+        lambda fid: {"id": fid, "driveId": "shared-drive-id"},
     )
 
     class _Cfg:
-        drive_report_folder_id = '{"folderId":"19xdu6hV9KNgnE_Slt4ogrJdASWXZb5gl","driveId":"0AFPP3mbSAh_oUk9PVA"}'
+        drive_report_folder_id = '{"folderId":"drive-input-folder-id","driveId":"shared-drive-id"}'
         drive_shared_drive_id = None
-        summary_schema_version = "2025-10-01"
+        summary_schema_version = "2025-11-16"
         project_id = "test-project"
 
     class _UploadStub:
@@ -162,7 +162,7 @@ def test_upload_pdf_supports_json_secret(monkeypatch):
     file_id = drive_client.upload_pdf(b"%PDF-1.4\n...", "report.pdf")
     assert file_id == "generated-id"
     payload = service.created_payloads[-1]
-    assert payload["parents"] == ["19xdu6hV9KNgnE_Slt4ogrJdASWXZb5gl"]
+    assert payload["parents"] == ["drive-input-folder-id"]
     assert "driveId" not in payload
 
 
@@ -190,14 +190,14 @@ def test_upload_pdf_validations(monkeypatch):
     class _Cfg:
         drive_report_folder_id = ""
         drive_shared_drive_id = None
-        summary_schema_version = "2025-10-01"
+        summary_schema_version = "2025-11-16"
         project_id = "test-project"
 
     monkeypatch.setattr(drive_client, "get_config", lambda: _Cfg())
     monkeypatch.setattr(
         drive_client,
         "_resolve_folder_metadata",
-        lambda fid: {"id": fid, "driveId": "0AFPP3mbSAh_oUk9PVA"},
+        lambda fid: {"id": fid, "driveId": "shared-drive-id"},
     )
     with pytest.raises(RuntimeError):
         drive_client.upload_pdf(b"%PDF-1.4\n...", "name.pdf")

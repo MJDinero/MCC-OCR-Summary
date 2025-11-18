@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import logging
 import os
+import secrets
 import uuid
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Sequence, Tuple
 
 from fastapi import APIRouter, HTTPException, Query, Request, UploadFile, status
@@ -19,6 +21,7 @@ from src.errors import (
     ValidationError,
 )
 from src.services.process_pipeline import ProcessPipelineResult
+from src.services import drive_client as drive_client_module
 from src.services.bible import (
     CANONICAL_ENTITY_ORDER,
     CANONICAL_NARRATIVE_ORDER,
@@ -48,6 +51,78 @@ _LIST_DEFINITIONS: Tuple[Tuple[str, str, str], ...] = tuple(
     )
     for heading in CANONICAL_ENTITY_ORDER
 )
+
+
+def _mask_drive_id(file_id: str | None) -> str | None:
+    if not file_id:
+        return None
+    token = file_id.strip()
+    if len(token) <= 8:
+        return token[:2] + "***"
+    return f"{token[:4]}***{token[-4:]}"
+
+
+def _utc_timestamp() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _drive_poll_batch_limit() -> int:
+    raw = os.getenv("DRIVE_POLL_BATCH_LIMIT")
+    try:
+        configured = int(raw) if raw else 5
+    except (TypeError, ValueError):
+        configured = 5
+    return max(1, min(configured, 25))
+
+
+def _status_value(env_key: str, default: str) -> str:
+    raw = os.getenv(env_key)
+    if raw is None:
+        return default
+    cleaned = raw.strip()
+    return cleaned or default
+
+
+def _resolve_drive_input_folder(cfg: Any) -> str:
+    for candidate in (
+        os.getenv("PDF_INPUT_FOLDER_ID"),
+        os.getenv("DRIVE_INPUT_FOLDER_ID"),
+        getattr(cfg, "drive_input_folder_id", None),
+    ):
+        if candidate and str(candidate).strip():
+            return str(candidate).strip()
+    raise HTTPException(
+        status_code=500, detail="Drive input folder ID is not configured"
+    )
+
+
+def _query_param(request: Request, key: str) -> str | None:
+    params = getattr(request, "query_params", None)
+    if not params:
+        return None
+    getter = getattr(params, "get", None)
+    if callable(getter):
+        try:
+            return getter(key)
+        except Exception:  # noqa: BLE001 - defensive for SimpleNamespace in tests
+            return None
+    if isinstance(params, dict):
+        return params.get(key)
+    return getattr(params, key, None)
+
+
+def _require_internal_token(request: Request) -> None:
+    expected = getattr(request.app.state, "internal_event_token", None)
+    provided = (
+        request.headers.get("x-internal-event-token")
+        or request.headers.get("X-Internal-Event-Token")
+        or _query_param(request, "internal_event_token")
+        or _query_param(request, "token")
+    )
+    if not expected or not provided:
+        raise HTTPException(status_code=401, detail="Missing or invalid internal token")
+    if not secrets.compare_digest(provided, expected):
+        raise HTTPException(status_code=401, detail="Missing or invalid internal token")
 
 
 def _extract_trace_id(request: Request) -> str | None:
@@ -297,3 +372,187 @@ async def process_drive(
     if "pdf_forbidden_phrases" in result.validation:
         payload["pdf_forbidden_phrases"] = result.validation["pdf_forbidden_phrases"]
     return JSONResponse(payload)
+
+
+@router.post("/drive/poll", tags=["process"])
+async def poll_drive_folder(
+    request: Request,
+    limit: int = Query(
+        3,
+        ge=1,
+        le=25,
+        description="Maximum Drive files to process in a single poll.",
+    ),
+) -> JSONResponse:
+    _require_internal_token(request)
+    cfg = getattr(request.app.state, "config")
+    folder_id = _resolve_drive_input_folder(cfg)
+    batch_limit = min(limit, _drive_poll_batch_limit())
+    status_key = _status_value("DRIVE_POLL_STATUS_KEY", "mccStatus")
+    completed_value = _status_value("DRIVE_POLL_COMPLETED_VALUE", "completed")
+    processing_value = _status_value("DRIVE_POLL_PROCESSING_VALUE", "processing")
+    failed_value = _status_value("DRIVE_POLL_FAILED_VALUE", "failed")
+    try:
+        pending = drive_client_module.list_pending_pdfs(
+            folder_id,
+            limit=batch_limit,
+            status_key=status_key,
+            completed_value=completed_value,
+            processing_value=processing_value,
+            failed_value=failed_value,
+        )
+    except Exception as exc:  # noqa: BLE001 - propagate structured failure
+        structured_log(
+            _API_LOG,
+            logging.ERROR,
+            "drive_poll_listing_failed",
+            folder_id=folder_id,
+            error=str(exc),
+        )
+        raise HTTPException(status_code=502, detail="Failed to list Drive files") from exc
+
+    if not pending:
+        structured_log(
+            _API_LOG,
+            logging.INFO,
+            "drive_poll_idle",
+            folder_id=folder_id,
+            limit=batch_limit,
+        )
+        return JSONResponse(
+            {
+                "status": "idle",
+                "processed": [],
+                "errors": [],
+                "skipped": [],
+                "polled": 0,
+                "folder_id": folder_id,
+            }
+        )
+
+    drive_client = getattr(request.app.state, "drive_client", None)
+    if drive_client is None:
+        raise HTTPException(status_code=500, detail="Drive client not configured")
+    project_id = getattr(cfg, "project_id", None)
+    processed: List[Dict[str, Any]] = []
+    failures: List[Dict[str, Any]] = []
+    skipped: List[Dict[str, Any]] = []
+    for entry in pending:
+        file_id = str(entry.get("id") or "").strip()
+        if not file_id:
+            continue
+        file_name = entry.get("name") or file_id
+        trace_id = uuid.uuid4().hex
+        masked_id = _mask_drive_id(file_id)
+        if file_name.lower().startswith("summary-"):
+            structured_log(
+                _API_LOG,
+                logging.INFO,
+                "drive_poll_skip_summary_artifact",
+                folder_id=folder_id,
+                file_id=masked_id,
+                file_name=file_name,
+            )
+            skipped.append({"file_id": file_id, "reason": "summary_artifact"})
+            continue
+        structured_log(
+            _API_LOG,
+            logging.INFO,
+            "drive_poll_candidate",
+            folder_id=folder_id,
+            file_id=masked_id,
+            file_name=file_name,
+        )
+        try:
+            drive_client_module.update_app_properties(
+                file_id,
+                {
+                    status_key: processing_value,
+                    "mccUpdatedAt": _utc_timestamp(),
+                },
+            )
+        except Exception as exc:  # noqa: BLE001 - Drive errors are surfaced in response payload
+            structured_log(
+                _API_LOG,
+                logging.ERROR,
+                "drive_poll_claim_failed",
+                file_id=masked_id,
+                error=str(exc),
+            )
+            failures.append({"file_id": file_id, "error": f"claim_failed: {exc}"})
+            continue
+
+        try:
+            pdf_bytes = drive_client.download_pdf(
+                file_id,
+                log_context={
+                    "trace_id": trace_id,
+                    "phase": "drive_poll_download",
+                    "folder_id": folder_id,
+                },
+                quota_project=project_id,
+            )
+            result = await _invoke_pipeline(
+                request, pdf_bytes=pdf_bytes, source="drive-poll", trace_id=trace_id
+            )
+            report_id = result.drive_file_id
+            if not report_id:
+                raise RuntimeError("Drive upload disabled")
+            drive_client_module.update_app_properties(
+                file_id,
+                {
+                    status_key: completed_value,
+                    "mccReportId": report_id,
+                    "mccUpdatedAt": _utc_timestamp(),
+                },
+            )
+            processed.append(
+                {
+                    "file_id": file_id,
+                    "report_file_id": report_id,
+                    "trace_id": trace_id,
+                }
+            )
+            structured_log(
+                _API_LOG,
+                logging.INFO,
+                "drive_poll_success",
+                file_id=masked_id,
+                report_file_id=_mask_drive_id(report_id),
+                trace_id=trace_id,
+            )
+        except Exception as exc:  # noqa: BLE001
+            drive_client_module.update_app_properties(
+                file_id,
+                {
+                    status_key: failed_value,
+                    "mccError": str(exc)[:180],
+                    "mccUpdatedAt": _utc_timestamp(),
+                },
+            )
+            structured_log(
+                _API_LOG,
+                logging.ERROR,
+                "drive_poll_processing_failed",
+                file_id=masked_id,
+                trace_id=trace_id,
+                error=str(exc),
+            )
+            failures.append({"file_id": file_id, "error": str(exc)})
+
+    status_value = "processed"
+    if failures and processed:
+        status_value = "partial"
+    elif failures and not processed:
+        status_value = "failed"
+
+    return JSONResponse(
+        {
+            "status": status_value,
+            "processed": processed,
+            "errors": failures,
+            "skipped": skipped,
+            "polled": len(pending),
+            "folder_id": folder_id,
+        }
+    )

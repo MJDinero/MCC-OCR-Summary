@@ -10,7 +10,7 @@ class NewSchemaBackend:
             "clinical_findings": "BP 140/90",
             "treatment_plan": "Increase exercise",
             "diagnoses": ["I10 Hypertension"],
-            "providers": ["Dr Alice"],
+            "healthcare_providers": ["Dr Alice"],
             "medications": ["Lisinopril"],
         }
 

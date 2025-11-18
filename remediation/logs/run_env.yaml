@@ -17,7 +17,7 @@ spec:
           valueFrom:
             secretKeyRef:
               key: latest
-              name: mcc_orch_sa_key
+              name: orchestrator_sa_key
         - name: DOC_AI_FORCE_SPLIT_MIN_PAGES
           value: '40'
         - name: DOC_AI_LOCATION
@@ -51,25 +51,25 @@ spec:
         - name: REGION
           value: us-central1
         - name: DOC_AI_PROCESSOR_ID
-          value: 21c8becfabc49de6
+          value: processor-id
         - name: DOC_AI_OCR_PROCESSOR_ID
-          value: 21c8becfabc49de6
+          value: processor-id
         - name: DRIVE_INPUT_FOLDER_ID
-          value: 19xdu6hV9KNgnE_Slt4ogrJdASWXZb5gl
+          value: drive-input-folder-id
         - name: DRIVE_REPORT_FOLDER_ID
-          value: 1eyMO0126VfLBK3bBQEpWlVOL6tWxriCE
+          value: drive-report-folder-id
         - name: DRIVE_SHARED_DRIVE_ID
-          value: 0AFPP3mbSAh_oUk9PVA
+          value: shared-drive-id
         - name: CMEK_KEY_NAME
           value: projects/quantify-agent/locations/us-central1/keyRings/mcc-phi/cryptoKeys/mcc-phi-key
         - name: INTAKE_GCS_BUCKET
-          value: mcc-intake
+          value: demo-intake-bucket
         - name: OUTPUT_GCS_BUCKET
-          value: mcc-output
+          value: demo-output-bucket
         - name: SUMMARY_BUCKET
-          value: mcc-output
+          value: demo-output-bucket
         - name: DRIVE_IMPERSONATION_USER
-          value: Matt@moneymediausa.com
+          value: user@example.com
         - name: GOOGLE_APPLICATION_CREDENTIALS
           value: /tmp/google-application-credentials.json
         - name: MIN_SUMMARY_CHARS

@@ -63,16 +63,16 @@ def test_supervisor_retry_merges_high_volume_document(supervisor_module, supervi
         "Provider Seen:\nDr. Patel\n\n"
         "Reason for Visit:\nHypertension management plan review.\n\n"
         "Clinical Findings:\nBrief overview only.\n\n"
-        "Treatment / Follow-Up Plan:\nContinue regimen.\n\n"
+        "Treatment / Follow-up Plan:\nContinue regimen.\n\n"
         "Diagnoses:\n- Essential hypertension\n"
-        "Providers:\n- Dr. Patel\n"
+        "Healthcare Providers:\n- Dr. Patel\n"
         "Medications / Prescriptions:\n- Lisinopril"
     )
     medium_body = (
         "Provider Seen:\nDr. Patel\n\n"
         "Reason for Visit:\nHypertension management plan review with limited details.\n\n"
         "Clinical Findings:\nStable readings reported.\n\n"
-        "Treatment / Follow-Up Plan:\nContinue therapy and monitor.\n\n"
+        "Treatment / Follow-up Plan:\nContinue therapy and monitor.\n\n"
         "Additional Notes: missing structured lists"
     )
     source_sentence = "Hypertension management plan requires lifestyle adjustments and ongoing monitoring."
@@ -81,9 +81,9 @@ def test_supervisor_retry_merges_high_volume_document(supervisor_module, supervi
         "Provider Seen:\nDr. Patel, cardiology specialist guiding the hypertension management plan.\n\n"
         f"Reason for Visit:\n{repeated}\n\n"
         f"Clinical Findings:\n{repeated}\n\n"
-        f"Treatment / Follow-Up Plan:\n{repeated}\n\n"
+        f"Treatment / Follow-up Plan:\n{repeated}\n\n"
         f"Diagnoses:\n- {source_sentence}\n- Chronic kidney disease stage 2 monitored during hypertension management\n"
-        "Providers:\n- Dr. Patel\n- Nurse Educator Maria Lopez\n"
+        "Healthcare Providers:\n- Dr. Patel\n- Nurse Educator Maria Lopez\n"
         "Medications / Prescriptions:\n- Lisinopril 40mg\n- Hydrochlorothiazide 25mg\n"
     )
 
@@ -142,9 +142,9 @@ def test_supervisor_pass_small_document_without_retry(supervisor):
         "Provider Seen:\nDr. Lane\n\n"
         "Reason for Visit:\nHypertension follow-up note discussing medication adherence and reinforcing routine monitoring.\n\n"
         "Clinical Findings:\nBlood pressure improving with current therapy and adherence conversations documented for the hypertension follow-up note discussing medication adherence.\n\n"
-        "Treatment / Follow-Up Plan:\nMaintain regimen, track home readings, reinforce sodium reduction, and continue the hypertension follow-up note discussing medication adherence with motivational interviewing.\n\n"
+        "Treatment / Follow-up Plan:\nMaintain regimen, track home readings, reinforce sodium reduction, and continue the hypertension follow-up note discussing medication adherence with motivational interviewing.\n\n"
         "Diagnoses:\n- Essential hypertension\n"
-        "Providers:\n- Dr. Lane\n"
+        "Healthcare Providers:\n- Dr. Lane\n"
         "Medications / Prescriptions:\n- Losartan 50mg"
     )
     summary = _make_summary(
@@ -203,9 +203,9 @@ def test_retry_and_merge_returns_initial_when_already_valid(supervisor):
         "Provider Seen:\nDr. Lane\n\n"
         "Reason for Visit:\nHypertension follow-up note discussing medication adherence in depth.\n\n"
         "Clinical Findings:\nDetailed chart review with hypertension follow-up note discussing medication adherence highlights.\n\n"
-        "Treatment / Follow-Up Plan:\nContinue therapy with counseling and documented medication adherence conversations.\n\n"
+        "Treatment / Follow-up Plan:\nContinue therapy with counseling and documented medication adherence conversations.\n\n"
         "Diagnoses:\n- Essential hypertension\n"
-        "Providers:\n- Dr. Lane\n"
+        "Healthcare Providers:\n- Dr. Lane\n"
         "Medications / Prescriptions:\n- Losartan 50mg\n- Amlodipine 5mg"
     )
     outputs = [

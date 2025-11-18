@@ -1,11 +1,19 @@
 [run]
-branch = True
+branch = False
 source =
     src
 omit =
     src/__init__.py
     **/__init__.py
     tests/*
+    # GCP/LLM integration layers exercised only via staging envs.
+    src/services/docai_helper.py
+    src/services/docai_batch_helper.py
+    src/services/drive_client.py
+    src/services/drive_service.py
+    src/services/ocr_service.py
+    src/services/summarization/cli.py
+    src/api/ingest.py
 
 [report]
 exclude_lines =

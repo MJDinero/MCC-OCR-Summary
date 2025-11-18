@@ -27,7 +27,7 @@ class BackendNormalization:
                 "dx1": "Hypertension",
                 "dx2": "Hypertension",
             },  # dict -> flattened values
-            "providers": ("Dr Smith", "Dr Smith"),  # tuple -> list merge
+            "healthcare_providers": ("Dr Smith", "Dr Smith"),  # tuple -> list merge
             "medications": {
                 "m1": "Lisinopril",
                 "m2": "Lisinopril",

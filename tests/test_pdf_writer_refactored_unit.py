@@ -25,10 +25,13 @@ def test_normalise_summary_builds_indices():
         "Extra Section": "Value",
     }
     sections, indices = pdf_mod._normalise_summary(summary)
-    headings = [title for title, _ in sections]
-    assert "Structured Indices" in headings
+    sections_map = {title: body for title, body in sections}
+    assert "Structured Indices" not in sections_map
+    assert sections_map["Diagnoses"].startswith("- Dx1")
+    assert sections_map["Healthcare Providers"].startswith("- Dr A")
+    assert sections_map["Medications / Prescriptions"].startswith("- Med1")
     assert indices["Diagnoses"] == ["Dx1", "Dx2"]
-    assert ("Extra Section", "Value") in sections
+    assert sections_map["Extra Section"] == "Value"
 
 
 def test_ensure_bytes_handles_variants():

@@ -35,7 +35,7 @@ def _set_env(monkeypatch):
     monkeypatch.setenv("INTERNAL_EVENT_TOKEN", "secret-token")
     monkeypatch.setenv("PIPELINE_SERVICE_BASE_URL", "https://pipeline.test")
     monkeypatch.setenv("PIPELINE_DLQ_TOPIC", "projects/proj/topics/dlq")
-    monkeypatch.setenv("SUMMARY_SCHEMA_VERSION", "2025-10-01")
+    monkeypatch.setenv("SUMMARY_SCHEMA_VERSION", "2025-11-16")
 
 
 def _build_app(monkeypatch):
@@ -80,7 +80,7 @@ def test_ingest_creates_job_and_dispatches_workflow(monkeypatch):
     assert params["output_bucket"] == "output-test"
     assert params["summary_bucket"] == "summary-test"
     assert params["pipeline_dlq_topic"] == "projects/proj/topics/dlq"
-    assert params["summary_schema_version"] == "2025-10-01"
+    assert params["summary_schema_version"] == "2025-11-16"
     assert params["object_uri"].startswith("gs://intake-test/")
     job = app.state.state_store.get_job(job_id)
     assert job is not None

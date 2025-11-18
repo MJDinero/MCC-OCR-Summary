@@ -1,5 +1,5 @@
 {
-  "displayName": "MCC OCR Pipeline - Throughput & Runtime",
+  "displayName": "MCC OCR Pipeline - Throughput & Runtime (${ENV})",
   "mosaicLayout": {
     "columns": 12,
     "tiles": [

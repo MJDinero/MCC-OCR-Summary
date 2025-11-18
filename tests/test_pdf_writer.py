@@ -21,8 +21,8 @@ def _extract_text(pdf_bytes: bytes) -> str:
 def test_reportlab_backend_emits_pdf():
     writer = PDFWriter(ReportLabBackend(), title="T")
     sections = [
-        ("Intro Overview", "Patient evaluated in clinic."),
-        ("Key Points", "- Key item one\n- Key item two"),
+        ("Provider Seen", "Patient evaluated in clinic."),
+        ("Reason for Visit", "- Key item one\n- Key item two"),
     ]
     pdf_bytes = writer.build("Clinical Summary", sections)
     assert pdf_bytes.startswith(b"%PDF-")

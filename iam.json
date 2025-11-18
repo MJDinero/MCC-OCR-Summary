@@ -1,0 +1,314 @@
+{
+  "bindings": [
+    {
+      "members": [
+        "serviceAccount:service-720850296638@gcp-sa-artifactregistry.iam.gserviceaccount.com"
+      ],
+      "role": "roles/artifactregistry.serviceAgent"
+    },
+    {
+      "members": [
+        "serviceAccount:720850296638-compute@developer.gserviceaccount.com",
+        "serviceAccount:720850296638@cloudbuild.gserviceaccount.com",
+        "serviceAccount:gha-deployer@quantify-agent.iam.gserviceaccount.com",
+        "serviceAccount:mcc-orch-sa@quantify-agent.iam.gserviceaccount.com",
+        "serviceAccount:mcc-orchestrator-runtime@quantify-agent.iam.gserviceaccount.com"
+      ],
+      "role": "roles/artifactregistry.writer"
+    },
+    {
+      "members": [
+        "serviceAccount:gha-deployer@quantify-agent.iam.gserviceaccount.com"
+      ],
+      "role": "roles/bigquery.admin"
+    },
+    {
+      "members": [
+        "serviceAccount:service-720850296638@gcp-sa-logging.iam.gserviceaccount.com"
+      ],
+      "role": "roles/bigquery.dataEditor"
+    },
+    {
+      "members": [
+        "serviceAccount:720850296638@cloudbuild.gserviceaccount.com"
+      ],
+      "role": "roles/cloudbuild.builds.builder"
+    },
+    {
+      "members": [
+        "serviceAccount:gha-deployer@quantify-agent.iam.gserviceaccount.com",
+        "serviceAccount:mcc-orch-sa@quantify-agent.iam.gserviceaccount.com"
+      ],
+      "role": "roles/cloudbuild.builds.editor"
+    },
+    {
+      "members": [
+        "serviceAccount:service-720850296638@gcp-sa-cloudbuild.iam.gserviceaccount.com"
+      ],
+      "role": "roles/cloudbuild.serviceAgent"
+    },
+    {
+      "members": [
+        "serviceAccount:service-720850296638@gcp-sa-cloudscheduler.iam.gserviceaccount.com"
+      ],
+      "role": "roles/cloudscheduler.serviceAgent"
+    },
+    {
+      "members": [
+        "serviceAccount:service-720850296638@compute-system.iam.gserviceaccount.com"
+      ],
+      "role": "roles/compute.serviceAgent"
+    },
+    {
+      "members": [
+        "serviceAccount:service-720850296638@containerregistry.iam.gserviceaccount.com"
+      ],
+      "role": "roles/containerregistry.ServiceAgent"
+    },
+    {
+      "members": [
+        "serviceAccount:mcc-orchestrator-runtime@quantify-agent.iam.gserviceaccount.com",
+        "serviceAccount:mcc-orchestrator@quantify-agent.iam.gserviceaccount.com"
+      ],
+      "role": "roles/datastore.user"
+    },
+    {
+      "members": [
+        "serviceAccount:mcc-readonly@quantify-agent.iam.gserviceaccount.com"
+      ],
+      "role": "roles/datastore.viewer"
+    },
+    {
+      "members": [
+        "serviceAccount:720850296638-compute@developer.gserviceaccount.com",
+        "serviceAccount:mcc-orch-sa@quantify-agent.iam.gserviceaccount.com",
+        "serviceAccount:mcc-orchestrator-runtime@quantify-agent.iam.gserviceaccount.com",
+        "serviceAccount:mcc-orchestrator@quantify-agent.iam.gserviceaccount.com"
+      ],
+      "role": "roles/documentai.apiUser"
+    },
+    {
+      "members": [
+        "serviceAccount:service-720850296638@gcp-sa-prod-dai-core.iam.gserviceaccount.com"
+      ],
+      "role": "roles/documentaicore.serviceAgent"
+    },
+    {
+      "members": [
+        "serviceAccount:720850296638@cloudservices.gserviceaccount.com",
+        "serviceAccount:eleven-agent@quantify-agent.iam.gserviceaccount.com"
+      ],
+      "role": "roles/editor"
+    },
+    {
+      "members": [
+        "serviceAccount:mcc-orch-sa@quantify-agent.iam.gserviceaccount.com"
+      ],
+      "role": "roles/eventarc.eventReceiver"
+    },
+    {
+      "members": [
+        "serviceAccount:service-720850296638@gcp-sa-eventarc.iam.gserviceaccount.com"
+      ],
+      "role": "roles/eventarc.serviceAgent"
+    },
+    {
+      "members": [
+        "serviceAccount:service-720850296638@firebase-rules.iam.gserviceaccount.com"
+      ],
+      "role": "roles/firebaserules.system"
+    },
+    {
+      "members": [
+        "serviceAccount:service-720850296638@gcp-sa-firestore.iam.gserviceaccount.com"
+      ],
+      "role": "roles/firestore.serviceAgent"
+    },
+    {
+      "members": [
+        "user:Matt@moneymediausa.com"
+      ],
+      "role": "roles/iam.serviceAccountAdmin"
+    },
+    {
+      "members": [
+        "serviceAccount:gha-deployer@quantify-agent.iam.gserviceaccount.com"
+      ],
+      "role": "roles/iam.serviceAccountTokenCreator"
+    },
+    {
+      "members": [
+        "serviceAccount:720850296638-compute@developer.gserviceaccount.com",
+        "serviceAccount:720850296638@cloudbuild.gserviceaccount.com",
+        "serviceAccount:gha-deployer@quantify-agent.iam.gserviceaccount.com",
+        "serviceAccount:mcc-orch-sa@quantify-agent.iam.gserviceaccount.com"
+      ],
+      "role": "roles/iam.serviceAccountUser"
+    },
+    {
+      "members": [
+        "user:Matt@moneymediausa.com"
+      ],
+      "role": "roles/iam.serviceAccountViewer"
+    },
+    {
+      "members": [
+        "serviceAccount:gha-deployer@quantify-agent.iam.gserviceaccount.com"
+      ],
+      "role": "roles/logging.configWriter"
+    },
+    {
+      "members": [
+        "serviceAccount:720850296638-compute@developer.gserviceaccount.com",
+        "serviceAccount:720850296638@cloudbuild.gserviceaccount.com",
+        "serviceAccount:mcc-orch-sa@quantify-agent.iam.gserviceaccount.com",
+        "serviceAccount:mcc-orchestrator-runtime@quantify-agent.iam.gserviceaccount.com"
+      ],
+      "role": "roles/logging.logWriter"
+    },
+    {
+      "members": [
+        "serviceAccount:service-720850296638@gcp-sa-logging.iam.gserviceaccount.com"
+      ],
+      "role": "roles/logging.serviceAgent"
+    },
+    {
+      "members": [
+        "serviceAccount:720850296638-compute@developer.gserviceaccount.com",
+        "serviceAccount:gha-deployer@quantify-agent.iam.gserviceaccount.com",
+        "serviceAccount:mcc-orch-sa@quantify-agent.iam.gserviceaccount.com"
+      ],
+      "role": "roles/logging.viewer"
+    },
+    {
+      "members": [
+        "serviceAccount:gha-deployer@quantify-agent.iam.gserviceaccount.com"
+      ],
+      "role": "roles/monitoring.editor"
+    },
+    {
+      "members": [
+        "serviceAccount:mcc-orch-sa@quantify-agent.iam.gserviceaccount.com"
+      ],
+      "role": "roles/monitoring.metricWriter"
+    },
+    {
+      "members": [
+        "serviceAccount:service-720850296638@gcp-sa-osconfig.iam.gserviceaccount.com"
+      ],
+      "role": "roles/osconfig.serviceAgent"
+    },
+    {
+      "members": [
+        "user:Matt@moneymediausa.com"
+      ],
+      "role": "roles/owner"
+    },
+    {
+      "members": [
+        "serviceAccount:720850296638-compute@developer.gserviceaccount.com",
+        "serviceAccount:mcc-orch-sa@quantify-agent.iam.gserviceaccount.com",
+        "serviceAccount:service-720850296638@gs-project-accounts.iam.gserviceaccount.com"
+      ],
+      "role": "roles/pubsub.publisher"
+    },
+    {
+      "members": [
+        "serviceAccount:service-720850296638@gcp-sa-pubsub.iam.gserviceaccount.com"
+      ],
+      "role": "roles/pubsub.serviceAgent"
+    },
+    {
+      "members": [
+        "serviceAccount:720850296638@cloudbuild.gserviceaccount.com",
+        "serviceAccount:gha-deployer@quantify-agent.iam.gserviceaccount.com",
+        "serviceAccount:mcc-orch-sa@quantify-agent.iam.gserviceaccount.com"
+      ],
+      "role": "roles/run.admin"
+    },
+    {
+      "members": [
+        "serviceAccount:720850296638-compute@developer.gserviceaccount.com"
+      ],
+      "role": "roles/run.developer"
+    },
+    {
+      "members": [
+        "serviceAccount:720850296638-compute@developer.gserviceaccount.com",
+        "serviceAccount:mcc-orch-sa@quantify-agent.iam.gserviceaccount.com",
+        "serviceAccount:mcc-orchestrator-runtime@quantify-agent.iam.gserviceaccount.com"
+      ],
+      "role": "roles/run.invoker"
+    },
+    {
+      "members": [
+        "serviceAccount:service-720850296638@serverless-robot-prod.iam.gserviceaccount.com"
+      ],
+      "role": "roles/run.serviceAgent"
+    },
+    {
+      "members": [
+        "serviceAccount:mcc-orch-sa@quantify-agent.iam.gserviceaccount.com"
+      ],
+      "role": "roles/secretmanager.admin"
+    },
+    {
+      "members": [
+        "serviceAccount:720850296638-compute@developer.gserviceaccount.com",
+        "serviceAccount:720850296638@cloudbuild.gserviceaccount.com",
+        "serviceAccount:mcc-orch-sa@quantify-agent.iam.gserviceaccount.com",
+        "serviceAccount:mcc-orchestrator-runtime@quantify-agent.iam.gserviceaccount.com"
+      ],
+      "role": "roles/secretmanager.secretAccessor"
+    },
+    {
+      "members": [
+        "serviceAccount:mcc-orch-sa@quantify-agent.iam.gserviceaccount.com"
+      ],
+      "role": "roles/secretmanager.secretVersionAdder"
+    },
+    {
+      "members": [
+        "serviceAccount:720850296638-compute@developer.gserviceaccount.com",
+        "serviceAccount:gha-deployer@quantify-agent.iam.gserviceaccount.com"
+      ],
+      "role": "roles/serviceusage.serviceUsageConsumer"
+    },
+    {
+      "members": [
+        "serviceAccount:720850296638@cloudbuild.gserviceaccount.com",
+        "serviceAccount:gha-deployer@quantify-agent.iam.gserviceaccount.com",
+        "serviceAccount:mcc-orch-sa@quantify-agent.iam.gserviceaccount.com"
+      ],
+      "role": "roles/storage.admin"
+    },
+    {
+      "members": [
+        "serviceAccount:720850296638-compute@developer.gserviceaccount.com",
+        "serviceAccount:mcc-orch-sa@quantify-agent.iam.gserviceaccount.com",
+        "serviceAccount:mcc-orchestrator-runtime@quantify-agent.iam.gserviceaccount.com"
+      ],
+      "role": "roles/storage.objectAdmin"
+    },
+    {
+      "members": [
+        "serviceAccount:mcc-orch-sa@quantify-agent.iam.gserviceaccount.com"
+      ],
+      "role": "roles/storage.objectCreator"
+    },
+    {
+      "members": [
+        "serviceAccount:mcc-orch-sa@quantify-agent.iam.gserviceaccount.com"
+      ],
+      "role": "roles/workflows.invoker"
+    },
+    {
+      "members": [
+        "serviceAccount:service-720850296638@gcp-sa-workflows.iam.gserviceaccount.com"
+      ],
+      "role": "roles/workflows.serviceAgent"
+    }
+  ],
+  "etag": "BwZDzerrQlY=",
+  "version": 1
+}

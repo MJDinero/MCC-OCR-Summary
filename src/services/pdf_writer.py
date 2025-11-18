@@ -123,7 +123,9 @@ class ReportLabBackend:
         try:
             doc.build(flowables)
         except Exception as exc:  # pragma: no cover - rendering failures
-            raise PDFGenerationError(f"Failed to render PDF via reportlab: {exc}") from exc
+            raise PDFGenerationError(
+                f"Failed to render PDF via reportlab: {exc}"
+            ) from exc
         return buf.getvalue()
 
 
@@ -200,17 +202,13 @@ class PDFWriter:
         if not sections:
             raise PDFGenerationError("Summary structure empty")
         canonical_order: Dict[str, int] = {
-            "Intro Overview": 0,
-            "Key Points": 1,
-            "Detailed Findings": 2,
-            "Care Plan & Follow-Up": 3,
+            "Provider Seen": 0,
+            "Reason for Visit": 1,
+            "Clinical Findings": 2,
+            "Treatment / Follow-up Plan": 3,
             "Diagnoses": 4,
-            "Providers": 5,
+            "Healthcare Providers": 5,
             "Medications / Prescriptions": 6,
-            "Patient Information": 7,
-            "Medical Summary": 8,
-            "Billing Highlights": 9,
-            "Legal / Notes": 10,
         }
         sections_seq: list[tuple[str, str]] = []
         for heading, body in sections:
@@ -238,7 +236,11 @@ class PDFWriter:
                         1
                         for heading, _ in sections_seq
                         if heading
-                        in {"Diagnoses", "Providers", "Medications / Prescriptions"}
+                        in {
+                            "Diagnoses",
+                            "Healthcare Providers",
+                            "Medications / Prescriptions",
+                        }
                     )
                 ),
             },

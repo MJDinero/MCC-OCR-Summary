@@ -1,5 +1,5 @@
 {
-  "displayName": "MCC OCR Pipeline - Latency",
+  "displayName": "MCC OCR Pipeline - Latency (${ENV})",
   "mosaicLayout": {
     "columns": 12,
     "tiles": [

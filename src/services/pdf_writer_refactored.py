@@ -98,13 +98,13 @@ def _normalise_summary(
     ]
     indices = {
         "Diagnoses": diag_list,
-        "Providers": prov_list,
+        "Healthcare Providers": prov_list,
         "Medications / Prescriptions": med_list,
     }
 
     ordered_indices = [
         ("Diagnoses", diag_list),
-        ("Providers", prov_list),
+        ("Healthcare Providers", prov_list),
         ("Medications / Prescriptions", med_list),
     ]
     for heading, items in ordered_indices:
@@ -319,7 +319,7 @@ class PDFWriterRefactored:
         context.setdefault("component", "pdf_writer")
         context.setdefault("severity", "INFO")
         context.setdefault(
-            "schema_version", os.getenv("SUMMARY_SCHEMA_VERSION", "2025-10-01")
+            "schema_version", os.getenv("SUMMARY_SCHEMA_VERSION", "2025-11-16")
         )
         context.setdefault("shard_id", "aggregate")
         context.setdefault("attempt", 1)

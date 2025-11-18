@@ -39,10 +39,30 @@ class StubBackend(ChunkSummaryBackend):
             payload = self.responses[fallback_index]
         # Include a snippet of the chunk to ensure backend sees the same data across invocations.
         result = dict(payload)
-        result.setdefault(
-            "overview", f"Chunk {chunk_index} covers {len(chunk_text.split())} words."
-        )
+        default_reason = f"Chunk {chunk_index} covers {len(chunk_text.split())} words."
+        if "reason_for_visit" not in result:
+            result["reason_for_visit"] = default_reason
         return result
+
+
+class ProviderEmptyBackend(ChunkSummaryBackend):
+    def summarise_chunk(
+        self,
+        *,
+        chunk_text: str,
+        chunk_index: int,
+        total_chunks: int,
+        estimated_tokens: int,
+    ) -> Dict[str, Any]:
+        return {
+            "provider_seen": [],
+            "reason_for_visit": ["Routine evaluation for chronic pain management."],
+            "clinical_findings": ["Pain score improved from prior visit."],
+            "treatment_plan": ["Continue home exercise plan and monitor symptoms."],
+            "diagnoses": ["Chronic pain syndrome"],
+            "healthcare_providers": [],
+            "medications": ["Gabapentin 300 mg nightly"],
+        }
 
 
 def test_refactored_summary_structure_and_length() -> None:
@@ -57,36 +77,37 @@ def test_refactored_summary_structure_and_length() -> None:
     backend = StubBackend(
         responses={
             1: {
+                "provider_seen": ["Dr. Alicia Carter, Neurology"],
                 "overview": "Follow-up neurology visit for chronic migraines without aura.",
-                "key_points": [
+                "reason_for_visit": [
                     "Patient reports increased migraine frequency impacting daily activities.",
                     "Normal neurological examination with stable vitals.",
                 ],
-                "clinical_details": [
+                "clinical_findings": [
                     "Blood pressure 138/88 mmHg; neurological exam non-focal.",
                     "MRI from March 2024 reviewed and remains normal.",
                 ],
-                "care_plan": [
+                "treatment_plan": [
                     "Continue sumatriptan 50 mg at migraine onset and track response.",
                     "Reinforce hydration, sleep hygiene, and headache diary usage.",
                 ],
                 "diagnoses": ["G43.709 Chronic migraine without aura"],
-                "providers": ["Dr. Alicia Carter"],
+                "healthcare_providers": ["Dr. Alicia Carter"],
                 "medications": ["Sumatriptan 50 mg as needed"],
             },
             2: {
-                "key_points": [
+                "reason_for_visit": [
                     "Patient engaging in cognitive behavioural therapy for anxiety symptoms.",
                 ],
-                "clinical_details": [
+                "clinical_findings": [
                     "Patient denies visual changes, motor weakness, or speech disturbance.",
                     "Reports mild anxiety managed through behavioural interventions.",
                 ],
-                "care_plan": [
+                "treatment_plan": [
                     "Schedule follow-up neurology visit in 6 weeks to reassess frequency and treatment response.",
                 ],
                 "diagnoses": ["F41.9 Anxiety disorder, unspecified"],
-                "providers": ["Clinic behavioural health team"],
+                "healthcare_providers": ["Clinic behavioural health team"],
                 "medications": ["Cognitive behavioural therapy"],
             },
         }
@@ -98,20 +119,20 @@ def test_refactored_summary_structure_and_length() -> None:
     summary = summariser.summarise(text, doc_metadata={"facility": "MCC Neurology"})
     medical_summary = summary["Medical Summary"]
 
-    assert "Intro Overview:" in medical_summary
-    assert "Key Points:" in medical_summary
-    assert "Detailed Findings:" in medical_summary
-    assert "Care Plan & Follow-Up:" in medical_summary
+    assert "Provider Seen:" in medical_summary
+    assert "Reason for Visit:" in medical_summary
+    assert "Clinical Findings:" in medical_summary
+    assert "Treatment / Follow-up Plan:" in medical_summary
     assert len(medical_summary) >= summariser.min_summary_chars
 
-    assert isinstance(summary["intro_overview"], list)
-    assert summary["intro_overview"]
-    assert isinstance(summary["key_points"], list)
-    assert summary["key_points"]
-    assert isinstance(summary["detailed_findings"], list)
-    assert summary["detailed_findings"]
-    assert isinstance(summary["care_plan"], list)
-    assert summary["care_plan"]
+    assert isinstance(summary["provider_seen"], list)
+    assert summary["provider_seen"]
+    assert isinstance(summary["reason_for_visit"], list)
+    assert summary["reason_for_visit"]
+    assert isinstance(summary["clinical_findings"], list)
+    assert summary["clinical_findings"]
+    assert isinstance(summary["treatment_plan"], list)
+    assert summary["treatment_plan"]
 
     diagnoses_lines = summary["_diagnoses_list"].splitlines()
     assert "G43.709 Chronic migraine without aura" in diagnoses_lines[0]
@@ -130,9 +151,9 @@ def test_compose_summary_pads_short_outputs() -> None:
         responses={
             1: {
                 "overview": "Brief visit for vaccination update.",
-                "key_points": ["Tdap booster administered."],
-                "clinical_details": ["No adverse reactions documented."],
-                "care_plan": ["Monitor for injection site soreness."],
+                "reason_for_visit": ["Tdap booster administered."],
+                "clinical_findings": ["No adverse reactions documented."],
+                "treatment_plan": ["Monitor for injection site soreness."],
             }
         }
     )
@@ -147,15 +168,17 @@ def test_cross_section_dedupe_removes_duplicate_lines() -> None:
         responses={
             1: {
                 "overview": repeated_line,
-                "key_points": [
+                "reason_for_visit": [
                     repeated_line,
                     "Follow-up with cardiology arranged.",
                 ],
-                "clinical_details": [
+                "clinical_findings": [
                     repeated_line,
                     "Imaging study demonstrates no acute findings.",
                 ],
-                "care_plan": ["Continue home blood pressure monitoring and medication log."],
+                "treatment_plan": [
+                    "Continue home blood pressure monitoring and medication log."
+                ],
             }
         }
     )
@@ -168,22 +191,22 @@ def test_cross_section_dedupe_removes_duplicate_lines() -> None:
     payload_text = ("Patient denies chest pain post procedure. " * 40).strip()
     summary = summariser.summarise(payload_text)
 
-    assert repeated_line in summary["intro_overview"]
-    assert repeated_line not in summary["key_points"]
-    assert "Imaging study demonstrates no acute findings." in summary[
-        "detailed_findings"
-    ]
-    assert repeated_line not in summary["detailed_findings"]
+    assert repeated_line not in summary["provider_seen"]
+    assert repeated_line in summary["reason_for_visit"]
+    assert (
+        "Imaging study demonstrates no acute findings." in summary["clinical_findings"]
+    )
+    assert repeated_line not in summary["clinical_findings"]
 
 
-def test_intro_uses_facility_and_entity_lists_require_filtered_content() -> None:
+def test_provider_seen_includes_facility_and_entity_lists_require_filtered_content() -> None:
     backend = StubBackend(
         responses={
             1: {
                 "overview": "Document processed in 2 chunk(s).",
-                "key_points": ["Patient discharged the same day in stable condition."],
-                "clinical_details": ["Vitals remained stable throughout observation."],
-                "care_plan": ["Routine follow-up in cardiology clinic within 2 weeks."],
+                "reason_for_visit": ["Patient discharged the same day in stable condition."],
+                "clinical_findings": ["Vitals remained stable throughout observation."],
+                "treatment_plan": ["Routine follow-up in cardiology clinic within 2 weeks."],
             }
         }
     )
@@ -198,12 +221,168 @@ def test_intro_uses_facility_and_entity_lists_require_filtered_content() -> None
         text, doc_metadata={"facility": "Sunrise Medical Center"}
     )
 
-    assert summary["intro_overview"] == ["Source: Sunrise Medical Center."]
+    assert summary["provider_seen"] == ["Facility: Sunrise Medical Center."]
     assert summary["_diagnoses_list"].strip() == ""
     assert summary["_providers_list"].strip() == ""
     assert summary["_medications_list"].strip() == ""
     assert "document processed" not in summary["Medical Summary"].lower()
 
+
+def test_chunk_metadata_removed_from_provider_section() -> None:
+    backend = StubBackend(
+        responses={
+            1: {
+                "overview": "Document processed in 2 chunk(s). Follow-up visit today.",
+                "reason_for_visit": ["Patient discharged same day."],
+                "clinical_findings": ["Vitals stable throughout observation."],
+                "treatment_plan": ["Routine follow-up in cardiology clinic within 2 weeks."],
+            }
+        }
+    )
+    summariser = RefactoredSummariser(
+        backend=backend,
+        min_summary_chars=150,
+        target_chars=400,
+        max_chars=800,
+    )
+    text = ("Same day surgery discharge summary. " * 30).strip()
+    result = summariser.summarise(text)
+
+    intro_lines = result["provider_seen"]
+    assert all("document processed" not in line.lower() for line in intro_lines)
+    assert "document processed" not in result["Medical Summary"].lower()
+
+
+def test_entity_lists_exclude_admin_entries() -> None:
+    backend = StubBackend(
+        responses={
+            1: {
+                "overview": "Clinic visit for diabetes follow-up.",
+                "diagnoses": [
+                    "Consent on file",
+                    "E11.9 Type 2 diabetes mellitus without complications",
+                ],
+                "healthcare_providers": [
+                    "Clinic billing department",
+                    "Dr. Priya Verma, Endocrinology",
+                ],
+                "medications": [
+                    "Medication policy reviewed",
+                    "Metformin 500 mg twice daily",
+                ],
+            }
+        }
+    )
+    summariser = RefactoredSummariser(backend=backend, min_summary_chars=150)
+    text = ("Diabetes visit summary. " * 30).strip()
+    result = summariser.summarise(text)
+
+    assert result["_diagnoses_list"].splitlines() == [
+        "E11.9 Type 2 diabetes mellitus without complications"
+    ]
+    assert result["_providers_list"].splitlines() == ["Dr. Priya Verma, Endocrinology"]
+    assert result["_medications_list"].splitlines() == ["Metformin 500 mg twice daily"]
+
+
+def test_clean_merge_fragment_applies_to_all_sections() -> None:
+    backend = StubBackend(
+        responses={
+            1: {
+                "overview": "Document processed in 8 chunk(s). Admission addendum.",
+                "reason_for_visit": [
+                    "Structured Indices follow.",
+                    "Patient evaluated by Dr. Rivera.",
+                ],
+                "clinical_findings": [
+                    "Summary Notes: call 911 for emergencies.",
+                    "Blood pressure 130/80 mmHg; neuro exam stable.",
+                ],
+                "treatment_plan": [
+                    "Document processed in 8 chunk(s).",
+                    "Follow-up with cardiology clinic in 4 weeks.",
+                ],
+            }
+        }
+    )
+    summariser = RefactoredSummariser(backend=backend, min_summary_chars=150)
+    payload_text = ("Extended narrative with vitals and impressions. " * 40).strip()
+    summary = summariser.summarise(payload_text)
+
+    def _section_contains_noise(lines: list[str]) -> bool:
+        full = " ".join(lines).lower()
+        return any(
+            token in full
+            for token in (
+                "document processed in",
+                "structured indices",
+                "summary notes",
+                "call 911",
+            )
+        )
+
+    assert not _section_contains_noise(summary.get("provider_seen", []))
+    assert summary["reason_for_visit"]
+    assert not _section_contains_noise(summary["reason_for_visit"])
+    assert summary["clinical_findings"]
+    assert not _section_contains_noise(summary["clinical_findings"])
+    assert summary["treatment_plan"]
+    assert not _section_contains_noise(summary["treatment_plan"])
+    assert "document processed in" not in summary["Medical Summary"].lower()
+
+
+def test_intake_and_consent_language_removed_from_sections() -> None:
+    backend = StubBackend(
+        responses={
+            1: {
+                "provider_seen": [
+                    "Intake form completed for medical record.",
+                    "Dr. Priya Verma, Endocrinology",
+                ],
+                "reason_for_visit": [
+                    "Consent for evaluation was signed.",
+                    "Follow-up for chronic lumbar pain with radiculopathy.",
+                ],
+                "clinical_findings": [
+                    "Intake questionnaire notes paperwork was reviewed.",
+                    "MRI reviewed; no acute compression, paraspinal tenderness persists.",
+                ],
+                "treatment_plan": [
+                    "Consent acknowledged for injection procedure.",
+                    "Continue gabapentin and schedule PT in 2 weeks.",
+                ],
+                "diagnoses": [
+                    "Consent on file for care plan.",
+                    "M54.50 Low back pain, unspecified",
+                ],
+                "healthcare_providers": [
+                    "Intake paperwork signed by clinic coordinator.",
+                    "Dr. Priya Verma, Endocrinology",
+                ],
+                "medications": [
+                    "Consent medication plan reviewed.",
+                    "Gabapentin 100 mg nightly",
+                ],
+            }
+        }
+    )
+    summariser = RefactoredSummariser(backend=backend, min_summary_chars=180)
+    text = ("Extended lumbar evaluation with imaging updates. " * 40).strip()
+    summary = summariser.summarise(text)
+
+    for section_key in (
+        "provider_seen",
+        "reason_for_visit",
+        "clinical_findings",
+        "treatment_plan",
+    ):
+        joined = " ".join(summary.get(section_key, []))
+        assert "consent" not in joined.lower()
+        assert "intake" not in joined.lower()
+
+    assert summary["_diagnoses_list"].splitlines() == ["M54.50 Low back pain, unspecified"]
+    assert summary["_providers_list"].splitlines() == ["Dr. Priya Verma, Endocrinology"]
+    assert summary["_medications_list"].splitlines() == ["Gabapentin 100 mg nightly"]
+    assert "consent" not in summary["Medical Summary"].lower()
 
 def test_openai_backend_schema_mismatch_raises(monkeypatch):
     backend = OpenAIResponsesBackend(model="gpt-test", api_key="key")
@@ -218,11 +397,11 @@ def test_openai_backend_schema_mismatch_raises(monkeypatch):
                             text=json.dumps(
                                 {
                                     "overview": "Example chunk without schema version",
-                                    "key_points": [],
-                                    "clinical_details": [],
-                                    "care_plan": [],
+                                    "reason_for_visit": [],
+                                    "clinical_findings": [],
+                                    "treatment_plan": [],
                                     "diagnoses": [],
-                                    "providers": [],
+                                    "healthcare_providers": [],
                                     "medications": [],
                                 }
                             ),
@@ -273,9 +452,9 @@ def test_heuristic_backend_entity_extraction():
         total_chunks=1,
         estimated_tokens=200,
     )
-    assert any("John Smith" in provider for provider in result["providers"])
+    assert any("John Smith" in provider for provider in result["healthcare_providers"])
     assert any("Lisinopril 20 mg" in med for med in result["medications"])
-    assert result["care_plan"], "Care plan should be populated from follow-up sentence"
+    assert result["treatment_plan"], "Care plan should be populated from follow-up sentence"
 
 
 def test_split_gcs_uri_validation():
@@ -294,6 +473,91 @@ def test_merge_dicts_overrides_keys():
     merged = _merge_dicts(base, patch)
     assert merged == {"a": 1, "b": 3, "c": 4}
     assert base["b"] == 2  # original not mutated
+
+
+def test_chunk_properties_enforce_bounds():
+    backend = StubBackend(responses={1: {"overview": "Entry"}})
+    summariser = RefactoredSummariser(backend=backend)
+    summariser.chunk_target_chars = 256
+    assert summariser.target_chars == 512
+    summariser.chunk_hard_max = 512
+    assert summariser.max_chars >= summariser.target_chars + 64
+
+
+def test_merge_payload_normalises_values():
+    aggregated = {
+        "provider_seen": [],
+        "reason_for_visit": [],
+        "clinical_findings": [],
+        "treatment_plan": [],
+        "diagnoses": [],
+        "healthcare_providers": [],
+        "medications": [],
+    }
+    payload = {
+        "provider_seen": "Dr. Gomez\nStructured Indices follow",
+        "key_points": ("Follow-up requested",),
+        "clinical_findings": {"vitals": "BP 120/80 noted"},
+        "care_plan": ["Return to clinic in 6 weeks"],
+        "diagnoses": ["E11.9 Type 2 diabetes", "", "Consent on file"],
+        "medications": {"primary": "Metformin 500 mg twice daily"},
+    }
+    RefactoredSummariser._merge_payload(aggregated, payload)
+    assert aggregated["provider_seen"][0].startswith("Dr. Gomez")
+    assert aggregated["reason_for_visit"] == ["Follow-up requested"]
+    assert aggregated["clinical_findings"] == ["BP 120/80 noted"]
+    assert aggregated["treatment_plan"][0].startswith("Return to clinic")
+    assert aggregated["diagnoses"] == ["E11.9 Type 2 diabetes"]
+    assert aggregated["medications"] == ["Metformin 500 mg twice daily"]
+
+
+@pytest.mark.asyncio
+async def test_summarise_async_matches_sync():
+    backend = StubBackend(
+        responses={
+            1: {
+                "overview": "Sync/async test.",
+                "reason_for_visit": ["Patient followed for hypertension."],
+                "clinical_findings": ["Blood pressure 128/78 mmHg."],
+                "treatment_plan": ["Continue lisinopril 20 mg daily."],
+            }
+        }
+    )
+    summariser = RefactoredSummariser(backend=backend, min_summary_chars=64)
+    sync_result = summariser.summarise("Vitals stable.")
+    async_result = await summariser.summarise_async("Vitals stable.")
+    assert sync_result["Medical Summary"] == async_result["Medical Summary"]
+
+
+def test_provider_names_extracted_from_source_text() -> None:
+    summariser = RefactoredSummariser(backend=ProviderEmptyBackend())
+    sample_text = (
+        "Dr. Alice Nguyen evaluated the patient and discussed the treatment plan. "
+        "Follow-up with Doctor Brian Ortiz, MD was arranged to review imaging findings. "
+    ) * 20
+    summary = summariser.summarise(sample_text)
+    providers_blob = summary.get("_providers_list", "")
+    assert "Alice Nguyen" in providers_blob or "Brian Ortiz" in providers_blob
+    provider_seen_lines = summary.get("provider_seen", [])
+    assert any("Alice Nguyen" in line or "Brian Ortiz" in line for line in provider_seen_lines)
+
+
+def test_summarise_raises_when_chunker_returns_empty(monkeypatch):
+    backend = StubBackend(responses={1: {"overview": "Chunk missing"}})
+
+    class _EmptyChunker:
+        def __init__(self, **_: Any) -> None:
+            pass
+
+        def split(self, _: str) -> list[Any]:
+            return []
+
+    monkeypatch.setattr(
+        "src.services.summarization.controller.SlidingWindowChunker", _EmptyChunker
+    )
+    summariser = RefactoredSummariser(backend=backend)
+    with pytest.raises(SummarizationError):
+        summariser.summarise("content needed")
 
 
 def test_load_input_payload_variants(tmp_path):

@@ -127,7 +127,7 @@ The final step in `cloudbuild.yaml` fetches a validator service-account key from
 1. Build the image:
    ```bash
    gcloud builds submit --config cloudbuild.yaml \
-     --substitutions=_PROJECT=$PROJECT_ID,_REGION=$REGION
+     --substitutions=_IMAGE_REPO=$IMAGE_REPO,_TAG=$TAG,_PROJECT_ID=$PROJECT_ID,_REGION=$REGION
    ```
 2. Deploy services (Pub/Sub handlers can run as Cloud Run jobs or GKE workloads). Example:
    ```bash

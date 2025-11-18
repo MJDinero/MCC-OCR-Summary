@@ -8,12 +8,12 @@ class DummyBackend(ChunkSummaryBackend):
         self, *, chunk_text, chunk_index, total_chunks, estimated_tokens
     ):
         return {
-            "overview": "Patient summary",
-            "key_points": ["Key details"],
-            "clinical_details": ["Clinical detail"],
-            "care_plan": ["Care plan"],
+            "provider_seen": ["Patient summary"],
+            "reason_for_visit": ["Key details"],
+            "clinical_findings": ["Clinical detail"],
+            "treatment_plan": ["Care plan"],
             "diagnoses": ["Dx"],
-            "providers": ["Dr Test"],
+            "healthcare_providers": ["Dr Test"],
             "medications": ["Lisinopril 20 mg daily"],
         }
 

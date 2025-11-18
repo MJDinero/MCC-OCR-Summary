@@ -7,10 +7,10 @@ from typing import Dict
 def test_summary_headers_and_forbidden_phrases(noisy_summary: Dict[str, str]) -> None:
     medical_summary = noisy_summary["Medical Summary"]
     expected_headers = (
-        "Intro Overview:",
-        "Key Points:",
-        "Detailed Findings:",
-        "Care Plan & Follow-Up:",
+        "Provider Seen:",
+        "Reason for Visit:",
+        "Clinical Findings:",
+        "Treatment / Follow-up Plan:",
     )
     for header in expected_headers:
         assert header in medical_summary
@@ -22,6 +22,8 @@ def test_summary_headers_and_forbidden_phrases(noisy_summary: Dict[str, str]) ->
         "Write the percentage relief",
         "Greater Plains Orthopedic",
         "I understand that",
+        "Structured Indices",
+        "Summary Notes",
     )
     low_summary = medical_summary.lower()
     for phrase in forbidden_phrases:
@@ -32,7 +34,7 @@ def test_sections_drop_administrative_noise(noisy_summary: Dict[str, str]) -> No
     medical_summary = noisy_summary["Medical Summary"]
     # Pull the detail section to ensure radiology impression retained while admin lines removed.
     detail_match = re.search(
-        r"Detailed Findings:\n(?P<body>.+?)(\n\n[A-Z][^\n]+:|\Z)",
+        r"Clinical Findings:\n(?P<body>.+?)(\n\n[A-Z][^\n]+:|\Z)",
         medical_summary,
         flags=re.DOTALL,
     )
@@ -43,3 +45,16 @@ def test_sections_drop_administrative_noise(noisy_summary: Dict[str, str]) -> No
     assert "patient education" not in lowered
     assert "call the office immediately" not in lowered
     assert "document processed in" not in lowered
+
+
+def test_canonical_sections_expose_filtered_lists(noisy_summary: Dict[str, str]) -> None:
+    provider_seen = noisy_summary["provider_seen"]
+    assert isinstance(provider_seen, list)
+    assert provider_seen
+    for line in provider_seen:
+        assert "document processed" not in line.lower()
+    reason_lines = noisy_summary["reason_for_visit"]
+    assert isinstance(reason_lines, list)
+    assert reason_lines
+    for point in reason_lines:
+        assert "please fill your prescriptions" not in point.lower()

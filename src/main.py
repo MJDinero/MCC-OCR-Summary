@@ -4,10 +4,9 @@ from __future__ import annotations
 
 import logging
 import os
-import secrets
 import socket
 import sys
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Callable
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
@@ -16,17 +15,14 @@ from src.api.ingest import router as ingest_router
 from src.api.process import router as process_router
 from src.errors import ValidationError
 from src.logging_setup import configure_logging
-from src.services import drive_client as drive_client_module
 from src.services.docai_helper import OCRService
+from src.services.drive_service import DriveService
 from src.services.metrics import PrometheusMetrics, NullMetrics
 from src.services.pdf_writer import PDFWriter, ReportLabBackend
+from src.services.process_pipeline import ProcessPipelineService
 from src.services.pipeline import (
     create_state_store_from_env,
     create_workflow_launcher_from_env,
-)
-from src.services.summariser import (
-    OpenAIBackend as LegacyOpenAIBackend,
-    Summariser as LegacySummariser,
 )
 from src.services.summariser_refactored import (
     OpenAIResponsesBackend,
@@ -69,55 +65,11 @@ def _metrics_enabled(default: bool) -> bool:
     return raw.strip().lower() in {"1", "true", "yes", "on"}
 
 
-ENABLE_METRICS = _metrics_enabled(not _MVP_MODE)
+ENABLE_METRICS = _metrics_enabled(True)
 
 
 def _health_payload() -> dict[str, str]:
     return {"status": "ok"}
-
-
-class _DriveClientAdapter:
-    def __init__(self, *, stub: bool, config) -> None:
-        self._stub = stub
-        self._config = config
-
-    def upload_pdf(
-        self,
-        file_bytes: bytes,
-        folder_id: str | None = None,
-        *,
-        log_context: dict[str, Any] | None = None,
-    ) -> str:
-        report_name = f"summary-{os.getenv('REPORT_PREFIX', '')}{secrets.token_hex(8)}.pdf"  # pylint: disable=no-member
-        if self._stub:
-            structured_log(
-                _API_LOG,
-                logging.INFO,
-                "drive_upload_stub",
-                report_name=report_name,
-                folder_id=folder_id,
-                bytes=len(file_bytes),
-            )
-            return f"stub-{report_name}"
-        parent_folder = folder_id or self._config.drive_report_folder_id
-        return drive_client_module.upload_pdf(
-            file_bytes,
-            report_name,
-            parent_folder_id=parent_folder,
-            log_context=(log_context or {}) | {"component": "process_api"},
-        )
-
-    def __getattr__(
-        self, item: str
-    ) -> Any:  # pragma: no cover - passthrough to legacy helpers
-        return getattr(drive_client_module, item)
-
-
-def _normalise_mode(raw: str | None, *, default: str, allowed: set[str]) -> str:
-    if raw is None:
-        return default
-    value = str(raw).strip().lower()
-    return value if value in allowed else default
 
 
 def _build_summariser(stub_mode: bool, *, cfg) -> Any:
@@ -142,18 +94,22 @@ def _build_summariser(stub_mode: bool, *, cfg) -> Any:
 
         return _StubSummariser()
 
-    compose_mode = _normalise_mode(
-        getattr(cfg, "summary_compose_mode", None),
-        default="refactored",
-        allowed={"legacy", "refactored"},
-    )
-    if compose_mode == "legacy":
-        legacy_backend = LegacyOpenAIBackend(
-            model=cfg.openai_model or "gpt-4o-mini",
-            api_key=cfg.openai_api_key,
+    configured_mode = str(getattr(cfg, "summary_compose_mode", "")).strip().lower()
+    env_override = os.getenv("SUMMARY_COMPOSE_MODE", "").strip().lower()
+    if configured_mode and configured_mode != "refactored":
+        structured_log(
+            _API_LOG,
+            logging.WARNING,
+            "summary_compose_mode_overridden",
+            configured_mode=configured_mode,
         )
-        return LegacySummariser(backend=legacy_backend)
-
+    if env_override and env_override != "refactored":
+        structured_log(
+            _API_LOG,
+            logging.WARNING,
+            "summary_compose_env_override_ignored",
+            env_value=env_override,
+        )
     refactored_backend = OpenAIResponsesBackend(
         model=cfg.openai_model or "gpt-4o-mini",
         api_key=cfg.openai_api_key,
@@ -161,21 +117,22 @@ def _build_summariser(stub_mode: bool, *, cfg) -> Any:
     return RefactoredSummariser(backend=refactored_backend)
 
 
-def _build_pdf_writer(*, cfg, override_mode: str | None = None) -> tuple[str, PDFWriter, str]:
-    writer_mode = _normalise_mode(
-        override_mode or getattr(cfg, "pdf_writer_mode", None),
-        default="rich",
-        allowed={"minimal", "rich", "reportlab"},
-    )
-    backend_label = "reportlab" if writer_mode in {"reportlab", "minimal"} else "rich"
-    if writer_mode == "minimal":
+def _build_pdf_writer(
+    *, cfg, override_mode: str | None = None
+) -> tuple[str, PDFWriter, str]:
+    writer_mode = "rich"
+    configured_mode = str(getattr(cfg, "pdf_writer_mode", "") or "").strip().lower()
+    env_override = (override_mode or os.getenv("PDF_WRITER_MODE", "")).strip().lower()
+    ignored_value = env_override or configured_mode
+    if ignored_value and ignored_value != "rich":
         structured_log(
             _API_LOG,
             logging.WARNING,
-            "pdf_writer_minimal_deprecated",
-            message="Minimal PDF writer is no longer supported; falling back to reportlab.",
+            "pdf_writer_mode_forced",
+            requested_mode=ignored_value,
         )
-    return "rich", PDFWriter(ReportLabBackend()), backend_label
+    backend_label = "reportlab"
+    return writer_mode, PDFWriter(ReportLabBackend()), backend_label
 
 
 def _configure_state_store() -> tuple["PipelineStateStore", "WorkflowLauncher"]:
@@ -231,13 +188,7 @@ def create_app() -> FastAPI:
             config=cfg,
         )
 
-    compose_override = os.getenv("SUMMARY_COMPOSE_MODE", "").strip().lower()
-    compose_mode = _normalise_mode(
-        compose_override or getattr(cfg, "summary_compose_mode", None),
-        default="refactored",
-        allowed={"legacy", "refactored"},
-    )
-    app.state.summary_compose_mode = compose_mode
+    app.state.summary_compose_mode = "refactored"
 
     noise_override = os.getenv("ENABLE_NOISE_FILTERS")
     if noise_override is None:
@@ -251,7 +202,8 @@ def create_app() -> FastAPI:
         }
     app.state.enable_noise_filters = enable_noise_filters
 
-    app.state.summariser = _build_summariser(stub_mode, cfg=cfg)
+    summariser = _build_summariser(stub_mode, cfg=cfg)
+    app.state.summariser = summariser
     writer_override = os.getenv("PDF_WRITER_MODE", "").strip().lower() or None
     writer_mode, pdf_writer, writer_backend = _build_pdf_writer(
         cfg=cfg, override_mode=writer_override
@@ -259,7 +211,37 @@ def create_app() -> FastAPI:
     app.state.pdf_writer = pdf_writer
     app.state.pdf_writer_mode = writer_mode
     app.state.writer_backend = writer_backend
-    app.state.drive_client = _DriveClientAdapter(stub=stub_mode, config=cfg)
+    summariser_backend = getattr(summariser, "backend", None)
+    structured_log(
+        _API_LOG,
+        logging.INFO,
+        "summary_components_configured",
+        summary_mode="refactored",
+        summariser_class=summariser.__class__.__name__,
+        summariser_backend=(
+            summariser_backend.__class__.__name__ if summariser_backend else "None"
+        ),
+        pdf_writer_mode=writer_mode,
+        pdf_writer_backend=writer_backend,
+    )
+    drive_service = DriveService(stub_mode=stub_mode, config=cfg)
+    app.state.drive_client = drive_service  # Back-compat for download helpers
+    app.state.pdf_delivery_service = drive_service
+
+    pipeline_service = ProcessPipelineService(
+        ocr_service=app.state.ocr_service,
+        summariser=summariser,
+        pdf_writer=pdf_writer,
+        pdf_delivery=drive_service,
+        drive_report_folder_id=cfg.drive_report_folder_id,
+        stub_mode=stub_mode,
+        supervisor_simple=supervisor_simple,
+        summary_compose_mode=app.state.summary_compose_mode,
+        pdf_writer_mode=writer_mode,
+        writer_backend=writer_backend,
+        metrics=getattr(app.state, "metrics", None),
+    )
+    app.state.process_pipeline = pipeline_service
 
     internal_token = resolve_secret_env(
         "INTERNAL_EVENT_TOKEN", project_id=cfg.project_id
@@ -294,6 +276,36 @@ def create_app() -> FastAPI:
     # Include API routes
     app.include_router(ingest_router, prefix="/ingest", tags=["ingest"])
     app.include_router(process_router, prefix="/process", tags=["process"])
+
+    @app.middleware("http")
+    async def _component_probe(
+        request: Request, call_next: Callable[[Request], Any]
+    ):  # pragma: no cover - instrumentation only
+        summariser_obj = getattr(request.app.state, "summariser", None)
+        summariser_backend = (
+            getattr(summariser_obj, "backend", None) if summariser_obj else None
+        )
+        structured_log(
+            _API_LOG,
+            logging.INFO,
+            "request_component_selection",
+            path=str(request.url.path),
+            summary_compose_mode=getattr(
+                request.app.state, "summary_compose_mode", "unknown"
+            ),
+            summariser_class=(
+                summariser_obj.__class__.__name__ if summariser_obj else "None"
+            ),
+            summariser_backend=(
+                summariser_backend.__class__.__name__
+                if summariser_backend
+                else "None"
+            ),
+            pdf_writer_mode=getattr(request.app.state, "pdf_writer_mode", "unknown"),
+            pdf_writer_backend=getattr(request.app.state, "writer_backend", "unknown"),
+            stub_mode=getattr(request.app.state, "stub_mode", False),
+        )
+        return await call_next(request)
 
     @app.on_event("startup")
     async def _startup_diag():  # pragma: no cover

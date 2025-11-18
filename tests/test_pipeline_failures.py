@@ -57,3 +57,42 @@ def test_publish_failure_missing_topic(monkeypatch, caplog):
     caplog.set_level("WARNING")
     assert not pf.publish_pipeline_failure(stage="UNKNOWN_STAGE", error="fail")
     assert any("pipeline_failure_no_topic" in record.message for record in caplog.records)
+
+
+def test_resolve_topic_matches_variants():
+    cfg = SimpleNamespace(
+        ocr_dlq_topic="ocr",
+        summary_dlq_topic="summary",
+        storage_dlq_topic="storage",
+    )
+    assert pf._resolve_topic("doc_ai_splitter", cfg) == "ocr"  # type: ignore[attr-defined]
+    assert pf._resolve_topic("supervisor", cfg) == "summary"  # type: ignore[attr-defined]
+    assert pf._resolve_topic("pdf_writer", cfg) == "storage"  # type: ignore[attr-defined]
+    assert pf._resolve_topic(None, cfg) is None  # type: ignore[attr-defined]
+
+
+def test_publish_failure_records_metrics(monkeypatch, caplog):
+    cfg = SimpleNamespace(
+        ocr_dlq_topic=None,
+        summary_dlq_topic=None,
+        storage_dlq_topic=None,
+    )
+    monkeypatch.setattr(pf, "get_config", lambda: cfg)
+
+    class _StubCounter:
+        def __init__(self) -> None:
+            self.labels_called: list[dict[str, str]] = []
+
+        def labels(self, **labels: str) -> "_StubCounter":
+            self.labels_called.append(labels)
+            return self
+
+        def inc(self) -> None:
+            self.labels_called[-1]["inc"] = "1"
+
+    stub = _StubCounter()
+    monkeypatch.setattr(pf, "_PIPELINE_FAILURES", stub)
+    caplog.set_level("WARNING")
+    assert not pf.publish_pipeline_failure(stage="OCR")
+    assert stub.labels_called
+    assert stub.labels_called[-1]["stage"] == "OCR"

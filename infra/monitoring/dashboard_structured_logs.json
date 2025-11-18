@@ -1,5 +1,5 @@
 {
-  "displayName": "Structured Summariser Signals",
+  "displayName": "Structured Summariser Signals (${ENV})",
   "gridLayout": {
     "columns": 2,
     "widgets": [
@@ -7,28 +7,36 @@
         "title": "Summariser Success Rate",
         "logsPanel": {
           "filter": "resource.type=\"cloud_run_revision\" AND resource.labels.service_name=\"mcc-ocr-summary\" AND jsonPayload.message=\"supervisor_passed\"",
-          "resourceNames": ["projects/demo-gcp-project"]
+          "resourceNames": [
+            "projects/demo-gcp-project"
+          ]
         }
       },
       {
         "title": "Short Summary Count",
         "logsPanel": {
           "filter": "resource.type=\"cloud_run_revision\" AND resource.labels.service_name=\"mcc-ocr-summary\" AND jsonPayload.message=\"summary_too_short\"",
-          "resourceNames": ["projects/demo-gcp-project"]
+          "resourceNames": [
+            "projects/demo-gcp-project"
+          ]
         }
       },
       {
         "title": "Avg Chunk Length",
         "logsPanel": {
           "filter": "resource.type=\"cloud_run_revision\" AND resource.labels.service_name=\"mcc-ocr-summary\" AND jsonPayload.fields.avg_chunk_chars=*",
-          "resourceNames": ["projects/demo-gcp-project"]
+          "resourceNames": [
+            "projects/demo-gcp-project"
+          ]
         }
       },
       {
         "title": "DocAI Latency",
         "logsPanel": {
           "filter": "resource.type=\"cloud_run_revision\" AND resource.labels.service_name=\"mcc-ocr-summary\" AND jsonPayload.fields.docai_call_success.duration=*",
-          "resourceNames": ["projects/demo-gcp-project"]
+          "resourceNames": [
+            "projects/demo-gcp-project"
+          ]
         }
       }
     ]

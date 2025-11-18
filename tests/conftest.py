@@ -30,19 +30,20 @@ class _NoisyBackend(ChunkSummaryBackend):
 def noisy_summary() -> Dict[str, str]:
     backend = _NoisyBackend(
         payload={
-            "overview": (
-                "Patient evaluated after lumbar procedure. Document processed in 2 chunk(s). "
-                "FEMALE PATIENTS PREGNANCY warning and privacy notice paragraphs were included."
-            ),
-            "key_points": [
-                "Patient ambulating with minimal discomfort.",
-                "PLEASE FILL YOUR PRESCRIPTIONS at hospital pharmacy.",
+            "provider_seen": [
+                "Dr. Mark Lee, MD at Greater Plains Orthopedic billing department.",
+                "Document processed in 2 chunk(s) per facility log.",
             ],
-            "clinical_details": [
+            "reason_for_visit": [
+                "Patient evaluated after lumbar procedure. Document processed in 2 chunk(s).",
+                "FEMALE PATIENTS PREGNANCY warning and privacy notice paragraphs were included.",
+                "Patient ambulating with minimal discomfort. PLEASE FILL YOUR PRESCRIPTIONS at hospital pharmacy.",
+            ],
+            "clinical_findings": [
                 "Impression: MRI lumbar spine shows post-surgical changes without infection.",
                 "Call the office immediately if pain escalates; patient education materials attached.",
             ],
-            "care_plan": [
+            "treatment_plan": [
                 "Follow-up with primary care provider in two weeks for wound check.",
                 "I understand that the following care instructions apply to Greater Plains Orthopedic.",
             ],
@@ -50,7 +51,7 @@ def noisy_summary() -> Dict[str, str]:
                 "M54.5 Low back pain",
                 "Document processed in 2 chunk(s)",
             ],
-            "providers": [
+            "healthcare_providers": [
                 "Dr. Mark Lee, MD",
                 "Greater Plains Orthopedic billing department",
             ],
@@ -58,7 +59,7 @@ def noisy_summary() -> Dict[str, str]:
                 "Lisinopril 10 mg daily",
                 "Pharmacy ONLY: call for refills",
             ],
-            "schema_version": "2025-10-01",
+            "schema_version": "2025-11-16",
         }
     )
     summariser = RefactoredSummariser(

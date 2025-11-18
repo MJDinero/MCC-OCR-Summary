@@ -5,11 +5,11 @@ with the MCC Training Bible. It extracts the following narrative sections:
     - Provider Seen
     - Reason for Visit
     - Clinical Findings
-    - Treatment / Follow-Up Plan
+    - Treatment / Follow-up Plan
 
 And aggregates three index style lists:
     - Diagnoses (ICD-10 where present)
-    - Providers
+    - Healthcare Providers
     - Medications / Prescriptions
 
 Returned structure remains backwards-compatible with the PDF writer which
@@ -636,36 +636,37 @@ class Summariser:
                     ordered.append(v_norm)
             return "\n".join(ordered) if ordered else "N/A"
 
-        def _merge_list_field(key: str) -> List[str]:
+        def _merge_list_field(*keys: str) -> List[str]:
             items: List[str] = []
-            for c in collected:
-                raw = c.get(key)
-                if not raw:
-                    continue
-                if isinstance(raw, list):
-                    for x in raw:
-                        xs = str(x).strip()
-                        if xs:
-                            items.append(xs)
-                elif isinstance(raw, (set, tuple)):
-                    for x in raw:
-                        xs = str(x).strip()
-                        if xs:
-                            items.append(xs)
-                elif isinstance(raw, dict):
-                    # Append dict values (flatten) – keys not semantically needed here
-                    for dv in raw.values():
-                        dvs = str(dv).strip()
-                        if dvs:
-                            items.append(dvs)
-                elif isinstance(raw, str) and raw.strip():
-                    parts = [p.strip() for p in raw.split(",") if p.strip()]
-                    items.extend(parts if len(parts) > 1 else [raw.strip()])
-                else:
-                    # Fallback: coerce to string
-                    coerced = str(raw).strip()
-                    if coerced:
-                        items.append(coerced)
+            for key in keys:
+                for c in collected:
+                    raw = c.get(key)
+                    if not raw:
+                        continue
+                    if isinstance(raw, list):
+                        for x in raw:
+                            xs = str(x).strip()
+                            if xs:
+                                items.append(xs)
+                    elif isinstance(raw, (set, tuple)):
+                        for x in raw:
+                            xs = str(x).strip()
+                            if xs:
+                                items.append(xs)
+                    elif isinstance(raw, dict):
+                        # Append dict values (flatten) – keys not semantically needed here
+                        for dv in raw.values():
+                            dvs = str(dv).strip()
+                            if dvs:
+                                items.append(dvs)
+                    elif isinstance(raw, str) and raw.strip():
+                        parts = [p.strip() for p in raw.split(",") if p.strip()]
+                        items.extend(parts if len(parts) > 1 else [raw.strip()])
+                    else:
+                        # Fallback: coerce to string
+                        coerced = str(raw).strip()
+                        if coerced:
+                            items.append(coerced)
             seen: set[str] = set()
             deduped: List[str] = []
             for it in items:
@@ -679,7 +680,7 @@ class Summariser:
         clinical_findings = _merge_field("clinical_findings")
         treatment_plan = _merge_field("treatment_plan")
         diagnoses_list = _merge_list_field("diagnoses")
-        providers_list = _merge_list_field("providers")
+        providers_list = _merge_list_field("healthcare_providers", "providers")
         meds_list = _merge_list_field("medications")
 
         # Compose final medical summary narrative (plain text, headers bold style not applied here; PDF layer can style)
@@ -691,7 +692,7 @@ class Summariser:
             _fmt_section("Provider Seen", provider_seen),
             _fmt_section("Reason for Visit", reason_for_visit),
             _fmt_section("Clinical Findings", clinical_findings),
-            _fmt_section("Treatment / Follow-Up Plan", treatment_plan),
+            _fmt_section("Treatment / Follow-up Plan", treatment_plan),
         ]
 
         def _fmt_list(title: str, items: List[str]) -> str:
@@ -701,7 +702,7 @@ class Summariser:
 
         index_sections = [
             _fmt_list("Diagnoses", diagnoses_list),
-            _fmt_list("Providers", providers_list),
+            _fmt_list("Healthcare Providers", providers_list),
             _fmt_list("Medications / Prescriptions", meds_list),
         ]
 

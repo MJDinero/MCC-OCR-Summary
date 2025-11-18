@@ -13,7 +13,7 @@ class ConstantChunkBackend:
                 "I10 Hypertension",
                 "I10 Hypertension",
             ],  # intentional duplicate
-            "providers": ["Dr John Smith", "Dr John Smith"],  # duplicate
+            "healthcare_providers": ["Dr John Smith", "Dr John Smith"],  # duplicate
             "medications": "Lisinopril, Lisinopril",  # duplicate in comma string form
         }
 
@@ -29,9 +29,9 @@ def test_medical_summary_multi_chunk_merge():
         "Provider Seen:",
         "Reason for Visit:",
         "Clinical Findings:",
-        "Treatment / Follow-Up Plan:",
+        "Treatment / Follow-up Plan:",
         "Diagnoses:",
-        "Providers:",
+        "Healthcare Providers:",
         "Medications / Prescriptions:",
     ]:
         assert header in medical

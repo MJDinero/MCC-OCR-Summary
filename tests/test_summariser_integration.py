@@ -19,12 +19,12 @@ class DummyBackend(ChunkSummaryBackend):
     ):
         self.calls += 1
         return {
-            "overview": f"Visit summary chunk {chunk_index + 1} of {total_chunks}",
-            "key_points": [f"Key point {self.calls}"],
-            "clinical_details": [f"Detail {self.calls}"],
-            "care_plan": [f"Plan {self.calls}"],
+            "provider_seen": [f"Team chunk {self.calls}"],
+            "reason_for_visit": [f"Visit summary chunk {chunk_index + 1} of {total_chunks}"],
+            "clinical_findings": [f"Detail {self.calls}"],
+            "treatment_plan": [f"Plan {self.calls}"],
             "diagnoses": [f"D{self.calls}"],
-            "providers": [f"Dr Chunk {self.calls}"],
+            "healthcare_providers": [f"Dr Chunk {self.calls}"],
             "medications": [f"Med {self.calls}"],
         }
 

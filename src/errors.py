@@ -28,10 +28,15 @@ class DriveServiceError(Exception):
     """Raised when Google Drive interactions fail."""
 
 
+class PdfValidationError(Exception):
+    """Raised when PDF guardrails detect forbidden content."""
+
+
 __all__ = [
     "ValidationError",
     "OCRServiceError",
     "SummarizationError",
     "PDFGenerationError",
     "DriveServiceError",
+    "PdfValidationError",
 ]

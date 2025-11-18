@@ -17,7 +17,7 @@ import json
 import re
 import os
 from functools import lru_cache
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 from googleapiclient.discovery import build  # type: ignore
 from googleapiclient.errors import HttpError  # type: ignore
 from googleapiclient.http import MediaIoBaseDownload, MediaIoBaseUpload  # type: ignore
@@ -287,10 +287,11 @@ def upload_pdf(
     cfg = get_config()
     config_folder = (cfg.drive_report_folder_id or "").strip()
     explicit_output = (os.getenv("OUTPUT_FOLDER_ID") or "").strip()
+    pdf_output = (os.getenv("PDF_OUTPUT_FOLDER_ID") or "").strip()
     env_output = (os.getenv("DRIVE_OUTPUT_FOLDER_ID") or "").strip()
     env_report = (os.getenv("DRIVE_REPORT_FOLDER_ID") or "").strip()
     canonical_folder = (
-        config_folder or explicit_output or env_output or env_report
+        config_folder or explicit_output or pdf_output or env_output or env_report
     ).strip()
     if explicit_output:
         _LOG.info(
@@ -413,7 +414,7 @@ def upload_pdf(
     context.setdefault("shard_id", "aggregate")
     context.setdefault(
         "schema_version",
-        cfg.summary_schema_version or os.getenv("SUMMARY_SCHEMA_VERSION", "2025-10-01"),
+        cfg.summary_schema_version or os.getenv("SUMMARY_SCHEMA_VERSION", "2025-11-16"),
     )
     context.setdefault("attempt", 1)
     context.setdefault("component", "drive_client")
@@ -447,4 +448,90 @@ def upload_pdf(
     return created["id"]
 
 
-__all__ = ["download_pdf", "upload_pdf"]
+def list_pending_pdfs(
+    folder_id: str,
+    *,
+    limit: int = 5,
+    status_key: str = "mccStatus",
+    completed_value: str = "completed",
+    processing_value: str = "processing",
+    failed_value: str | None = "failed",
+) -> List[Dict[str, Any]]:
+    """List Drive PDFs within the folder that are not yet marked as completed."""
+    if not folder_id:
+        raise ValueError("folder_id is required for list_pending_pdfs")
+    service = _drive_service()
+    filters = [
+        f"'{folder_id}' in parents",
+        "mimeType = 'application/pdf'",
+        "trashed = false",
+    ]
+    if completed_value:
+        filters.append(
+            f"not appProperties has {{ key='{status_key}' and value='{completed_value}' }}"
+        )
+    if processing_value:
+        filters.append(
+            f"not appProperties has {{ key='{status_key}' and value='{processing_value}' }}"
+        )
+    if failed_value:
+        filters.append(
+            f"not appProperties has {{ key='{status_key}' and value='{failed_value}' }}"
+        )
+    query = " and ".join(filters)
+    request_kwargs: Dict[str, Any] = {
+        "q": query,
+        "orderBy": "createdTime desc",
+        "pageSize": max(1, min(limit, 50)),
+        "fields": "files(id,name,appProperties,createdTime,modifiedTime,driveId,parents)",
+    }
+    try:  # pragma: no cover - network code
+        request = service.files().list(
+            supportsAllDrives=True,
+            includeItemsFromAllDrives=True,
+            **request_kwargs,
+        )
+    except TypeError:
+        request = service.files().list(**request_kwargs)
+    response = request.execute()
+    files = response.get("files", [])
+    _LOG.info(
+        "drive_pending_files",
+        extra={"folder_id": folder_id, "pending": len(files), "query": query},
+    )
+    return files
+
+
+def update_app_properties(file_id: str, properties: Dict[str, str]) -> Dict[str, Any]:
+    """Update Drive file appProperties with explicit logging."""
+    if not file_id:
+        raise ValueError("file_id is required for update_app_properties")
+    if not properties:
+        raise ValueError("properties required for update_app_properties")
+    service = _drive_service()
+    payload = {"appProperties": properties}
+    try:  # pragma: no cover - network code
+        request = service.files().update(
+            fileId=file_id,
+            body=payload,
+            fields="id,appProperties",
+            supportsAllDrives=True,
+        )
+    except TypeError:
+        request = service.files().update(
+            fileId=file_id,
+            body=payload,
+            fields="id,appProperties",
+        )
+    response = request.execute()
+    _LOG.info(
+        "drive_file_properties_updated",
+        extra={
+            "file_id": _mask_drive_id(file_id),
+            "properties": list(properties.keys()),
+        },
+    )
+    return response
+
+
+__all__ = ["download_pdf", "upload_pdf", "list_pending_pdfs", "update_app_properties"]
