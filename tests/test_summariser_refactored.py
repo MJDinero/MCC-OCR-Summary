@@ -98,10 +98,10 @@ def test_refactored_summary_structure_and_length() -> None:
     summary = summariser.summarise(text, doc_metadata={"facility": "MCC Neurology"})
     medical_summary = summary["Medical Summary"]
 
-    assert "Intro Overview:" in medical_summary
-    assert "Key Points:" in medical_summary
-    assert "Detailed Findings:" in medical_summary
-    assert "Care Plan & Follow-Up:" in medical_summary
+    assert "Provider Seen:" in medical_summary
+    assert "Reason for Visit:" in medical_summary
+    assert "Clinical Findings:" in medical_summary
+    assert "Treatment / Follow-up Plan:" in medical_summary
     assert len(medical_summary) >= summariser.min_summary_chars
 
     diagnoses_lines = summary["_diagnoses_list"].splitlines()

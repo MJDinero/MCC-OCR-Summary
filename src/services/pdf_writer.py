@@ -219,22 +219,22 @@ class PDFWriter:
             ]
             any_lists = any([diag_list, prov_list, med_list])
             if any_lists:
+                sections_seq.append(("Structured Indices", "=" * 48))
+
+                def _fmt_block(items: list[str]) -> str:
+                    if not items:
+                        return "N/A"
+                    return "\n".join(f"• {i}" for i in items)
+
+                sections_seq.append(("Diagnoses", _fmt_block(diag_list)))
+                sections_seq.append(
+                    ("Healthcare Providers", _fmt_block(prov_list))
+                )
                 sections_seq.append(
                     (
-                        "Summary Lists",
-                        "Diagnoses, providers, and medications referenced in the document are enumerated below.",
+                        "Medications / Prescriptions",
+                        _fmt_block(med_list),
                     )
-                )
-
-                def _fmt_block(title: str, items: list[str]) -> str:
-                    if not items:
-                        return f"{title}:\nN/A"
-                    return f"{title}:\n" + "\n".join(f"• {i}" for i in items)
-
-                sections_seq.append(("Diagnoses", _fmt_block("Diagnoses", diag_list)))
-                sections_seq.append(("Providers", _fmt_block("Providers", prov_list)))
-                sections_seq.append(
-                    ("Medications", _fmt_block("Medications / Prescriptions", med_list))
                 )
         _LOG.info(
             "pdf_writer_started",
@@ -244,7 +244,14 @@ class PDFWriter:
                     sum(
                         1
                         for heading, _ in sections_seq
-                        if heading in {"Diagnoses", "Providers", "Medications"}
+                        if heading
+                        in {
+                            "Diagnoses",
+                            "Providers",
+                            "Healthcare Providers",
+                            "Medications",
+                            "Medications / Prescriptions",
+                        }
                     )
                 ),
             },

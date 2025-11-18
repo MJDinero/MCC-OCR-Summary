@@ -3,11 +3,11 @@ from types import SimpleNamespace
 
 import pytest
 
-pytestmark = pytest.mark.integration
-
-from src.services.docai_helper import OCRService
-from src.services.docai_batch_helper import _BatchClients
 from src.config import AppConfig
+from src.services.docai_batch_helper import _BatchClients
+from src.services.docai_helper import OCRService
+
+pytestmark = pytest.mark.integration
 
 # Build a large PDF bytes fixture: Minimalistic structure with many /Type /Page markers
 # Not a valid multi-page PDF for rendering, but passes heuristic page counting.

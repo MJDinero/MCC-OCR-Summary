@@ -1,0 +1,174 @@
+%PDF-1.4
+1 0 obj<< /Type /Catalog /Pages 2 0 R >>endobj
+2 0 obj<< /Type /Pages /Kids [3 0 R] /Count 1 >>endobj
+3 0 obj<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources<< /Font<< /F1 5 0 R >> >> >>endobj
+4 0 obj<< /Length 6474 >>stream
+BT
+/F1 12 Tf
+1 0 0 1 72 720 Tm
+14 TL
+(Document Summary) Tj
+T*
+(Patient Information) Tj
+T*
+(John D. Carter - 54M) Tj
+T*
+(Medical Summary) Tj
+T*
+(Provider Seen: Provider Dr Amelia Stone discussed risk factor modification and the importance of) Tj
+T*
+(medication adherence Facility: Metro Care Clinic Document processed in 1 chunk\(s\). Reason for Visit:) Tj
+T*
+(- The provided medical record segments were analysed to extract clinically relevant information. -) Tj
+T*
+(John D Carter, a 54-year-old male with a history of hypertension and type 2 diabetes, presented for) Tj
+T*
+(a comprehensive follow-up visit. - Physical examination revealed mild bilateral ankle edema without) Tj
+T*
+(calf tenderness, clear lung fields, and a grade II/VI systolic murmur at the left sternal border. -) Tj
+T*
+(Laboratory review showed HbA1c of 7.8 percent, LDL cholesterol of 132 mg per dL, and serum) Tj
+T*
+(creatinine of 1.1 mg per dL with estimated GFR of 72 mL per min. Clinical Findings: - He reported) Tj
+T*
+(intermittent chest pressure during brisk walking that resolves with rest, along with persistent) Tj
+T*
+(fatigue over the past month - Physical examination revealed mild bilateral ankle edema without calf) Tj
+T*
+(tenderness, clear lung fields, and a grade II/VI systolic murmur at the left sternal border -) Tj
+T*
+(Follow-up was scheduled for six weeks to review stress test results and reassess blood pressure) Tj
+T*
+(control Treatment / Follow-up Plan: - John D Carter, a 54-year-old male with a history of) Tj
+T*
+(hypertension and type 2 diabetes, presented for a comprehensive follow-up visit - She ordered an) Tj
+T*
+(exercise stress test and updated the care plan to include starting Atorvastatin 20 mg nightly while) Tj
+T*
+(continuing aspirin 81 mg - The patient received counseling on the DASH diet, daily walking with) Tj
+T*
+(gradual progression to 150 minutes per week, and weight monitoring - Follow-up was scheduled for six) Tj
+T*
+(weeks to review stress test results and reassess blood pressure control - The visit concluded with) Tj
+T*
+(documentation of patient understanding and agreement with the plan Diagnoses: - John D Carter, a) Tj
+T*
+(54-year-old male with a history of hypertension and type 2 diabetes, presented for a comprehensive) Tj
+T*
+(follow-up visit Healthcare Providers: - Dr Stone administered an in-office electrocardiogram that) Tj
+T*
+(demonstrated normal sinus rhythm with no acute ischemic changes - Dr. Amelia Stone - Dr. Stone) Tj
+T*
+(Medications / Prescriptions: - Laboratory review showed HbA1c of 7.8 percent, LDL cholesterol of 132) Tj
+T*
+(mg per dL, and serum creatinine of 1.1 mg per dL with estimated GFR of 72 mL per min - Provider Dr) Tj
+T*
+(Amelia Stone discussed risk factor modification and the importance of medication adherence - The) Tj
+T*
+(patient admitted to occasionally missing evening doses of Lisinopril 20 mg and Metformin 1000 mg due) Tj
+T*
+(to fatigue - Dr Stone administered an in-office electrocardiogram that demonstrated normal sinus) Tj
+T*
+(rhythm with no acute ischemic changes - She ordered an exercise stress test and updated the care) Tj
+T*
+(plan to include starting Atorvastatin 20 mg nightly while continuing aspirin 81 mg - The patient) Tj
+T*
+(received counseling on the DASH diet, daily walking with gradual progression to 150 minutes per) Tj
+T*
+(week, and weight monitoring - Lisinopril 20 mg - Metformin 1000 mg - Atorvastatin 20 mg) Tj
+T*
+(Billing Highlights) Tj
+T*
+(CPT 99214, ICD-10 I10, E11.9) Tj
+T*
+(Legal / Notes) Tj
+T*
+(Generated from anonymised training corpus for testing.) Tj
+T*
+(_diagnoses_list) Tj
+T*
+(John D Carter, a 54-year-old male with a history of hypertension and type 2 diabetes, presented for) Tj
+T*
+(a comprehensive follow-up visit) Tj
+T*
+(_medications_list) Tj
+T*
+(Laboratory review showed HbA1c of 7.8 percent, LDL cholesterol of 132 mg per dL, and serum) Tj
+T*
+(creatinine of 1.1 mg per dL with estimated GFR of 72 mL per min Provider Dr Amelia Stone discussed) Tj
+T*
+(risk factor modification and the importance of medication adherence The patient admitted to) Tj
+T*
+(occasionally missing evening doses of Lisinopril 20 mg and Metformin 1000 mg due to fatigue Dr Stone) Tj
+T*
+(administered an in-office electrocardiogram that demonstrated normal sinus rhythm with no acute) Tj
+T*
+(ischemic changes She ordered an exercise stress test and updated the care plan to include starting) Tj
+T*
+(Atorvastatin 20 mg nightly while continuing aspirin 81 mg The patient received counseling on the) Tj
+T*
+(DASH diet, daily walking with gradual progression to 150 minutes per week, and weight monitoring) Tj
+T*
+(Lisinopril 20 mg Metformin 1000 mg Atorvastatin 20 mg) Tj
+T*
+(_providers_list) Tj
+T*
+(Provider Dr Amelia Stone discussed risk factor modification and the importance of medication) Tj
+T*
+(adherence Dr Stone administered an in-office electrocardiogram that demonstrated normal sinus rhythm) Tj
+T*
+(with no acute ischemic changes Dr. Amelia Stone Dr. Stone) Tj
+T*
+(Structured Indices) Tj
+T*
+(================================================) Tj
+T*
+(Diagnoses) Tj
+T*
+(• John D Carter, a 54-year-old male with a history of hypertension and type 2 diabetes, presented) Tj
+T*
+(for a comprehensive follow-up visit) Tj
+T*
+(Healthcare Providers) Tj
+T*
+(• Provider Dr Amelia Stone discussed risk factor modification and the importance of medication) Tj
+T*
+(adherence • Dr Stone administered an in-office electrocardiogram that demonstrated normal sinus) Tj
+T*
+(rhythm with no acute ischemic changes • Dr. Amelia Stone • Dr. Stone) Tj
+T*
+(Medications / Prescriptions) Tj
+T*
+(• Laboratory review showed HbA1c of 7.8 percent, LDL cholesterol of 132 mg per dL, and serum) Tj
+T*
+(creatinine of 1.1 mg per dL with estimated GFR of 72 mL per min • Provider Dr Amelia Stone discussed) Tj
+T*
+(risk factor modification and the importance of medication adherence • The patient admitted to) Tj
+T*
+(occasionally missing evening doses of Lisinopril 20 mg and Metformin 1000 mg due to fatigue • Dr) Tj
+T*
+(Stone administered an in-office electrocardiogram that demonstrated normal sinus rhythm with no) Tj
+T*
+(acute ischemic changes • She ordered an exercise stress test and updated the care plan to include) Tj
+T*
+(starting Atorvastatin 20 mg nightly while continuing aspirin 81 mg • The patient received counseling) Tj
+T*
+(on the DASH diet, daily walking with gradual progression to 150 minutes per week, and weight) Tj
+T*
+(monitoring • Lisinopril 20 mg • Metformin 1000 mg • Atorvastatin 20 mg) Tj
+T*
+ET
+endstream endobj
+5 0 obj<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>endobj
+xref
+0 6
+0000000000 65535 f 
+0000000009 00000 n 
+0000000056 00000 n 
+0000000111 00000 n 
+0000000233 00000 n 
+0000006757 00000 n 
+trailer<< /Size 6 /Root 1 0 R >>
+startxref
+6825
+%%EOF

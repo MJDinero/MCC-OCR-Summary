@@ -180,15 +180,18 @@ def _extract_document_dict(result: Any) -> Dict[str, Any]:
 
 
 def _normalise(doc: Dict[str, Any]) -> Dict[str, Any]:
-    pages_out = []
+    pages_out: list[dict[str, Any]] = []
+    page_texts: list[str] = []
     pages = doc.get("pages") or []
     for idx, p in enumerate(pages, start=1):
         text = p.get("layout", {}).get("text", "") if isinstance(p, dict) else ""
         if not text:
             # Some simplified fixtures may already provide 'text'
             text = p.get("text", "") if isinstance(p, dict) else ""
-        pages_out.append({"page_number": idx, "text": _strip_noise(text)})
-    full_text_source = doc.get("text") or " ".join(pg["text"] for pg in pages_out)
+        cleaned_text = _strip_noise(text)
+        pages_out.append({"page_number": idx, "text": cleaned_text})
+        page_texts.append(cleaned_text)
+    full_text_source = doc.get("text") or " ".join(page_texts)
     full_text = _strip_noise(full_text_source)
     return {"text": full_text, "pages": pages_out}
 
