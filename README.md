@@ -65,6 +65,9 @@ make test            # pytest with coverage >=90%
 
 # Execute targeted tests
 python3 -m pytest tests/test_summarization_service_pipeline.py -q
+
+# Validate rendered PDFs using the MCC heading guardrail
+python3 scripts/validate_summary.py --pdf-path tests/fixtures/validator_sample.pdf --expected-pages 1
 ```
 
 Environment variables can be set via `.env` (see `.env.template`). Core configuration lives in `src/config.py`; overrides can come from env or YAML.
@@ -83,6 +86,7 @@ Environment variables can be set via `.env` (see `.env.template`). Core configur
      REGION=$REGION \
      SERVICE=mcc-ocr-summary
    ```
+   The Makefile deploy target enforces `--no-allow-unauthenticated`, so ensure IAM-based callers (service accounts or internal IAP identities) are granted `roles/run.invoker` before triggering a deployment.
 3. Terraform or scripts in `infra/` provision Pub/Sub topics, subscriptions, and service accounts with least-privilege IAM.
 
 ---

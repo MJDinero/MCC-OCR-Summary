@@ -186,3 +186,9 @@
 - coverage: 97.18%
 - validator: {"ok":true,"sections_ok":true,"noise_found":false,"length":4637}
 
+## Task H – Validator Guardrail & Deploy Hardening
+- **Date:** 2025-11-18T20:12:06Z
+- **Files:** Makefile, README.md, scripts/validate_summary.py, tests/fixtures/validator_sample.pdf, tests/test_validate_summary_script.py, docs/audit/HARDENING_LOG.md
+- **Rationale:** Removed the lingering `--allow-unauthenticated` flag from the Makefile deploy target so Cloud Run revisions remain private-by-default, and shipped a reusable `scripts/validate_summary.py` CLI plus fixture + tests to assert MCC’s seven headings are present in rendered PDFs.
+- **Commands:** `python3 -m pytest --cov=src -q`; `python3 -m ruff check src tests`; `python3 -m mypy --strict src`; `python3 scripts/validate_summary.py --pdf-path tests/fixtures/validator_sample.pdf --expected-pages 1`
+- **Status:** PASS – all validation gates succeeded; validator CLI now runs during releases to block regressions in Drive/Poller/Validator flow integrity while `make deploy` enforces IAM-only invocation.

@@ -84,7 +84,7 @@ deploy:
 		--timeout $(TIMEOUT) \
 		--min-instances $(MIN_INSTANCES) \
 		--max-instances $(MAX_INSTANCES) \
-		--allow-unauthenticated \
+		--no-allow-unauthenticated \
 		--update-env-vars $(DEPLOY_ENV_VARS)
 
 smoke:

@@ -1,0 +1,60 @@
+%PDF-1.4
+%‚„œ”
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [3 0 R] /Count 1 >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>
+endobj
+4 0 obj
+<< /Length 694 >>
+stream
+BT
+/F1 12 Tf
+1 0 0 1 72 720 Tm
+14 TL
+(MCC Validator Sample) Tj
+T*
+(Patient Information: John Doe, DOB 1970-04-16) Tj
+T*
+(Provider Seen: Dr. Elena Ruiz) Tj
+T*
+(Reason for Visit: Hypertension management) Tj
+T*
+(Clinical Findings: Blood pressure improving with medication.) Tj
+T*
+(Treatment / Follow-up Plan: Continue Lisinopril, recheck in 6 weeks.) Tj
+T*
+(Diagnoses: I10 - Essential (primary) hypertension) Tj
+T*
+(Healthcare Providers: Primary care team at MCC Clinic) Tj
+T*
+(Medications / Prescriptions: Lisinopril 10mg daily) Tj
+T*
+(Billing and Insurance: MCC self-funded plan verified) Tj
+T*
+(Legal / Notes: Consent and HIPAA release signed in 2024) Tj
+T*
+(Summary Prepared: 2025-10-25) Tj
+ET
+endstream
+endobj
+5 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>
+endobj
+xref
+0 6
+0000000000 65535 f 
+0000000015 00000 n 
+0000000064 00000 n 
+0000000121 00000 n 
+0000000247 00000 n 
+0000000992 00000 n 
+trailer
+<< /Size 6 /Root 1 0 R >>
+startxref
+1062
+%%EOF
