@@ -37,6 +37,10 @@ from src.services.pipeline import (
 )
 from src.services.docai_helper import clean_ocr_output
 from src.services.supervisor import CommonSenseSupervisor
+from src.services.summarization import (
+    formatter as summary_formatter,
+    text_utils as summary_text_utils,
+)
 from src.utils.secrets import SecretResolutionError, resolve_secret_env
 
 _LOG = logging.getLogger("summariser.refactored")
@@ -412,6 +416,7 @@ _LEGAL_NOISE_PHRASES: tuple[str, ...] = (
     "i understand that the following care",
     "i understand that the following procedure",
     "i understand that the following treatment",
+    "i understand that",
     "i understand that i",
     "this authorization is valid",
     "i hereby",
@@ -451,6 +456,10 @@ _LEGAL_NOISE_PHRASES: tuple[str, ...] = (
     "department status",
     "follow-up evaluation date",
     "worker's comp",
+    "to treat my condition which is",
+    "to treat my condition",
+    "i consent to",
+    "diabetes medicines or blood thinners",
 )
 
 _NON_ALNUM_RE = re.compile(r"[^a-z0-9]+")
@@ -476,6 +485,12 @@ _FINAL_NOISE_FRAGMENTS: tuple[str, ...] = (
     "order status",
     "department status",
     "follow-up evaluation date",
+)
+_REASON_ONLY_LINE_RE = re.compile(
+    r"(?i)^\s*reason(?:s)?\s*for\s*visit\s*[:\-]?\s*$"
+)
+_CONSENT_LINE_RE = re.compile(
+    r"(?i)^\s*(?:i\s+(?:understand|authorize|consent)|to\s+treat\s+my\s+condition)\b"
 )
 
 
@@ -514,6 +529,10 @@ def _strip_noise_lines(text: str) -> str:
             continue
         if _contains_noise_phrase(line):
             continue
+        if _REASON_ONLY_LINE_RE.match(line) and line.isupper():
+            continue
+        if _CONSENT_LINE_RE.match(line):
+            continue
         if any(fragment in low for fragment in _FINAL_NOISE_FRAGMENTS):
             continue
         if "call" in low and "immediately" in low:
@@ -523,6 +542,8 @@ def _strip_noise_lines(text: str) -> str:
         if low.count(",") >= 4 and ("risk" in low or "hazard" in low):
             continue
         if len(low) and sum(ch.isalpha() for ch in line) < 4:
+            continue
+        if summary_text_utils.looks_like_vitals_table(line):
             continue
         cleaned.append(raw_line)
     # Remove trailing blank lines
@@ -689,8 +710,62 @@ class RefactoredSummariser:
             )
             self._merge_payload(aggregated, payload)
 
-        summary_text = self._compose_summary(
-            aggregated, chunk_count=len(chunked), doc_metadata=doc_metadata
+        additional_diagnoses = summary_text_utils.extract_additional_diagnoses(
+            normalised_source
+        )
+        if additional_diagnoses:
+            aggregated["diagnoses"].extend(additional_diagnoses)
+
+        provider_hint, signature_providers = summary_text_utils.extract_signature_providers(
+            normalised_source
+        )
+        if signature_providers:
+            aggregated["providers"].extend(signature_providers)
+        vitals_summary = summary_text_utils.summarize_vitals(normalised_source)
+        extra_context = {
+            "primary_provider_hint": provider_hint,
+            "vitals_summary": vitals_summary,
+        }
+
+        overview_lines = self._dedupe_ordered(
+            aggregated["overview"],
+            limit=self.max_overview_lines,
+            require_tokens=("patient",),
+        )
+        key_points = self._dedupe_ordered(
+            aggregated["key_points"],
+            limit=self.max_key_points,
+            keywords=self._KEY_POINT_TOKENS,
+        )
+        clinical_details = self._dedupe_ordered(
+            aggregated["clinical_details"],
+            limit=self.max_clinical_details,
+            keywords=self._DETAIL_TOKENS,
+            require_tokens=(
+                "exam",
+                "imaging",
+                "vital",
+                "mri",
+                "ct",
+                "scan",
+                "blood",
+                "pressure",
+                "range",
+                "finding",
+            ),
+        )
+        care_plan = self._dedupe_ordered(
+            aggregated["care_plan"],
+            limit=self.max_care_plan,
+            keywords=self._PLAN_TOKENS,
+            require_tokens=(
+                "follow",
+                "return",
+                "schedule",
+                "therapy",
+                "plan",
+                "monitor",
+            ),
         )
         diagnoses = self._dedupe_ordered(
             aggregated["diagnoses"], limit=self.max_diagnoses
@@ -702,6 +777,23 @@ class RefactoredSummariser:
             aggregated["medications"],
             limit=self.max_medications,
             allow_numeric=True,
+        )
+
+        sections_payload = {
+            "overview": overview_lines,
+            "key_points": key_points,
+            "clinical_details": clinical_details,
+            "care_plan": care_plan,
+            "diagnoses": diagnoses,
+            "providers": providers,
+            "medications": medications,
+        }
+
+        summary_text = self._compose_summary(
+            sections_payload,
+            chunk_count=len(chunked),
+            doc_metadata=doc_metadata,
+            context=extra_context,
         )
 
         summary_text = _sanitise_keywords(summary_text)
@@ -716,7 +808,7 @@ class RefactoredSummariser:
 
         min_chars = getattr(self, "min_summary_chars", 500)
         if len(summary_text) < min_chars or not re.search(
-            r"\b(Intro Overview|Key Points)\b", summary_text, re.IGNORECASE
+            r"\bProvider Seen\b", summary_text, re.IGNORECASE
         ):
             raise SummarizationError("Summary too short or missing structure")
 
@@ -1009,136 +1101,75 @@ class RefactoredSummariser:
 
     def _compose_summary(
         self,
-        aggregated: Dict[str, List[str]],
+        sections: Dict[str, List[str]],
         *,
         chunk_count: int,
         doc_metadata: Optional[Dict[str, Any]] = None,
+        context: Optional[Dict[str, Any]] = None,
     ) -> str:
-        overview_lines = self._dedupe_ordered(
-            aggregated["overview"],
-            limit=self.max_overview_lines,
-            require_tokens=(
-                "patient",
-            ),
-        ) or [
+        context = context or {}
+        overview_lines = sections.get("overview") or [
             "The provided medical record segments were analysed to extract clinically relevant information."
         ]
-        key_points = self._dedupe_ordered(
-            aggregated["key_points"],
-            limit=self.max_key_points,
-            keywords=self._KEY_POINT_TOKENS,
-            require_tokens=(
-                "patient",
-            ),
+        key_points = sections.get("key_points") or []
+        reason_lines = summary_text_utils.select_reason_statements(
+            overview_lines, key_points, limit=self.max_key_points
         )
-        clinical_details = self._dedupe_ordered(
-            aggregated["clinical_details"],
+        if not reason_lines:
+            reason_lines = overview_lines[: self.max_key_points]
+        clinical_details = sections.get("clinical_details") or []
+        vitals_summary = context.get("vitals_summary")
+        clinical_findings = summary_text_utils.prepare_clinical_findings(
+            clinical_details,
             limit=self.max_clinical_details,
-            keywords=self._DETAIL_TOKENS,
-            require_tokens=(
-                "exam",
-                "imaging",
-                "vital",
-                "mri",
-                "ct",
-                "scan",
-                "blood",
-                "pressure",
-                "range",
-                "finding",
-            ),
+            vitals_summary=vitals_summary,
         )
-        care_plan = self._dedupe_ordered(
-            aggregated["care_plan"],
-            limit=self.max_care_plan,
-            keywords=self._PLAN_TOKENS,
-            require_tokens=(
-                "follow",
-                "return",
-                "schedule",
-                "therapy",
-                "plan",
-                "monitor",
-            ),
+        if not clinical_findings:
+            clinical_findings = overview_lines[: self.max_clinical_details]
+        plan_lines = summary_text_utils.select_plan_statements(
+            sections.get("care_plan") or [], limit=self.max_care_plan
         )
-        diagnoses = self._dedupe_ordered(
-            aggregated["diagnoses"], limit=self.max_diagnoses
-        )
-        providers = self._dedupe_ordered(
-            aggregated["providers"], limit=self.max_providers
-        )
-        medications = self._dedupe_ordered(
-            aggregated["medications"],
-            limit=self.max_medications,
-            allow_numeric=True,
-        )
-
+        diagnoses = sections.get("diagnoses") or []
+        providers = sections.get("providers") or []
+        medications = sections.get("medications") or []
         facility = (doc_metadata or {}).get("facility") if doc_metadata else None
-        intro_context = (
-            f"Source: {facility}. " if facility else ""
-        ) + f"Document processed in {chunk_count} chunk(s)."
 
-        intro_section = "Intro Overview:\n" + "\n".join(
-            [intro_context] + overview_lines
-        )
-        key_points_section = "Key Points:\n" + (
-            "\n".join(f"- {line}" for line in key_points)
-            if key_points
-            else "- No explicit key points were extracted."
-        )
-        details_payload = clinical_details or overview_lines
-        details_section = "Detailed Findings:\n" + "\n".join(
-            f"- {line}" for line in details_payload
-        )
-        care_section = "Care Plan & Follow-Up:\n" + (
-            "\n".join(f"- {line}" for line in care_plan)
-            if care_plan
-            else "- No active plan documented in the extracted text."
-        )
-        diagnoses_section = "Diagnoses:\n" + (
-            "\n".join(f"- {line}" for line in diagnoses)
-            if diagnoses
-            else "- Not explicitly documented."
-        )
-        providers_section = "Providers:\n" + (
-            "\n".join(f"- {line}" for line in providers)
-            if providers
-            else "- Not listed."
-        )
-        medications_section = "Medications / Prescriptions:\n" + (
-            "\n".join(f"- {line}" for line in medications)
-            if medications
-            else "- No medications recorded in extracted text."
-        )
+        provider_seen = context.get("primary_provider_hint")
+        provider_roster = providers
+        if provider_seen:
+            provider_roster = [
+                entry for entry in providers if entry.lower() != provider_seen.lower()
+            ]
+        elif providers:
+            provider_seen = providers[0]
+            provider_roster = providers[1:]
+        else:
+            provider_roster = []
 
-        sections = [
-            intro_section,
-            key_points_section,
-            details_section,
-            care_section,
-            diagnoses_section,
-            providers_section,
-            medications_section,
-        ]
-        summary_text = "\n\n".join(
-            section.strip() for section in sections if section.strip()
+        summary_text = summary_formatter.build_mcc_bible_summary(
+            chunk_count=chunk_count,
+            facility=facility,
+            provider_seen=provider_seen,
+            reason_lines=reason_lines,
+            clinical_findings=clinical_findings,
+            care_plan=plan_lines,
+            diagnoses=diagnoses,
+            healthcare_providers=provider_roster,
+            medications=medications,
         )
         summary_text = _strip_noise_lines(summary_text)
         if len(summary_text) < self.min_summary_chars:
-            # Append additional detail to satisfy supervisor minimums while maintaining factuality.
-            supplemental_lines = (
-                [
-                    line
-                    for line in (
-                        clinical_details + care_plan + key_points + overview_lines
-                    )
-                    if line
-                    and not _contains_noise_phrase(line)
-                    and not any(
-                        fragment in line.lower() for fragment in _FINAL_NOISE_FRAGMENTS
-                    )
-                ]
-            )
+            supplemental_lines = [
+                line
+                for line in (
+                    clinical_findings + plan_lines + reason_lines + overview_lines
+                )
+                if line
+                and not _contains_noise_phrase(line)
+                and not any(
+                    fragment in line.lower() for fragment in _FINAL_NOISE_FRAGMENTS
+                )
+            ]
             if supplemental_lines:
                 needed = max(0, self.min_summary_chars - len(summary_text))
                 filler_fragment = " ".join(supplemental_lines).strip()

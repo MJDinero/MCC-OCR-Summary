@@ -341,7 +341,7 @@ async def ingest(request: Request):
             "trace_context": trace_header,
         }
         if hasattr(dispatcher, "launch"):
-            launch_result = dispatcher.launch(**launch_kwargs)
+            launch_result = dispatcher.launch(**launch_kwargs)  # type: ignore[arg-type]
         elif callable(dispatcher):
             launch_result = dispatcher(**launch_kwargs)
         else:

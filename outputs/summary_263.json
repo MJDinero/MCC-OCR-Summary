@@ -1,0 +1,99 @@
+{
+  "Patient Information": "Redacted - 263p billing packet",
+  "Medical Summary": "Provider Seen:\nFacility: Unknown facility.\nPrimary provider: There is no osteochondral lesion of the talar dome\nSupporting team: No osteochondral defect of the talar\nPrimary provider: No osteochondral defect of the talar dome\n\nReason for Visit:\n- Findings at each level as follows : Phone: (214) 341-8770 Patient ID: PDI1641610000 Exam Date: 24-May-2024 9:46 AM Patient Name: Williams, Anthony Accession #: 5406625 DOB: 16-Oct-1978 Referred By: James Leonard Slayton Jr Modality: MR Location: BBM_1034 MRI Cervical Spine WO Con\n- on #: 5406623 DOB: 16-Oct-1978 Referred By: James Leonard Slayton Jr Modality: MR,SC Location: BBM_1034 MRI Lumbar Spine WO Contrast DFW Thank you for the opportunity to assist in your patient's care\n\nClinical Findings:\n- FINDINGS: VERTEBRAE/ALIGNMENT: Alignment of the cervical spine is within normal limits\n- Board Certified by the ABR Musculoskeletal Radiologist Electronically Signed by: Michael Davis, MD, , on 24-May-2024 3:34 PM Phone: (214) 341-8770 Patient ID: PDI1641610000 Exam Date: 24-May-2024 10:07 AM Patient Name: Williams, Anthony Accession #: 5406623 DOB: 16-Oct-1978 Refer\n- TECHNIQUE: Multiplanar, multisequence MR imaging of the right ankle was performed without prior administration of IV or intra-articular contrast\n- COMPARISONS: not noted FINDINGS: BONE/JOINT: No fracture or marrow contusion\n- 2 No findings for tendon or ligament injury\n\nTreatment / Follow-up Plan:\n- TECHNIQUE: Multiplanar, multi-sequence MRI images of the cervical spine were obtained\n- Findings at each level as follows : Phone: (214) 341-8770 Patient ID: PDI1641610000 Exam Date: 24-May-2024 9:46 AM\n- TECHNIQUE: Multiplanar, multi-sequence noncontrast MRI images of the lumbar spine were obtained\n\nDiagnoses:\n- No compression fracture\n- No evidence of compression fracture\n- No fracture or marrow contusion\n- 2 No findings for tendon or ligament injury\n\nHealthcare Providers:\n- Not listed.\n\nMedications / Prescriptions:\n- No medications recorded in extracted text.",
+  "Billing Highlights": "Not provided",
+  "Legal / Notes": "Not provided",
+  "_diagnoses_list": "No compression fracture\nNo evidence of compression fracture\nNo fracture or marrow contusion\n2 No findings for tendon or ligament injury",
+  "_providers_list": "",
+  "_medications_list": "",
+  "_canonical_sections": {
+    "Provider Seen": [
+      "Facility: Unknown facility.",
+      "Primary provider: There is no osteochondral lesion of the talar dome",
+      "Supporting team: No osteochondral defect of the talar",
+      "Primary provider: No osteochondral defect of the talar dome"
+    ],
+    "Reason for Visit": [
+      "Findings at each level as follows : Phone: (214) 341-8770 Patient ID: PDI1641610000 Exam Date: 24-May-2024 9:46 AM Patient Name: Williams, Anthony Accession #: 5406625 DOB: 16-Oct-1978 Referred By: James Leonard Slayton Jr Modality: MR Location: BBM_1034 MRI Cervical Spine WO Con",
+      "on #: 5406623 DOB: 16-Oct-1978 Referred By: James Leonard Slayton Jr Modality: MR,SC Location: BBM_1034 MRI Lumbar Spine WO Contrast DFW Thank you for the opportunity to assist in your patient's care"
+    ],
+    "Clinical Findings": [
+      "FINDINGS: VERTEBRAE/ALIGNMENT: Alignment of the cervical spine is within normal limits",
+      "Board Certified by the ABR Musculoskeletal Radiologist Electronically Signed by: Michael Davis, MD, , on 24-May-2024 3:34 PM Phone: (214) 341-8770 Patient ID: PDI1641610000 Exam Date: 24-May-2024 10:07 AM Patient Name: Williams, Anthony Accession #: 5406623 DOB: 16-Oct-1978 Refer",
+      "Board Certified by the ABR Musculoskeletal Radiologist Electronically Signed by: Michael Davis, MD, , on 24-May-2024 3:39 PM Phone: (214) 341-8770 Patient ID: PDI1641610000 Exam Date: 24-May-2024 10:40 AM Patient Name: Williams, Anthony Accession #: 5406624 DOB: 16-Oct-1978 Refer",
+      "TECHNIQUE: Multiplanar, multisequence MR imaging of the right ankle was performed without prior administration of IV or intra-articular contrast",
+      "COMPARISONS: None FINDINGS: BONE/JOINT: No fracture or marrow contusion",
+      "2 No findings for tendon or ligament injury"
+    ],
+    "Treatment / Follow-up Plan": [
+      "TECHNIQUE: Multiplanar, multi-sequence MRI images of the cervical spine were obtained",
+      "Findings at each level as follows : Phone: (214) 341-8770 Patient ID: PDI1641610000 Exam Date: 24-May-2024 9:46 AM",
+      "TECHNIQUE: Multiplanar, multi-sequence noncontrast MRI images of the lumbar spine were obtained",
+      "Findings at each disc level as follows : Phone: (214) 341-8770 Patient ID: PDI1641610000 Exam Date: 24-May-2024 10:07 AM Patient Name: Williams, Anthony Accession #: 5406623 DOB: 16-Oct-1978 Referred By: James Leonard Slayton Jr Modality: MR,SC Location: BBM_1034 MRI Lumbar Spine"
+    ]
+  },
+  "_canonical_entities": {
+    "Diagnoses": [
+      "No compression fracture",
+      "No evidence of compression fracture",
+      "No fracture or marrow contusion",
+      "2 No findings for tendon or ligament injury"
+    ],
+    "Healthcare Providers": [],
+    "Medications / Prescriptions": []
+  },
+  "provider_seen": [
+    "Facility: Unknown facility.",
+    "Primary provider: There is no osteochondral lesion of the talar dome",
+    "Supporting team: No osteochondral defect of the talar",
+    "Primary provider: No osteochondral defect of the talar dome"
+  ],
+  "reason_for_visit": [
+    "Findings at each level as follows : Phone: (214) 341-8770 Patient ID: PDI1641610000 Exam Date: 24-May-2024 9:46 AM Patient Name: Williams, Anthony Accession #: 5406625 DOB: 16-Oct-1978 Referred By: James Leonard Slayton Jr Modality: MR Location: BBM_1034 MRI Cervical Spine WO Con",
+    "on #: 5406623 DOB: 16-Oct-1978 Referred By: James Leonard Slayton Jr Modality: MR,SC Location: BBM_1034 MRI Lumbar Spine WO Contrast DFW Thank you for the opportunity to assist in your patient's care"
+  ],
+  "clinical_findings": [
+    "FINDINGS: VERTEBRAE/ALIGNMENT: Alignment of the cervical spine is within normal limits",
+    "Board Certified by the ABR Musculoskeletal Radiologist Electronically Signed by: Michael Davis, MD, , on 24-May-2024 3:34 PM Phone: (214) 341-8770 Patient ID: PDI1641610000 Exam Date: 24-May-2024 10:07 AM Patient Name: Williams, Anthony Accession #: 5406623 DOB: 16-Oct-1978 Refer",
+    "Board Certified by the ABR Musculoskeletal Radiologist Electronically Signed by: Michael Davis, MD, , on 24-May-2024 3:39 PM Phone: (214) 341-8770 Patient ID: PDI1641610000 Exam Date: 24-May-2024 10:40 AM Patient Name: Williams, Anthony Accession #: 5406624 DOB: 16-Oct-1978 Refer",
+    "TECHNIQUE: Multiplanar, multisequence MR imaging of the right ankle was performed without prior administration of IV or intra-articular contrast",
+    "COMPARISONS: None FINDINGS: BONE/JOINT: No fracture or marrow contusion",
+    "2 No findings for tendon or ligament injury"
+  ],
+  "treatment_follow_up_plan": [
+    "TECHNIQUE: Multiplanar, multi-sequence MRI images of the cervical spine were obtained",
+    "Findings at each level as follows : Phone: (214) 341-8770 Patient ID: PDI1641610000 Exam Date: 24-May-2024 9:46 AM",
+    "TECHNIQUE: Multiplanar, multi-sequence noncontrast MRI images of the lumbar spine were obtained",
+    "Findings at each disc level as follows : Phone: (214) 341-8770 Patient ID: PDI1641610000 Exam Date: 24-May-2024 10:07 AM Patient Name: Williams, Anthony Accession #: 5406623 DOB: 16-Oct-1978 Referred By: James Leonard Slayton Jr Modality: MR,SC Location: BBM_1034 MRI Lumbar Spine"
+  ],
+  "treatment_plan": [
+    "TECHNIQUE: Multiplanar, multi-sequence MRI images of the cervical spine were obtained",
+    "Findings at each level as follows : Phone: (214) 341-8770 Patient ID: PDI1641610000 Exam Date: 24-May-2024 9:46 AM",
+    "TECHNIQUE: Multiplanar, multi-sequence noncontrast MRI images of the lumbar spine were obtained",
+    "Findings at each disc level as follows : Phone: (214) 341-8770 Patient ID: PDI1641610000 Exam Date: 24-May-2024 10:07 AM Patient Name: Williams, Anthony Accession #: 5406623 DOB: 16-Oct-1978 Referred By: James Leonard Slayton Jr Modality: MR,SC Location: BBM_1034 MRI Lumbar Spine"
+  ],
+  "intro_overview": [
+    "Facility: Unknown facility.",
+    "Primary provider: There is no osteochondral lesion of the talar dome",
+    "Supporting team: No osteochondral defect of the talar",
+    "Primary provider: No osteochondral defect of the talar dome"
+  ],
+  "key_points": [
+    "Findings at each level as follows : Phone: (214) 341-8770 Patient ID: PDI1641610000 Exam Date: 24-May-2024 9:46 AM Patient Name: Williams, Anthony Accession #: 5406625 DOB: 16-Oct-1978 Referred By: James Leonard Slayton Jr Modality: MR Location: BBM_1034 MRI Cervical Spine WO Con",
+    "on #: 5406623 DOB: 16-Oct-1978 Referred By: James Leonard Slayton Jr Modality: MR,SC Location: BBM_1034 MRI Lumbar Spine WO Contrast DFW Thank you for the opportunity to assist in your patient's care"
+  ],
+  "detailed_findings": [
+    "FINDINGS: VERTEBRAE/ALIGNMENT: Alignment of the cervical spine is within normal limits",
+    "Board Certified by the ABR Musculoskeletal Radiologist Electronically Signed by: Michael Davis, MD, , on 24-May-2024 3:34 PM Phone: (214) 341-8770 Patient ID: PDI1641610000 Exam Date: 24-May-2024 10:07 AM Patient Name: Williams, Anthony Accession #: 5406623 DOB: 16-Oct-1978 Refer",
+    "Board Certified by the ABR Musculoskeletal Radiologist Electronically Signed by: Michael Davis, MD, , on 24-May-2024 3:39 PM Phone: (214) 341-8770 Patient ID: PDI1641610000 Exam Date: 24-May-2024 10:40 AM Patient Name: Williams, Anthony Accession #: 5406624 DOB: 16-Oct-1978 Refer",
+    "TECHNIQUE: Multiplanar, multisequence MR imaging of the right ankle was performed without prior administration of IV or intra-articular contrast",
+    "COMPARISONS: None FINDINGS: BONE/JOINT: No fracture or marrow contusion",
+    "2 No findings for tendon or ligament injury"
+  ],
+  "care_plan": [
+    "TECHNIQUE: Multiplanar, multi-sequence MRI images of the cervical spine were obtained",
+    "Findings at each level as follows : Phone: (214) 341-8770 Patient ID: PDI1641610000 Exam Date: 24-May-2024 9:46 AM",
+    "TECHNIQUE: Multiplanar, multi-sequence noncontrast MRI images of the lumbar spine were obtained",
+    "Findings at each disc level as follows : Phone: (214) 341-8770 Patient ID: PDI1641610000 Exam Date: 24-May-2024 10:07 AM Patient Name: Williams, Anthony Accession #: 5406623 DOB: 16-Oct-1978 Referred By: James Leonard Slayton Jr Modality: MR,SC Location: BBM_1034 MRI Lumbar Spine"
+  ]
+}

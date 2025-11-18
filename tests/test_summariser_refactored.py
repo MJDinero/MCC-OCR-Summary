@@ -98,10 +98,13 @@ def test_refactored_summary_structure_and_length() -> None:
     summary = summariser.summarise(text, doc_metadata={"facility": "MCC Neurology"})
     medical_summary = summary["Medical Summary"]
 
-    assert "Intro Overview:" in medical_summary
-    assert "Key Points:" in medical_summary
-    assert "Detailed Findings:" in medical_summary
-    assert "Care Plan & Follow-Up:" in medical_summary
+    assert "Provider Seen:" in medical_summary
+    assert "Reason for Visit:" in medical_summary
+    assert "Clinical Findings:" in medical_summary
+    assert "Treatment / Follow-up Plan:" in medical_summary
+    assert "Diagnoses:" in medical_summary
+    assert "Healthcare Providers:" in medical_summary
+    assert "Medications / Prescriptions:" in medical_summary
     assert len(medical_summary) >= summariser.min_summary_chars
 
     diagnoses_lines = summary["_diagnoses_list"].splitlines()
@@ -130,6 +133,52 @@ def test_compose_summary_pads_short_outputs() -> None:
     summariser = RefactoredSummariser(backend=backend, min_summary_chars=300)
     result = summariser.summarise("Tdap booster provided.")
     assert len(result["Medical Summary"]) >= 300
+
+
+def test_signature_block_sets_provider_seen() -> None:
+    backend = StubBackend(
+        responses={
+            1: {
+                "overview": "Patient evaluated for follow-up visit.",
+                "key_points": ["Blood pressure stable; medication tolerance confirmed."],
+                "clinical_details": ["Neurological exam intact; no new deficits."],
+                "care_plan": ["Continue current medications and monitor symptoms."],
+                "providers": ["Clinic Team Physician"],
+            }
+        }
+    )
+    text = (
+        "Patient seen for follow-up visit to reassess back pain symptoms. "
+        "Respectfully,\nJohn Q. Clinician, M.D."
+    )
+    summariser = RefactoredSummariser(backend=backend, min_summary_chars=200)
+    summary = summariser.summarise(text)
+    assert "Dr. John Q. Clinician, M.D." in summary["Medical Summary"]
+    providers_list = summary["_providers_list"].splitlines()
+    assert "Clinic Team Physician" in providers_list[0]
+
+
+def test_additional_diagnoses_extracted_from_text() -> None:
+    backend = StubBackend(
+        responses={
+            1: {
+                "overview": "Lumbar discomfort persists with associated neck pain.",
+                "key_points": ["Pain worsens with bending and long commutes."],
+                "clinical_details": ["MRI referenced lumbar discopathy at L4-L5."],
+                "care_plan": ["Schedule physical therapy and review imaging results."],
+                "diagnoses": [],
+            }
+        }
+    )
+    text = (
+        "Lumbar discopathy confirmed on imaging with ongoing neck pain complaints. "
+        "Respectfully,\nJane Therapist, D.O."
+    )
+    summariser = RefactoredSummariser(backend=backend)
+    summary = summariser.summarise(text)
+    diagnoses = summary["_diagnoses_list"].splitlines()
+    assert "Lumbar discopathy" in diagnoses
+    assert "Neck pain" in diagnoses
 
 
 def test_openai_backend_schema_mismatch_raises(monkeypatch):

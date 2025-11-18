@@ -21,5 +21,7 @@ def test_refactored_cli_dry_run(tmp_path) -> None:
     data = json.loads(output_path.read_text(encoding="utf-8"))
     medical_summary = data["Medical Summary"]
     assert len(medical_summary) >= 400
-    assert "Key Points:" in medical_summary
-    assert "Detailed Findings:" in medical_summary
+    assert "Provider Seen:" in medical_summary
+    assert "Reason for Visit:" in medical_summary
+    assert "Clinical Findings:" in medical_summary
+    assert "Treatment / Follow-up Plan:" in medical_summary

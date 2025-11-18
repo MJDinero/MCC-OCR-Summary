@@ -23,6 +23,7 @@ def test_app_config_properties_and_validation(monkeypatch):
         "INTAKE_GCS_BUCKET": "bucket-intake",
         "OUTPUT_GCS_BUCKET": "bucket-output",
         "SUMMARY_BUCKET": "bucket-output",
+        "INTERNAL_EVENT_TOKEN": "token",
     }
     for key, value in required_env.items():
         monkeypatch.setenv(key, value)
@@ -61,6 +62,7 @@ def test_get_config_cache(monkeypatch):
     monkeypatch.setenv("INTAKE_GCS_BUCKET", "intake")
     monkeypatch.setenv("OUTPUT_GCS_BUCKET", "output")
     monkeypatch.setenv("SUMMARY_BUCKET", "output")
+    monkeypatch.setenv("INTERNAL_EVENT_TOKEN", "token")
 
     get_config.cache_clear()
     first = get_config()

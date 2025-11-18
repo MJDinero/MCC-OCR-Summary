@@ -14,6 +14,7 @@ REQUIRED_KEYS = [
     "OPENAI_API_KEY",
     "DRIVE_INPUT_FOLDER_ID",
     "DRIVE_REPORT_FOLDER_ID",
+    "INTERNAL_EVENT_TOKEN",
 ]
 
 
@@ -40,6 +41,7 @@ def test_config_success():
             "OPENAI_API_KEY": "k",
             "DRIVE_INPUT_FOLDER_ID": "in",
             "DRIVE_REPORT_FOLDER_ID": "out",
+            "INTERNAL_EVENT_TOKEN": "token",
         }
     )
     cfg = AppConfig()
@@ -68,6 +70,7 @@ def test_config_resolves_secret(monkeypatch):
             "OPENAI_API_KEY": "sm://openai",
             "DRIVE_INPUT_FOLDER_ID": "sm://drive-in",
             "DRIVE_REPORT_FOLDER_ID": "sm://drive-out",
+            "INTERNAL_EVENT_TOKEN": "token",
         }
     )
     cfg = AppConfig()
