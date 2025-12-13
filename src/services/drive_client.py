@@ -10,6 +10,7 @@ Authentication relies on GOOGLE_APPLICATION_CREDENTIALS env or default creds.
 # pylint: disable=no-member
 from __future__ import annotations
 
+import hashlib
 import io
 import logging
 import time
@@ -44,6 +45,133 @@ def _mask_drive_id(file_id: str | None) -> str | None:
     if len(token) <= 8:
         return token[:2] + "***"
     return f"{token[:4]}***{token[-4:]}"
+
+
+def _drive_literal(value: str) -> str:
+    escaped = value.replace("\\", "\\\\").replace("'", "\\'")
+    return f"'{escaped}'"
+
+
+def _build_drive_query(folder_id: str, filters: list[str]) -> str:
+    clauses = list(filters)
+    clauses.append(f"{_drive_literal(folder_id)} in parents")
+    clauses.append("trashed = false")
+    return " and ".join(clauses)
+
+
+def _list_drive_files(
+    service,
+    *,
+    folder_id: str,
+    filters: list[str],
+    drive_id: str | None,
+) -> list[dict[str, Any]]:
+    query = _build_drive_query(folder_id, filters)
+    list_kwargs: dict[str, Any] = {
+        "q": query,
+        "fields": "files(id,name,md5Checksum,size,driveId,parents)",
+        "pageSize": 100,
+        "orderBy": "modifiedTime desc",
+    }
+    if drive_id:
+        list_kwargs.update(
+            supportsAllDrives=True,
+            includeItemsFromAllDrives=True,
+            driveId=drive_id,
+            corpora="drive",
+        )
+    try:
+        request = service.files().list(**list_kwargs)
+    except TypeError:
+        for key in ("supportsAllDrives", "includeItemsFromAllDrives", "driveId", "corpora"):
+            list_kwargs.pop(key, None)
+        request = service.files().list(**list_kwargs)
+    response = request.execute()
+    return list(response.get("files") or [])
+
+
+def _split_version_suffix(base_name: str) -> tuple[str, int]:
+    token = base_name
+    if "-v" in token:
+        root, suffix = token.rsplit("-v", 1)
+        if root and suffix.isdigit():
+            return root, int(suffix)
+    return token, 1
+
+
+def _derive_versioned_name(original_name: str, conflict_names: list[str]) -> str:
+    base, ext = os.path.splitext(original_name)
+    root, max_version = _split_version_suffix(base)
+    ext_lower = ext.lower()
+    for existing in conflict_names:
+        existing_base, existing_ext = os.path.splitext(existing)
+        if existing_ext.lower() != ext_lower:
+            continue
+        existing_root, existing_version = _split_version_suffix(existing_base)
+        if existing_root == root:
+            max_version = max(max_version, existing_version)
+    return f"{root}-v{max_version + 1}{ext}"
+
+
+def _meta_matches(target_md5: str, target_size: int, metadata: dict[str, Any]) -> bool:
+    checksum = str(metadata.get("md5Checksum") or "").lower()
+    size_value = metadata.get("size")
+    try:
+        size_int = int(size_value) if size_value is not None else target_size
+    except (TypeError, ValueError):
+        size_int = -1
+    return checksum == target_md5 and size_int == target_size
+
+
+def _locate_existing_pdf(
+    service,
+    *,
+    folder_id: str,
+    drive_id: str | None,
+    report_name: str,
+    file_bytes: bytes,
+) -> tuple[dict[str, Any] | None, list[str]]:
+    checksum = hashlib.md5(file_bytes).hexdigest().lower()
+    target_size = len(file_bytes)
+    conflict_names: list[str] = []
+    name_filters = [f"name = {_drive_literal(report_name)}"]
+    try:
+        name_matches = _list_drive_files(
+            service,
+            folder_id=folder_id,
+            filters=name_filters,
+            drive_id=drive_id,
+        )
+    except HttpError as exc:  # pragma: no cover - search fallback
+        _LOG.warning(
+            "drive_idempotency_lookup_failed",
+            extra={"folder_id": folder_id, "error": str(exc)},
+        )
+        name_matches = []
+    for candidate in name_matches:
+        candidate_name = candidate.get("name")
+        if isinstance(candidate_name, str):
+            conflict_names.append(candidate_name)
+        if _meta_matches(checksum, target_size, candidate):
+            return candidate, conflict_names
+    checksum_filters = [f"md5Checksum = {_drive_literal(checksum)}"]
+    try:
+        checksum_matches = _list_drive_files(
+            service,
+            folder_id=folder_id,
+            filters=checksum_filters,
+            drive_id=drive_id,
+        )
+    except HttpError as exc:  # pragma: no cover - search fallback
+        _LOG.warning(
+            "drive_checksum_lookup_failed",
+            extra={"folder_id": folder_id, "error": str(exc)},
+        )
+        checksum_matches = []
+    for candidate in checksum_matches:
+        if _meta_matches(checksum, target_size, candidate):
+            return candidate, conflict_names
+    return None, conflict_names
 
 
 def _drive_service():
@@ -346,6 +474,52 @@ def upload_pdf(
             },
         )
     service = _drive_service()
+    existing_file: dict[str, Any] | None = None
+    conflict_names: list[str] = []
+    try:
+        existing_file, conflict_names = _locate_existing_pdf(
+            service,
+            folder_id=folder_id,
+            drive_id=drive_id,
+            report_name=report_name,
+            file_bytes=file_bytes,
+        )
+    except Exception as exc:  # pragma: no cover - defensive fallback
+        _LOG.warning(
+            "drive_idempotency_probe_failed",
+            extra={"folder_id": folder_id, "error": str(exc)},
+        )
+    if existing_file:
+        masked = _mask_drive_id(existing_file.get("id"))
+        skip_context = dict(log_context or {})
+        skip_context.update(
+            {
+                "parent": folder_id,
+                "drive_file_id": masked,
+                "bytes": len(file_bytes),
+                "report_name": report_name,
+                "match_reason": (
+                    "name_and_checksum"
+                    if existing_file.get("name") == report_name
+                    else "checksum_only"
+                ),
+            }
+        )
+        _LOG.info("drive_upload_idempotent_skip", extra=skip_context)
+        return existing_file["id"]
+    if conflict_names:
+        versioned_name = _derive_versioned_name(report_name, conflict_names)
+        if versioned_name != report_name:
+            _LOG.warning(
+                "drive_upload_versioned_name",
+                extra={
+                    "original_name": report_name,
+                    "versioned_name": versioned_name,
+                    "parent": folder_id,
+                    "existing_versions": len(conflict_names),
+                },
+            )
+            report_name = versioned_name
     media = MediaIoBaseUpload(
         io.BytesIO(file_bytes), mimetype="application/pdf", resumable=True
     )

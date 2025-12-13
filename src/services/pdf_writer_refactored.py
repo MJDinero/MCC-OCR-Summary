@@ -134,9 +134,45 @@ def _load_summary(path: Path | str) -> Dict[str, Any]:
     return data
 
 
+def _split_version_token(name: str) -> tuple[str, int]:
+    if "-v" in name:
+        root, suffix = name.rsplit("-v", 1)
+        if root and suffix.isdigit():
+            return root, int(suffix)
+    return name, 1
+
+
+def _next_versioned_path(path: Path) -> Path:
+    base_root, max_version = _split_version_token(path.stem)
+    for candidate in path.parent.glob(f"{base_root}*{path.suffix}"):
+        candidate_root, candidate_version = _split_version_token(candidate.stem)
+        if candidate_root == base_root:
+            max_version = max(max_version, candidate_version)
+    next_version = max_version + 1
+    return path.with_name(f"{base_root}-v{next_version}{path.suffix}")
+
+
 def _write_pdf(path: Path, pdf_bytes: bytes) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_bytes(pdf_bytes)
+    target_path = path
+    if target_path.exists():
+        existing = target_path.read_bytes()
+        if existing == pdf_bytes:
+            _LOG.info(
+                "pdf_write_idempotent_skip",
+                extra={"path": str(target_path), "bytes": len(pdf_bytes)},
+            )
+            return
+        target_path = _next_versioned_path(target_path)
+        _LOG.info(
+            "pdf_write_versioned_output",
+            extra={
+                "original": str(path),
+                "versioned": str(target_path),
+                "bytes": len(pdf_bytes),
+            },
+        )
+    target_path.write_bytes(pdf_bytes)
 
 
 def _parse_gcs_uri(gcs_uri: str) -> Tuple[str, str]:

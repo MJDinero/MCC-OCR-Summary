@@ -35,6 +35,7 @@ class _FilesResource:
         self.created: dict[str, Any] = {}
         self.last_get_media_kwargs: dict[str, Any] = {}
         self.last_request: _Req | None = None
+        self._list_response: dict[str, Any] = {"files": []}
 
     def get_media(self, fileId: str, **kwargs):  # noqa: N802
         self.last_get_media_kwargs = {"fileId": fileId, **kwargs}
@@ -54,6 +55,16 @@ class _FilesResource:
                 return {"id": "new123"}
 
         return _Exec(self, body)
+
+    def list(self, **_kwargs):  # noqa: D401
+        class _Exec:
+            def __init__(self, outer):
+                self.outer = outer
+
+            def execute(self):
+                return self.outer._list_response
+
+        return _Exec(self)
 
 
 class _Service:

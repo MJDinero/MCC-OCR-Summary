@@ -89,3 +89,25 @@ def test_load_summary_from_gcs(monkeypatch):
     monkeypatch.setattr("google.cloud.storage.Client", lambda: _StubClient(blob_bytes))
     loaded = pdf_mod._load_summary("gs://bucket/path/summary.json")
     assert loaded["Medical Summary"] == "Remote summary"
+
+
+def test_write_pdf_is_idempotent(tmp_path):
+    pdf_path = tmp_path / "report.pdf"
+    payload = b"%PDF-1.4\nfirst\n%%EOF"
+    pdf_mod._write_pdf(pdf_path, payload)
+    pdf_mod._write_pdf(pdf_path, payload)
+    files = sorted(p.name for p in tmp_path.glob("*.pdf"))
+    assert files == ["report.pdf"]
+    assert pdf_path.read_bytes() == payload
+
+
+def test_write_pdf_versions_when_bytes_change(tmp_path):
+    pdf_path = tmp_path / "report.pdf"
+    first = b"%PDF-1.4\nalpha\n%%EOF"
+    second = b"%PDF-1.4\nbeta\n%%EOF"
+    pdf_mod._write_pdf(pdf_path, first)
+    pdf_mod._write_pdf(pdf_path, second)
+    versioned = tmp_path / "report-v2.pdf"
+    assert versioned.exists()
+    assert versioned.read_bytes() == second
+    assert pdf_path.read_bytes() == first

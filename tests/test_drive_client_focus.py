@@ -1,3 +1,4 @@
+import hashlib
 import io
 from types import SimpleNamespace
 
@@ -39,6 +40,8 @@ class _DriveUploadService:
     def __init__(self, fail_shared_drive: bool):
         self._fail_shared_drive = fail_shared_drive
         self.created_payloads: list[dict[str, object]] = []
+        self.list_responses: list[dict[str, object]] = []
+        self.list_calls: list[dict[str, object]] = []
 
     def files(self):  # pragma: no cover - structural
         return self
@@ -58,6 +61,17 @@ class _DriveUploadService:
         return SimpleNamespace(
             execute=lambda: {"id": "generated-id"}, uri="https://example.com/upload"
         )
+
+    def list(self, **kwargs):
+        supports_all = kwargs.get("supportsAllDrives", False)
+        if supports_all and self._fail_shared_drive:
+            raise TypeError("supportsAllDrives not supported")
+        self.list_calls.append(kwargs)
+        if self.list_responses:
+            response = self.list_responses.pop(0)
+        else:
+            response = {"files": []}
+        return SimpleNamespace(execute=lambda: response)
 
 
 @pytest.mark.parametrize("fail_shared_drive", [False, True])
@@ -164,6 +178,137 @@ def test_upload_pdf_supports_json_secret(monkeypatch):
     payload = service.created_payloads[-1]
     assert payload["parents"] == ["19xdu6hV9KNgnE_Slt4ogrJdASWXZb5gl"]
     assert "driveId" not in payload
+
+
+def test_upload_pdf_skips_duplicate_bytes(monkeypatch):
+    pdf_bytes = b"%PDF-1.4\npayload"
+    checksum = hashlib.md5(pdf_bytes).hexdigest()
+    service = _DriveUploadService(fail_shared_drive=False)
+    service.list_responses = [
+        {
+            "files": [
+                {
+                    "id": "existing-id",
+                    "name": "report.pdf",
+                    "md5Checksum": checksum,
+                    "size": str(len(pdf_bytes)),
+                }
+            ]
+        }
+    ]
+    monkeypatch.setattr(drive_client, "_drive_service", lambda: service)
+    monkeypatch.setattr(
+        drive_client,
+        "_resolve_folder_metadata",
+        lambda fid: {"id": fid, "driveId": "0AFPP3mbSAh_oUk9PVA"},
+    )
+
+    class _Cfg:
+        drive_report_folder_id = "folder-id"
+        drive_shared_drive_id = "0AFPP3mbSAh_oUk9PVA"
+        summary_schema_version = "2025-10-01"
+        project_id = "test-project"
+
+    class _UploadStub:
+        def __init__(self, buffer: io.BytesIO, mimetype: str, resumable: bool):
+            self.buffer = buffer
+            self.mimetype = mimetype
+            self.resumable = resumable
+
+    monkeypatch.setattr(drive_client, "MediaIoBaseUpload", _UploadStub)
+    monkeypatch.setattr(drive_client, "get_config", lambda: _Cfg())
+
+    file_id = drive_client.upload_pdf(pdf_bytes, "report.pdf")
+    assert file_id == "existing-id"
+    assert not service.created_payloads
+
+
+def test_upload_pdf_versions_conflicting_names(monkeypatch):
+    original_bytes = b"%PDF-1.4\nfirst"
+    new_bytes = b"%PDF-1.4\nsecond"
+    service = _DriveUploadService(fail_shared_drive=False)
+    service.list_responses = [
+        {
+            "files": [
+                {
+                    "id": "old-id",
+                    "name": "report.pdf",
+                    "md5Checksum": hashlib.md5(original_bytes).hexdigest(),
+                    "size": str(len(original_bytes)),
+                }
+            ]
+        },
+        {"files": []},
+    ]
+    monkeypatch.setattr(drive_client, "_drive_service", lambda: service)
+    monkeypatch.setattr(
+        drive_client,
+        "_resolve_folder_metadata",
+        lambda fid: {"id": fid, "driveId": "0AFPP3mbSAh_oUk9PVA"},
+    )
+
+    class _Cfg:
+        drive_report_folder_id = "folder-id"
+        drive_shared_drive_id = "0AFPP3mbSAh_oUk9PVA"
+        summary_schema_version = "2025-10-01"
+        project_id = "test-project"
+
+    class _UploadStub:
+        def __init__(self, buffer: io.BytesIO, mimetype: str, resumable: bool):
+            self.buffer = buffer
+            self.mimetype = mimetype
+            self.resumable = resumable
+
+    monkeypatch.setattr(drive_client, "MediaIoBaseUpload", _UploadStub)
+    monkeypatch.setattr(drive_client, "get_config", lambda: _Cfg())
+
+    file_id = drive_client.upload_pdf(new_bytes, "report.pdf")
+    assert file_id == "generated-id"
+    assert service.created_payloads[-1]["name"] == "report-v2.pdf"
+
+
+def test_upload_pdf_dedup_by_checksum(monkeypatch):
+    pdf_bytes = b"%PDF-1.4\nrepeat"
+    checksum = hashlib.md5(pdf_bytes).hexdigest()
+    service = _DriveUploadService(fail_shared_drive=False)
+    service.list_responses = [
+        {"files": []},
+        {
+            "files": [
+                {
+                    "id": "checksum-id",
+                    "name": "other.pdf",
+                    "md5Checksum": checksum,
+                    "size": str(len(pdf_bytes)),
+                }
+            ]
+        },
+    ]
+    monkeypatch.setattr(drive_client, "_drive_service", lambda: service)
+    monkeypatch.setattr(
+        drive_client,
+        "_resolve_folder_metadata",
+        lambda fid: {"id": fid, "driveId": "0AFPP3mbSAh_oUk9PVA"},
+    )
+
+    class _Cfg:
+        drive_report_folder_id = "folder-id"
+        drive_shared_drive_id = "0AFPP3mbSAh_oUk9PVA"
+        summary_schema_version = "2025-10-01"
+        project_id = "test-project"
+
+    class _UploadStub:
+        def __init__(self, buffer: io.BytesIO, mimetype: str, resumable: bool):
+            self.buffer = buffer
+            self.mimetype = mimetype
+            self.resumable = resumable
+
+    monkeypatch.setattr(drive_client, "MediaIoBaseUpload", _UploadStub)
+    monkeypatch.setattr(drive_client, "get_config", lambda: _Cfg())
+
+    file_id = drive_client.upload_pdf(pdf_bytes, "report.pdf")
+    assert file_id == "checksum-id"
+    assert not service.created_payloads
 
 
 def test_download_pdf_validations(monkeypatch):
