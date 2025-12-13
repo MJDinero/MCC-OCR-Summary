@@ -10,9 +10,10 @@ from __future__ import annotations
 
 import argparse
 import sys
+import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, Sequence
+from typing import Iterable, Sequence, Any, Mapping
 
 try:
     from pypdf import PdfReader  # type: ignore
@@ -122,7 +123,68 @@ def _parse_args(argv: Sequence[str]) -> argparse.Namespace:
             "Specify multiple times to override defaults."
         ),
     )
+    parser.add_argument(
+        "--summary-json",
+        type=Path,
+        help="Optional path to the structured summary JSON payload for evidence validation.",
+    )
     return parser.parse_args(argv)
+
+
+def _load_summary_json(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        raise ValidationError(f"Summary JSON not found: {path}")
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise ValidationError(f"Invalid summary JSON: {exc}") from exc
+    if not isinstance(data, dict):
+        raise ValidationError("Summary JSON must contain an object.")
+    return data
+
+
+def _validate_claims(summary: Mapping[str, Any]) -> None:
+    claims = summary.get("_claims")
+    if claims is None:
+        raise ValidationError("Summary JSON is missing '_claims'.")
+    if not isinstance(claims, list) or not claims:
+        raise ValidationError("Summary claims list empty.")
+    evidence_list = summary.get("_evidence_spans") or []
+    evidence_lookup: dict[str, Mapping[str, Any]] = {}
+    if isinstance(evidence_list, list):
+        for span in evidence_list:
+            if isinstance(span, Mapping) and "span_id" in span:
+                evidence_lookup[str(span["span_id"])] = span
+    sections_seen: dict[str, set[str]] = {}
+    for claim in claims:
+        if not isinstance(claim, Mapping):
+            raise ValidationError("Claim entries must be objects.")
+        section = str(claim.get("section") or "Unknown")
+        status = str(claim.get("status") or "").lower()
+        sections_seen.setdefault(section, set()).add(status)
+        if status == "supported":
+            refs = claim.get("evidence_refs") or []
+            if not refs:
+                raise ValidationError(f"Claim {claim.get('claim_id')} missing evidence references.")
+            for ref in refs:
+                if ref not in evidence_lookup:
+                    raise ValidationError(
+                        f"Claim {claim.get('claim_id')} references unknown evidence span {ref}."
+                    )
+        elif status == "illegible":
+            if claim.get("value") != "Illegible/Unknown":
+                raise ValidationError(
+                    f"Illegible claim {claim.get('claim_id')} must use 'Illegible/Unknown' text."
+                )
+    missing_supported = [
+        section
+        for section, statuses in sections_seen.items()
+        if "supported" not in statuses and "illegible" not in statuses
+    ]
+    if missing_supported:
+        raise ValidationError(
+            f"Sections lack supported or illegible claims: {', '.join(sorted(missing_supported))}"
+        )
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -152,6 +214,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             missing_str = ", ".join(result.missing_headings)
             problems.append(f"missing headings: {missing_str}")
         raise ValidationError("; ".join(problems))
+
+    if args.summary_json:
+        summary_payload = _load_summary_json(args.summary_json)
+        _validate_claims(summary_payload)
 
     print(
         "[validator] OK",

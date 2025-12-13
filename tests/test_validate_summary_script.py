@@ -7,6 +7,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "validate_summary.py"
 PDF_SAMPLE = ROOT / "tests" / "fixtures" / "validator_sample.pdf"
+SUMMARY_GOOD = ROOT / "tests" / "fixtures" / "summary_with_claims.json"
+SUMMARY_BAD = ROOT / "tests" / "fixtures" / "summary_with_bad_claims.json"
 
 
 def _run_validator(args: list[str]) -> subprocess.CompletedProcess[str]:
@@ -37,3 +39,18 @@ def test_validator_detects_missing_heading() -> None:
     )
     assert result.returncode != 0
     assert "missing headings" in result.stderr + result.stdout
+
+
+def test_validator_claims_pass() -> None:
+    result = _run_validator(
+        ["--expected-pages", "1", "--summary-json", str(SUMMARY_GOOD)]
+    )
+    assert result.returncode == 0
+
+
+def test_validator_claims_fail_without_evidence() -> None:
+    result = _run_validator(
+        ["--expected-pages", "1", "--summary-json", str(SUMMARY_BAD)]
+    )
+    assert result.returncode != 0
+    assert "missing evidence" in (result.stderr + result.stdout).lower()

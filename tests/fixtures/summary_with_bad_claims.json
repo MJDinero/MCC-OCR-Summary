@@ -1,0 +1,13 @@
+{
+  "Medical Summary": "Provider Seen:\\nN/A",
+  "_claims": [
+    {
+      "claim_id": "bad1",
+      "section": "Reason for Visit",
+      "value": "This should fail",
+      "status": "supported",
+      "evidence_refs": []
+    }
+  ],
+  "_evidence_spans": []
+}

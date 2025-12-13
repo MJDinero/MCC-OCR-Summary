@@ -192,3 +192,10 @@
 - **Rationale:** Removed the lingering `--allow-unauthenticated` flag from the Makefile deploy target so Cloud Run revisions remain private-by-default, and shipped a reusable `scripts/validate_summary.py` CLI plus fixture + tests to assert MCC’s seven headings are present in rendered PDFs.
 - **Commands:** `python3 -m pytest --cov=src -q`; `python3 -m ruff check src tests`; `python3 -m mypy --strict src`; `python3 scripts/validate_summary.py --pdf-path tests/fixtures/validator_sample.pdf --expected-pages 1`
 - **Status:** PASS – all validation gates succeeded; validator CLI now runs during releases to block regressions in Drive/Poller/Validator flow integrity while `make deploy` enforces IAM-only invocation.
+
+## Task W – CI Determinism & Validator Evidence Gate
+- **Date:** 2025-12-13T23:21:11Z
+- **Files:** .github/workflows/ci.yml, scripts/validate_summary.py, tests/test_validate_summary_script.py, tests/fixtures/summary_with_claims.json, tests/fixtures/summary_with_bad_claims.json, docs/audit/HARDENING_LOG.md
+- **Rationale:** Synced GitHub Actions with the mandatory local gates so pytest (with real coverage), ruff, mypy, and the validator CLI all run in CI with the same arguments and env vars, ensuring processor IDs/aliases resolve deterministically. Extended the validator CLI/tests with `_claims` evidence fixtures so summary regressions fail closed.
+- **Commands:** `python3 -m pytest --cov=src -q`; `python3 -m ruff check src tests`; `python3 -m mypy --strict src`; `python3 scripts/validate_summary.py --pdf-path tests/fixtures/validator_sample.pdf --expected-pages 1 --summary-json tests/fixtures/summary_with_claims.json`
+- **Status:** PASS – all gates green locally; the workflow now enforces identical coverage + validator checks before artifacts are uploaded.
