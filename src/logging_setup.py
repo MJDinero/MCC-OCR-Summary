@@ -14,6 +14,8 @@ from contextvars import ContextVar
 from datetime import datetime, timezone
 from typing import Any, Dict
 
+from src.utils.logging_utils import STRUCTURED_LOG_ALLOWED_FIELDS
+
 request_id_var: ContextVar[str | None] = ContextVar("request_id", default=None)
 
 _STANDARD_FIELDS = {
@@ -53,8 +55,11 @@ class JsonFormatter(logging.Formatter):
             data["request_id"] = rid
         if record.exc_info:
             data["exc_info"] = self.formatException(record.exc_info)
+        enforce_allowlist = bool(record.__dict__.get("_structured_log"))
         for key, value in record.__dict__.items():
             if key in _STANDARD_FIELDS or key.startswith("_"):
+                continue
+            if enforce_allowlist and key not in STRUCTURED_LOG_ALLOWED_FIELDS:
                 continue
             data[key] = value
         return json.dumps(data, ensure_ascii=False)

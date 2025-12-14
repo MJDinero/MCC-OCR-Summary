@@ -208,3 +208,10 @@
 - **Commands:** `python3 -m pytest --cov=src -q` (PASS, 91.24% coverage); `python3 -m ruff check src tests` (PASS); `python3 -m mypy --strict src` (PASS); `python3 scripts/validate_summary.py --pdf-path tests/fixtures/validator_sample.pdf --expected-pages 1 --summary-json tests/fixtures/summary_with_claims.json` (PASS).
 - **Category Scores:** CI Determinism & Reproducibility 92 (steady); PDF Reliability & Idempotency 65 → 92; Documentation Honesty 88 → 90; remaining categories unchanged.
 - **Status:** PASS – regression tests prove Drive uploads reuse or version artifacts deterministically while local CLI writes are now write-once, satisfying the production idempotency requirement.
+
+## Task Y – Observability Stage Markers & Logging Allowlist
+- **Date:** 2025-12-14T00:14:23Z
+- **Files:** src/api/process.py, src/logging_setup.py, src/utils/logging_utils.py, tests/test_logging_setup.py, tests/test_process_stage_logging.py, docs/audit/HARDENING_LOG.md
+- **Rationale:** Added durable stage markers across split → OCR → summarisation → supervisor → PDF write → Drive upload so each `/process` invocation emits start/completion/failure telemetry with correlation IDs, durations, and PHI-safe metrics. Hardened the JSON formatter with a strict allowlist so only approved structured fields (stage, status, duration_ms, request_id/trace_id, etc.) survive serialization, preventing accidental PHI leakage from ad-hoc `extra` payloads.
+- **Commands:** `python3 -m pytest --cov=src -q`; `python3 -m ruff check src tests`; `python3 -m mypy --strict src`; `python3 scripts/validate_summary.py --pdf-path tests/fixtures/validator_sample.pdf --expected-pages 1 --summary-json tests/fixtures/summary_with_claims.json`
+- **Status:** PASS – formatter/unit tests prove allowed extras persist and unapproved fields drop, a focused pipeline test confirms all stage markers emit, and the full gate suite remains green with 91%+ coverage.
