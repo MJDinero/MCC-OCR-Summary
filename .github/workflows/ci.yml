@@ -34,6 +34,12 @@ jobs:
       - name: Prepare artifact directory
         run: mkdir -p artifacts
 
+      - name: Write mock service account
+        run: |
+          cat <<'JSON' > /tmp/mock-sa.json
+          {"type":"service_account","project_id":"test"}
+          JSON
+
       - name: Run pytest suite
         env:
           PROJECT_ID: test-project
