@@ -192,3 +192,26 @@
 - **Rationale:** Removed the lingering `--allow-unauthenticated` flag from the Makefile deploy target so Cloud Run revisions remain private-by-default, and shipped a reusable `scripts/validate_summary.py` CLI plus fixture + tests to assert MCC’s seven headings are present in rendered PDFs.
 - **Commands:** `python3 -m pytest --cov=src -q`; `python3 -m ruff check src tests`; `python3 -m mypy --strict src`; `python3 scripts/validate_summary.py --pdf-path tests/fixtures/validator_sample.pdf --expected-pages 1`
 - **Status:** PASS – all validation gates succeeded; validator CLI now runs during releases to block regressions in Drive/Poller/Validator flow integrity while `make deploy` enforces IAM-only invocation.
+
+## Task W – CI Determinism & Validator Evidence Gate
+- **Date:** 2025-12-13T23:21:11Z
+- **Files:** .github/workflows/ci.yml, scripts/validate_summary.py, tests/test_validate_summary_script.py, tests/fixtures/summary_with_claims.json, tests/fixtures/summary_with_bad_claims.json, docs/audit/HARDENING_LOG.md
+- **Rationale:** Synced GitHub Actions with the mandatory local gates so pytest (with real coverage), ruff, mypy, and the validator CLI all run in CI with the same arguments and env vars, ensuring processor IDs/aliases resolve deterministically. Extended the validator CLI/tests with `_claims` evidence fixtures so summary regressions fail closed.
+- **Commands:** `python3 -m pytest --cov=src -q`; `python3 -m ruff check src tests`; `python3 -m mypy --strict src`; `python3 scripts/validate_summary.py --pdf-path tests/fixtures/validator_sample.pdf --expected-pages 1 --summary-json tests/fixtures/summary_with_claims.json`
+- **Status:** PASS – all gates green locally; the workflow now enforces identical coverage + validator checks before artifacts are uploaded.
+
+## Task X – PDF Idempotency Guardrails
+- **Date:** 2025-12-13T23:58:09Z
+- **Files:** src/services/drive_client.py, src/services/pdf_writer_refactored.py, tests/test_drive_client_focus.py, tests/test_drive_client.py, tests/test_pdf_writer_refactored_unit.py, docs/audit/HARDENING_LOG.md
+- **Rationale:** Retries were previously generating duplicate Drive files and overwriting local CLI PDFs. Added explicit search-before-create logic and deterministic versioning so repeated runs either no-op or write to `-vN` suffixed artifacts rather than silently clobbering output.
+- **Idempotency Controls:** Drive uploads now compute the PDF checksum, search the parent folder for matching `name+md5+size` tuples, and skip the upload when the artifact already exists; conflicting filenames are automatically versioned (`report.pdf` → `report-v2.pdf`, etc.) and checksum matches with different names are reused to prevent duplicates. The CLI writer now inspects existing local outputs and either no-ops (identical bytes) or writes a new versioned filename before flushing bytes.
+- **Commands:** `python3 -m pytest --cov=src -q` (PASS, 91.24% coverage); `python3 -m ruff check src tests` (PASS); `python3 -m mypy --strict src` (PASS); `python3 scripts/validate_summary.py --pdf-path tests/fixtures/validator_sample.pdf --expected-pages 1 --summary-json tests/fixtures/summary_with_claims.json` (PASS).
+- **Category Scores:** CI Determinism & Reproducibility 92 (steady); PDF Reliability & Idempotency 65 → 92; Documentation Honesty 88 → 90; remaining categories unchanged.
+- **Status:** PASS – regression tests prove Drive uploads reuse or version artifacts deterministically while local CLI writes are now write-once, satisfying the production idempotency requirement.
+
+## Task Y – Observability Stage Markers & Logging Allowlist
+- **Date:** 2025-12-14T00:14:23Z
+- **Files:** src/api/process.py, src/logging_setup.py, src/utils/logging_utils.py, tests/test_logging_setup.py, tests/test_process_stage_logging.py, docs/audit/HARDENING_LOG.md
+- **Rationale:** Added durable stage markers across split → OCR → summarisation → supervisor → PDF write → Drive upload so each `/process` invocation emits start/completion/failure telemetry with correlation IDs, durations, and PHI-safe metrics. Hardened the JSON formatter with a strict allowlist so only approved structured fields (stage, status, duration_ms, request_id/trace_id, etc.) survive serialization, preventing accidental PHI leakage from ad-hoc `extra` payloads.
+- **Commands:** `python3 -m pytest --cov=src -q`; `python3 -m ruff check src tests`; `python3 -m mypy --strict src`; `python3 scripts/validate_summary.py --pdf-path tests/fixtures/validator_sample.pdf --expected-pages 1 --summary-json tests/fixtures/summary_with_claims.json`
+- **Status:** PASS – formatter/unit tests prove allowed extras persist and unapproved fields drop, a focused pipeline test confirms all stage markers emit, and the full gate suite remains green with 91%+ coverage.

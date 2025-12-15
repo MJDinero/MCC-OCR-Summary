@@ -25,6 +25,12 @@ jobs:
           pip install -r requirements-dev.txt
           pip install cyclonedx-bom
 
+      - name: Run Ruff
+        run: python -m ruff check src tests
+
+      - name: Run mypy
+        run: python -m mypy --strict src
+
       - name: Prepare artifact directory
         run: mkdir -p artifacts
 
@@ -34,6 +40,7 @@ jobs:
           REGION: us
           DOC_AI_LOCATION: us
           DOC_AI_PROCESSOR_ID: processor-dummy
+          DOC_AI_OCR_PROCESSOR_ID: processor-dummy
           DOC_AI_SPLITTER_PROCESSOR_ID: processor-split-dummy
           OPENAI_API_KEY: dummy-key
           DRIVE_INPUT_FOLDER_ID: drive-input
@@ -46,7 +53,14 @@ jobs:
           USE_REFACTORED_SUMMARISER: "true"
           GOOGLE_APPLICATION_CREDENTIALS: /tmp/mock-sa.json
           SERVICE_ACCOUNT_JSON: '{"type":"service_account","project_id":"test"}'
-        run: pytest --cov=src --cov-report=term --cov-report=xml
+        run: python -m pytest --cov=src -q --cov-report=term --cov-report=xml
+
+      - name: Run summary validator
+        run: >
+          python scripts/validate_summary.py
+          --pdf-path tests/fixtures/validator_sample.pdf
+          --expected-pages 1
+          --summary-json tests/fixtures/summary_with_claims.json
 
       - name: Move coverage report
         run: |

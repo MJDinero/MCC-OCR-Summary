@@ -1,0 +1,35 @@
+{
+  "Medical Summary": "Provider Seen:\\nDr. Example\\n\nReason for Visit:\\n- Evaluation for back pain",
+  "_claims": [
+    {
+      "claim_id": "c1",
+      "section": "Provider Seen",
+      "value": "Dr. Example",
+      "field_type": "provider_seen",
+      "status": "supported",
+      "evidence_refs": ["span-1"]
+    },
+    {
+      "claim_id": "c2",
+      "section": "Reason for Visit",
+      "value": "Evaluation for back pain",
+      "field_type": "reason_for_visit",
+      "status": "supported",
+      "evidence_refs": ["span-2"]
+    }
+  ],
+  "_evidence_spans": [
+    {
+      "span_id": "span-1",
+      "page": 1,
+      "text_snippet": "Dr. Example evaluated the patient.",
+      "ocr_confidence": 0.93
+    },
+    {
+      "span_id": "span-2",
+      "page": 1,
+      "text_snippet": "Evaluation for back pain was performed on 12/01.",
+      "ocr_confidence": 0.9
+    }
+  ]
+}
