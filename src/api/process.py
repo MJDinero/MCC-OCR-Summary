@@ -18,6 +18,7 @@ from src.errors import (
     DriveServiceError,
     SummarizationError,
 )
+from src.models.summary_contract import SummaryContract
 from src.services.docai_helper import clean_ocr_output
 from src.services.supervisor import CommonSenseSupervisor
 from src.utils.summary_thresholds import compute_summary_min_chars
@@ -125,9 +126,14 @@ async def _execute_pipeline(
             cleaned_text_length=len(cleaned_ocr_text or "")
         )
     summary_source_text = cleaned_ocr_text or ocr_text
-    summary_dict: Dict[str, Any] = {}
+    summary_payload: Dict[str, Any] = {}
     summary_text = ""
     summary_len = 0
+    doc_metadata_payload: Dict[str, Any] = {
+        "pages": pages,
+        "document_id": request_id,
+        "source": source,
+    }
     try:
         async with stage_marker(
             _API_LOG,
@@ -138,17 +144,12 @@ async def _execute_pipeline(
             component=_PIPELINE_COMPONENT,
         ) as summary_stage:
             summary_raw = await app.state.summariser.summarise_async(
-                summary_source_text
+                summary_source_text,
+                doc_metadata=doc_metadata_payload,
             )
-            summary_dict = (
-                summary_raw
-                if isinstance(summary_raw, dict)
-                else {"Medical Summary": str(summary_raw or "")}
-            )
-            summary_text_fragments = [
-                value for value in summary_dict.values() if isinstance(value, str)
-            ]
-            summary_text = "\n".join(summary_text_fragments).strip()
+            contract = SummaryContract.from_mapping(summary_raw)
+            summary_payload = contract.to_dict()
+            summary_text = contract.as_text()
             summary_len = len(summary_text)
             summary_stage.add_completion_fields(summary_chars=summary_len)
     except SummarizationError as exc:
@@ -195,7 +196,7 @@ async def _execute_pipeline(
         component=_PIPELINE_COMPONENT,
     ) as supervisor_stage:
         validation = supervisor.validate(
-            ocr_text=ocr_text, summary=summary_dict, doc_stats=doc_stats
+            ocr_text=ocr_text, summary=summary_payload, doc_stats=doc_stats
         )
         supervisor_stage.add_completion_fields(
             supervisor_passed=bool(validation.get("supervisor_passed"))
@@ -220,7 +221,7 @@ async def _execute_pipeline(
             source=source,
             component=_PIPELINE_COMPONENT,
         ) as pdf_stage:
-            pdf_payload = app.state.pdf_writer.build(dict(summary_dict))
+            pdf_payload = app.state.pdf_writer.build(dict(summary_payload))
             pdf_stage.add_completion_fields(pdf_bytes=len(pdf_payload))
     except PDFGenerationError as exc:
         structured_log(

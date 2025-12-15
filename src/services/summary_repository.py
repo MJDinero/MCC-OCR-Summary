@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timezone
-from typing import Dict, Sequence
+from typing import Any, Dict, Mapping, Sequence
 
 try:  # pragma: no cover - optional GCP dependencies
     from google.api_core import exceptions as gexc  # type: ignore
@@ -54,7 +54,7 @@ class HybridSummaryRepository(
         self,
         *,
         job_id: str,
-        final_summary: str,
+        final_summary: Mapping[str, Any],
         per_chunk_summaries: Sequence[SummaryResultMessage],
         metadata: dict[str, str],
     ) -> None:
@@ -64,7 +64,7 @@ class HybridSummaryRepository(
     def _write_gcs(
         self,
         job_id: str,
-        final_summary: str,
+        final_summary: Mapping[str, Any],
         per_chunk_summaries: Sequence[SummaryResultMessage],
         metadata: dict[str, str],
     ) -> None:
@@ -96,7 +96,7 @@ class HybridSummaryRepository(
     def _write_bigquery(
         self,
         job_id: str,
-        final_summary: str,
+        final_summary: Mapping[str, Any],
         per_chunk_summaries: Sequence[SummaryResultMessage],
         metadata: dict[str, str],
     ) -> None:
@@ -151,7 +151,7 @@ class InMemorySummaryRepository(SummaryRepository):
         self,
         *,
         job_id: str,
-        final_summary: str,
+        final_summary: Mapping[str, Any],
         per_chunk_summaries: Sequence[SummaryResultMessage],
         metadata: dict[str, str],
     ) -> None:

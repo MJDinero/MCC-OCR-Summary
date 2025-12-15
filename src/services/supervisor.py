@@ -9,6 +9,7 @@ import re
 from collections import Counter
 import os
 
+from src.models.summary_contract import SummaryContract
 from src.services.docai_helper import clean_ocr_output
 
 
@@ -65,15 +66,16 @@ def _normalise_mb(size_bytes: int | float | None) -> float:
 def _extract_summary_text(summary: Dict[str, Any]) -> str:
     if not summary:
         return ""
-    if isinstance(
-        summary.get("Medical Summary"), str
-    ):  # pragma: no cover - direct field read
+    if "sections" in summary:
+        try:
+            contract = SummaryContract.from_mapping(summary)
+            return contract.as_text()
+        except Exception:  # pragma: no cover - fallback for malformed payloads
+            pass
+    if isinstance(summary.get("Medical Summary"), str):
         return summary["Medical Summary"]
-    # Join any string like values as fallback
     parts: list[str] = []
-    for (
-        value
-    ) in summary.values():  # pragma: no cover - fallback join for loose structures
+    for value in summary.values():
         if isinstance(value, str):
             parts.append(value)
     return "\n".join(parts)
@@ -153,7 +155,9 @@ class CommonSenseSupervisor:
             ocr_text_normalised = (ocr_text or "").strip()
             text_len = len(ocr_text_normalised)
             summary_payload: Dict[str, Any]
-            if isinstance(summary, dict):
+            if isinstance(summary, SummaryContract):
+                summary_payload = summary.to_dict()
+            elif isinstance(summary, dict):
                 summary_payload = summary
             else:
                 summary_payload = {"Medical Summary": str(summary or "")}

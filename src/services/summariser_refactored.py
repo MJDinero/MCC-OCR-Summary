@@ -30,6 +30,12 @@ from typing import Dict, List, Protocol, Any, Iterable, Optional, Tuple
 
 from src.config import get_config
 from src.errors import SummarizationError
+from src.models.summary_contract import (
+    SummaryContract,
+    SummarySection,
+    build_claims_from_sections,
+    resolve_schema_version,
+)
 from src.services.pipeline import (
     PipelineStateStore,
     PipelineStatus,
@@ -789,7 +795,7 @@ class RefactoredSummariser:
             "medications": medications,
         }
 
-        summary_text = self._compose_summary(
+        summary_text, mcc_sections, section_lists = self._compose_summary(
             sections_payload,
             chunk_count=len(chunked),
             doc_metadata=doc_metadata,
@@ -828,27 +834,150 @@ class RefactoredSummariser:
             },
         )
 
-        display: Dict[str, str] = {
-            "Patient Information": (
-                doc_metadata.get("patient_info", "Not provided")
-                if doc_metadata
-                else "Not provided"
-            ),
-            "Medical Summary": summary_text,
-            "Billing Highlights": (
-                doc_metadata.get("billing", "Not provided")
-                if doc_metadata
-                else "Not provided"
-            ),
-            "Legal / Notes": (
-                doc_metadata.get("legal_notes", "Not provided")
-                if doc_metadata
-                else "Not provided"
-            ),
-            "_diagnoses_list": "\n".join(diagnoses),
-            "_providers_list": "\n".join(providers),
-            "_medications_list": "\n".join(medications),
+        def _meta_value(key: str, default: str = "Not provided") -> str:
+            if not doc_metadata:
+                return default
+            value = doc_metadata.get(key)
+            if value is None:
+                return default
+            value_str = str(value).strip()
+            return value_str or default
+
+        sections_contract: List[SummarySection] = []
+        ordinal_counter = 1
+
+        def _add_section(
+            slug: str,
+            title: str,
+            content: str,
+            *,
+            kind: str,
+            extra: Optional[Dict[str, Any]] = None,
+        ) -> None:
+            nonlocal ordinal_counter
+            sections_contract.append(
+                SummarySection(
+                    slug=slug,
+                    title=title,
+                    content=(content or "").strip() or "Not provided",
+                    ordinal=ordinal_counter,
+                    kind=kind,
+                    extra={k: v for k, v in (extra or {}).items() if v},
+                )
+            )
+            ordinal_counter += 1
+
+        _add_section(
+            "patient_information",
+            "Patient Information",
+            _meta_value("patient_info"),
+            kind="context",
+        )
+        _add_section(
+            "billing_highlights",
+            "Billing Highlights",
+            _meta_value("billing"),
+            kind="context",
+        )
+        _add_section(
+            "legal_notes",
+            "Legal / Notes",
+            _meta_value("legal_notes"),
+            kind="context",
+        )
+
+        provider_lines = section_lists.get("provider_seen") or []
+        primary_provider_value = provider_lines[0] if provider_lines else None
+
+        slug_overrides = {
+            "Provider Seen": "provider_seen",
+            "Reason for Visit": "reason_for_visit",
+            "Clinical Findings": "clinical_findings",
+            "Treatment / Follow-up Plan": "treatment_follow_up_plan",
+            "Diagnoses": "diagnoses",
+            "Healthcare Providers": "healthcare_providers",
+            "Medications / Prescriptions": "medications",
         }
+
+        for heading, body in mcc_sections:
+            slug_base = slug_overrides.get(heading) or _normalise_line_key(heading).replace(" ", "_")
+            slug = slug_base or f"section_{ordinal_counter}"
+            items = section_lists.get(slug) or section_lists.get(slug_base or "", [])
+            if slug == "healthcare_providers":
+                combined: List[str] = []
+                if primary_provider_value:
+                    combined.append(primary_provider_value)
+                if items:
+                    combined.extend(items)
+                items = combined
+            extra_payload: Dict[str, Any] = {}
+            if items:
+                extra_payload["items"] = items
+            if slug == "provider_seen":
+                if provider_lines and "items" not in extra_payload:
+                    extra_payload["items"] = provider_lines
+                extra_payload.setdefault("primary_provider", primary_provider_value)
+                facility_val = _meta_value("facility", "").strip()
+                if facility_val:
+                    extra_payload.setdefault("facility", facility_val)
+            _add_section(slug, heading, body, kind="mcc", extra=extra_payload)
+
+        page_sources: List[Dict[str, Any]] = []
+        if doc_metadata:
+            pages_meta = doc_metadata.get("pages")
+            if isinstance(pages_meta, list):
+                for idx, page in enumerate(pages_meta, start=1):
+                    if not isinstance(page, dict):
+                        continue
+                    text_value = str(page.get("text") or "").strip()
+                    if not text_value:
+                        continue
+                    page_sources.append(
+                        {
+                            "page_number": page.get("page_number")
+                            or page.get("pageNumber")
+                            or idx,
+                            "text": text_value,
+                            "ocr_confidence": page.get("confidence"),
+                            "source": "ocr_page",
+                        }
+                    )
+
+        claims, evidence_spans, claims_notice = build_claims_from_sections(
+            sections=sections_contract,
+            evidence_sources=page_sources,
+            max_claims=12,
+        )
+
+        contract_metadata: Dict[str, Any] = {
+            "source": "refactored_summariser",
+            "chunk_count": len(chunked),
+            "avg_chunk_chars": avg_chunk_chars,
+            "summary_chars": summary_chars,
+            "diagnoses_count": len(diagnoses),
+            "providers_count": len(providers),
+            "medications_count": len(medications),
+        }
+        if doc_metadata:
+            for key in ("document_id", "job_id", "object_uri"):
+                value = doc_metadata.get(key)
+                if value:
+                    contract_metadata[key] = value
+            facility_val_obj = doc_metadata.get("facility")
+            if isinstance(facility_val_obj, str) and facility_val_obj:
+                contract_metadata["facility"] = facility_val_obj
+            elif facility_val_obj:
+                contract_metadata["facility"] = str(facility_val_obj)
+
+        contract = SummaryContract(
+            schema_version=resolve_schema_version(),
+            sections=sections_contract,
+            claims=claims,
+            evidence_spans=evidence_spans,
+            metadata=contract_metadata,
+            claims_notice=claims_notice,
+        )
+
         _LOG.info(
             "summariser_merge_complete",
             extra={
@@ -857,6 +986,7 @@ class RefactoredSummariser:
                 "chunk_count": len(chunked),
                 "avg_chunk_chars": avg_chunk_chars,
                 "summary_chars": summary_chars,
+                "schema_version": contract.schema_version,
                 "list_sections": {
                     "diagnoses": len(diagnoses),
                     "providers": len(providers),
@@ -864,7 +994,7 @@ class RefactoredSummariser:
                 },
             },
         )
-        return display
+        return contract.to_dict()
 
     async def summarise_async(
         self,
@@ -1106,7 +1236,7 @@ class RefactoredSummariser:
         chunk_count: int,
         doc_metadata: Optional[Dict[str, Any]] = None,
         context: Optional[Dict[str, Any]] = None,
-    ) -> str:
+    ) -> tuple[str, List[tuple[str, str]], Dict[str, List[str]]]:
         context = context or {}
         overview_lines = sections.get("overview") or [
             "The provided medical record segments were analysed to extract clinically relevant information."
@@ -1146,7 +1276,16 @@ class RefactoredSummariser:
         else:
             provider_roster = []
 
-        summary_text = summary_formatter.build_mcc_bible_summary(
+        provider_lines = []
+        if provider_seen:
+            provider_lines.append(provider_seen)
+        else:
+            provider_lines.append("Provider not documented.")
+        if facility:
+            provider_lines.append(f"Facility: {facility}")
+        provider_lines.append(f"Document processed in {chunk_count} chunk(s).")
+
+        sections_pairs = summary_formatter.build_mcc_bible_sections(
             chunk_count=chunk_count,
             facility=facility,
             provider_seen=provider_seen,
@@ -1156,6 +1295,13 @@ class RefactoredSummariser:
             diagnoses=diagnoses,
             healthcare_providers=provider_roster,
             medications=medications,
+        )
+        cleaned_sections: List[tuple[str, str]] = []
+        for heading, body in sections_pairs:
+            cleaned_body = _strip_noise_lines(body)
+            cleaned_sections.append((heading, cleaned_body.strip()))
+        summary_text = "\n\n".join(
+            f"{heading}:\n{body}" for heading, body in cleaned_sections if body
         )
         summary_text = _strip_noise_lines(summary_text)
         if len(summary_text) < self.min_summary_chars:
@@ -1178,7 +1324,15 @@ class RefactoredSummariser:
                     filler = (filler_fragment + " ") * repeats
                     summary_text = summary_text + "\n\n" + filler[: needed + 20]
                     summary_text = _strip_noise_lines(summary_text)
-        return summary_text.strip()
+        return summary_text.strip(), cleaned_sections, {
+            "provider_seen": provider_lines,
+            "reason_for_visit": reason_lines,
+            "clinical_findings": clinical_findings,
+            "treatment_follow_up_plan": plan_lines,
+            "diagnoses": diagnoses,
+            "healthcare_providers": provider_roster,
+            "medications": medications,
+        }
 
 
 __all__ = [

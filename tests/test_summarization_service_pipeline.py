@@ -92,4 +92,4 @@ async def test_summarization_service_produces_final_message():
     assert storage_message.job_id == "job-123"
     assert storage_message.per_chunk_summaries
     assert len(storage_message.per_chunk_summaries) == 2
-    assert storage_message.final_summary.startswith("summary")
+    assert "sections" in storage_message.final_summary

@@ -102,7 +102,7 @@ def test_storage_request_message_round_trip() -> None:
     request = StorageRequestMessage(
         job_id="job-5",
         trace_id="trace-5",
-        final_summary="Final output",
+        final_summary={"schema_version": "test", "sections": []},
         per_chunk_summaries=[summary],
         object_uri="gs://bucket/out.pdf",
         metadata={"source_uri": "gs://bucket/in.pdf"},
@@ -111,7 +111,7 @@ def test_storage_request_message_round_trip() -> None:
     # Attributes may include metadata entries for downstream consumers.
     attrs["extra"] = "value"
     restored = StorageRequestMessage.from_pubsub(data, attrs)
-    assert restored.final_summary == "Final output"
+    assert restored.final_summary["schema_version"] == "test"
     assert len(restored.per_chunk_summaries) == 1
     assert restored.metadata["source_uri"] == "gs://bucket/in.pdf"
     assert restored.metadata["extra"] == "value"

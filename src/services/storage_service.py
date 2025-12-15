@@ -6,7 +6,7 @@ import json
 import logging
 import time
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Any, Mapping, Protocol
 
 from ..models.events import StorageRequestMessage, SummaryResultMessage
 from .interfaces import MetricsClient, PubSubPublisher
@@ -22,7 +22,7 @@ class SummaryRepository(Protocol):
         self,
         *,
         job_id: str,
-        final_summary: str,
+        final_summary: Mapping[str, Any],
         per_chunk_summaries: list[SummaryResultMessage],
         metadata: dict[str, str],
     ) -> None: ...

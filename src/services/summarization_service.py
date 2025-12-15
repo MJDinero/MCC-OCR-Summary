@@ -6,7 +6,7 @@ import json
 import logging
 import time
 from dataclasses import dataclass
-from typing import AsyncIterator, Protocol
+from typing import Any, AsyncIterator, Protocol
 
 from tenacity import AsyncRetrying, stop_after_attempt, wait_random_exponential
 
@@ -16,6 +16,7 @@ from ..models.events import (
     SummaryRequestMessage,
     SummaryResultMessage,
 )
+from ..models.summary_contract import build_contract_from_text
 from ..utils.redact import redact_mapping
 from .chunker import Chunker
 from .interfaces import MetricsClient, PubSubPublisher
@@ -110,6 +111,11 @@ class SummarizationService:
                 doc_type=doc_type,
                 max_words=self.config.max_words,
             )
+            chunk_meta = dict(message.metadata or {})
+            if "page_start" not in chunk_meta:
+                chunk_meta["page_start"] = str(message.page_range[0])
+            if "page_end" not in chunk_meta:
+                chunk_meta["page_end"] = str(message.page_range[1])
             summary_message = SummaryResultMessage(
                 job_id=message.job_id,
                 chunk_id=message.chunk_id,
@@ -127,7 +133,7 @@ class SummarizationService:
                 ),
                 tokens_used=len(chunk_summary),
                 aggregate=False,
-                metadata=message.metadata or {},
+                metadata=chunk_meta,
             )
             summary_message.metadata["partial_count"] = str(len(partial_summaries))
             await self.store.write_chunk_summary(record=summary_message)
@@ -235,10 +241,33 @@ class SummarizationService:
             doc_type=doc_type,
             max_words=self.config.max_words,
         )
+        evidence_sources: list[dict[str, Any]] = []
+        for idx, summary in enumerate(summaries, start=1):
+            page_value = summary.metadata.get("page_start") if summary.metadata else None
+            try:
+                page_number = int(page_value) if page_value is not None else idx
+            except (TypeError, ValueError):
+                page_number = idx
+            evidence_sources.append(
+                {
+                    "page": page_number,
+                    "text": summary.summary_text,
+                    "source": "chunk_summary",
+                }
+            )
+        contract = build_contract_from_text(
+            final_summary,
+            metadata={
+                "job_id": message.job_id,
+                "trace_id": message.trace_id,
+                "doc_type": doc_type,
+            },
+            evidence_sources=evidence_sources,
+        )
         storage_message = StorageRequestMessage(
             job_id=message.job_id,
             trace_id=message.trace_id,
-            final_summary=final_summary,
+            final_summary=contract.to_dict(),
             per_chunk_summaries=summaries,
             object_uri=(
                 message.metadata.get("source_uri", "") if message.metadata else ""

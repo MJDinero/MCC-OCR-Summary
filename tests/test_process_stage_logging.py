@@ -6,6 +6,7 @@ from typing import Any, Dict, List
 import pytest
 
 from src.api.process import _execute_pipeline
+from src.models.summary_contract import SummaryContract, SummarySection
 
 
 class _FakeRequest:
@@ -25,17 +26,38 @@ class _StubOCRService:
 
 
 class _StubSummariser:
-    async def summarise_async(self, text: str) -> Dict[str, str]:
+    def _contract(self, text: str) -> Dict[str, Any]:
         assert text
-        return {
-            "Medical Summary": "B" * 400,
-            "Billing Highlights": "C" * 40,
-        }
+        contract = SummaryContract(
+            schema_version="test",
+            sections=[
+                SummarySection(
+                    slug="medical_summary",
+                    title="Medical Summary",
+                    content="B" * 400,
+                    ordinal=1,
+                    kind="narrative",
+                )
+            ],
+            claims=[],
+            evidence_spans=[],
+            metadata={"source": "stub"},
+            claims_notice="stub",
+        )
+        return contract.to_dict()
+
+    def summarise(self, text: str, *, doc_metadata: Dict[str, Any] | None = None) -> Dict[str, Any]:
+        return self._contract(text)
+
+    async def summarise_async(
+        self, text: str, *, doc_metadata: Dict[str, Any] | None = None
+    ) -> Dict[str, Any]:
+        return self._contract(text)
 
 
 class _StubPDFWriter:
     def build(self, summary: Dict[str, Any]) -> bytes:
-        assert summary
+        assert summary.get("sections")
         return b"%PDF-1.4\nunit\n"
 
 

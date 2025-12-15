@@ -12,9 +12,10 @@ from dataclasses import dataclass, field
 from datetime import timedelta
 from io import BytesIO
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple
 
 from src.config import get_config
+from src.models.summary_contract import SummaryContract
 from src.services.pipeline import (
     PipelineStateStore,
     PipelineStatus,
@@ -47,16 +48,36 @@ def _wrap_text(block: str, width: int) -> List[str]:
 
 
 def _normalise_summary(
-    summary: Dict[str, str] | str,
-) -> Tuple[List[Tuple[str, str]], Dict[str, List[str]]]:
+    summary: Mapping[str, Any] | str,
+) -> Tuple[List[Tuple[str, str]], Dict[str, List[str]], str | None]:
     """Build ordered sections and capture structured index payloads."""
+
     if isinstance(summary, str):
         body = summary.strip()
         if not body:
             raise PDFGenerationError("Summary text empty")
-        return [("Summary", body)], {}
+        return [("Summary", body)], {}, None
+
     if not summary:
         raise PDFGenerationError("Summary structure empty")
+
+    if "sections" in summary:
+        contract = SummaryContract.from_mapping(summary)
+        sections = [(section.title, section.content) for section in contract.sections]
+        indices: Dict[str, List[str]] = {
+            "Diagnoses": [],
+            "Providers": [],
+            "Medications / Prescriptions": [],
+        }
+        for section in contract.sections:
+            extra_items = section.extra.get("items") if isinstance(section.extra, dict) else None
+            if section.slug == "diagnoses" and extra_items:
+                indices["Diagnoses"] = list(extra_items)
+            elif section.slug == "healthcare_providers" and extra_items:
+                indices["Providers"] = list(extra_items)
+            elif section.slug == "medications" and extra_items:
+                indices["Medications / Prescriptions"] = list(extra_items)
+        return sections, indices, contract.schema_version
 
     order = [
         "Patient Information",
@@ -103,7 +124,8 @@ def _normalise_summary(
         for heading, items in indices.items():
             content = "N/A" if not items else "\n".join(f"• {item}" for item in items)
             sections.append((heading, content))
-    return sections, indices
+    schema_version = summary.get("schema_version") if isinstance(summary.get("schema_version"), str) else None
+    return sections, indices, schema_version
 
 
 def _ensure_bytes(payload: bytes | bytearray | memoryview | BytesIO) -> bytes:
@@ -337,7 +359,7 @@ class PDFWriterRefactored:
         *,
         log_context: Optional[Dict[str, Any]] = None,
     ) -> bytes:
-        sections, indices = _normalise_summary(summary)
+        sections, indices, schema_version = _normalise_summary(summary)
         formatted_sections: List[Tuple[str, str]] = []
         for heading, body in sections:
             if heading == "Structured Indices" and body == "=" * 48:
@@ -350,7 +372,8 @@ class PDFWriterRefactored:
         context.setdefault("component", "pdf_writer")
         context.setdefault("severity", "INFO")
         context.setdefault(
-            "schema_version", os.getenv("SUMMARY_SCHEMA_VERSION", "2025-10-01")
+            "schema_version",
+            schema_version or os.getenv("SUMMARY_SCHEMA_VERSION", "2025-10-01"),
         )
         context.setdefault("shard_id", "aggregate")
         context.setdefault("attempt", 1)

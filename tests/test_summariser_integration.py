@@ -1,5 +1,6 @@
 import pytest
 
+from src.models.summary_contract import SummaryContract
 from src.services.summariser_refactored import RefactoredSummariser, ChunkSummaryBackend
 
 pytestmark = pytest.mark.integration
@@ -36,6 +37,10 @@ def test_large_input_multichunk_merge():
     summariser.chunk_hard_max = 120
     big_text = " ".join(f"word{i}" for i in range(800))
     out = summariser.summarise(big_text)
-    assert out["Medical Summary"]
-    assert "_diagnoses_list" in out and "D1" in out["_diagnoses_list"]
+    contract = SummaryContract.from_mapping(out)
+    assert contract.as_text()
+    diagnoses_section = next(
+        section for section in contract.sections if section.slug == "diagnoses"
+    )
+    assert diagnoses_section.extra.get("items")
     assert backend.calls >= 2

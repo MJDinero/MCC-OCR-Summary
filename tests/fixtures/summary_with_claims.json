@@ -1,5 +1,21 @@
 {
-  "Medical Summary": "Provider Seen:\\nDr. Example\\n\nReason for Visit:\\n- Evaluation for back pain",
+  "schema_version": "test-schema",
+  "sections": [
+    {
+      "slug": "provider_seen",
+      "title": "Provider Seen",
+      "content": "Dr. Example",
+      "ordinal": 1,
+      "kind": "mcc"
+    },
+    {
+      "slug": "reason_for_visit",
+      "title": "Reason for Visit",
+      "content": "- Evaluation for back pain",
+      "ordinal": 2,
+      "kind": "mcc"
+    }
+  ],
   "_claims": [
     {
       "claim_id": "c1",
@@ -7,7 +23,9 @@
       "value": "Dr. Example",
       "field_type": "provider_seen",
       "status": "supported",
-      "evidence_refs": ["span-1"]
+      "evidence_refs": [
+        "span-1"
+      ]
     },
     {
       "claim_id": "c2",
@@ -15,7 +33,9 @@
       "value": "Evaluation for back pain",
       "field_type": "reason_for_visit",
       "status": "supported",
-      "evidence_refs": ["span-2"]
+      "evidence_refs": [
+        "span-2"
+      ]
     }
   ],
   "_evidence_spans": [
@@ -23,13 +43,15 @@
       "span_id": "span-1",
       "page": 1,
       "text_snippet": "Dr. Example evaluated the patient.",
-      "ocr_confidence": 0.93
+      "confidence": 0.93,
+      "source": "fixture"
     },
     {
       "span_id": "span-2",
       "page": 1,
       "text_snippet": "Evaluation for back pain was performed on 12/01.",
-      "ocr_confidence": 0.9
+      "confidence": 0.9,
+      "source": "fixture"
     }
   ]
 }

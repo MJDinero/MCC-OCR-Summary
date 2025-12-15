@@ -9,6 +9,7 @@ from types import SimpleNamespace
 import pytest
 
 from src.errors import SummarizationError
+from src.models.summary_contract import SummaryContract
 from src.services.summariser_refactored import (
     RefactoredSummariser,
     ChunkSummaryBackend,
@@ -96,7 +97,8 @@ def test_refactored_summary_structure_and_length() -> None:
         backend=backend, target_chars=300, max_chars=420, overlap_chars=60
     )
     summary = summariser.summarise(text, doc_metadata={"facility": "MCC Neurology"})
-    medical_summary = summary["Medical Summary"]
+    contract = SummaryContract.from_mapping(summary)
+    medical_summary = contract.as_text()
 
     assert "Provider Seen:" in medical_summary
     assert "Reason for Visit:" in medical_summary
@@ -104,9 +106,16 @@ def test_refactored_summary_structure_and_length() -> None:
     assert "Treatment / Follow-up Plan:" in medical_summary
     assert len(medical_summary) >= summariser.min_summary_chars
 
-    diagnoses_lines = summary["_diagnoses_list"].splitlines()
-    assert "G43.709 Chronic migraine without aura" in diagnoses_lines[0]
-    assert summary["_providers_list"].strip().startswith("Dr. Alicia Carter")
+    diagnoses_section = next(
+        section for section in contract.sections if section.slug == "diagnoses"
+    )
+    diagnoses_items = diagnoses_section.extra.get("items", [])
+    assert diagnoses_items and "G43.709 Chronic migraine without aura" in diagnoses_items[0]
+    providers_section = next(
+        section for section in contract.sections if section.slug == "healthcare_providers"
+    )
+    providers_items = providers_section.extra.get("items", [])
+    assert providers_items and providers_items[0].startswith("Dr. Alicia Carter")
 
 
 def test_refactored_summary_requires_non_empty_text() -> None:
@@ -129,7 +138,7 @@ def test_compose_summary_pads_short_outputs() -> None:
     )
     summariser = RefactoredSummariser(backend=backend, min_summary_chars=300)
     result = summariser.summarise("Tdap booster provided.")
-    assert len(result["Medical Summary"]) >= 300
+    assert len(SummaryContract.from_mapping(result).as_text()) >= 300
 
 
 def test_openai_backend_schema_mismatch_raises(monkeypatch):
@@ -408,5 +417,6 @@ def test_cli_fallback_to_heuristic_backend(monkeypatch, tmp_path):
     )
 
     summary_output = json.loads(output_path.read_text(encoding="utf-8"))
-    assert summary_output["Medical Summary"]
-    assert "blood pressure" in summary_output["Medical Summary"].lower()
+    summary_text = SummaryContract.from_mapping(summary_output).as_text()
+    assert summary_text
+    assert "blood pressure" in summary_text.lower()

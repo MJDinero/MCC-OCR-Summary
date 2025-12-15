@@ -72,6 +72,19 @@ python3 scripts/validate_summary.py --pdf-path tests/fixtures/validator_sample.p
 
 Environment variables can be set via `.env` (see `.env.template`). Core configuration lives in `src/config.py`; overrides can come from env or YAML.
 
+### Canonical Summary Contract
+
+All synchronous and asynchronous paths now emit the same `SummaryContract` payload:
+
+- `schema_version` – SemVer-like identifier (defaults to `SUMMARY_SCHEMA_VERSION` from config).
+- `sections` – Ordered list of objects (`slug`, `title`, `content`, `ordinal`, `kind`, optional `extra.items`) covering patient context + the seven MCC headings.
+- `_claims` – Machine-readable claims referencing evidence span IDs. When OCR page text is available, claims are generated automatically; otherwise `_claims_notice` explains why the list is empty.
+- `_evidence_spans` – Array of `{span_id, page, text_snippet, confidence, source}` objects derived from OCR pages (API path) or chunk metadata (Pub/Sub pipeline).
+
+`src/models/summary_contract.py` centralises the dataclasses, builders, and helpers used by `RefactoredSummariser`, `PDFWriterRefactored`, the FastAPI `/process` route, and the Pub/Sub storage flow. Use `ensure_contract_dict()` whenever loading legacy payloads, and rely on `build_contract_from_text()` for fallback conversions.
+
+The validator CLI enforces structural headings for every PDF and inspects `_claims`/`_evidence_spans` when `--summary-json` is provided. Missing evidence emits a warning by default, but `--strict-evidence` forces a non-zero exit when claims are absent or incomplete.
+
 ### Cloud Run Deployment
 
 1. Build the image:

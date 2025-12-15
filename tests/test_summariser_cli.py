@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from src.models.summary_contract import SummaryContract
 from src.services import summariser_refactored as ref_mod
 
 
@@ -19,7 +20,8 @@ def test_refactored_cli_dry_run(tmp_path) -> None:
     )
     assert output_path.exists()
     data = json.loads(output_path.read_text(encoding="utf-8"))
-    medical_summary = data["Medical Summary"]
+    contract = SummaryContract.from_mapping(data)
+    medical_summary = contract.as_text()
     assert len(medical_summary) >= 400
     assert "Provider Seen:" in medical_summary
     assert "Reason for Visit:" in medical_summary
