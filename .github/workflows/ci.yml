@@ -41,7 +41,7 @@ jobs:
             "type": "service_account",
             "project_id": "test-project",
             "private_key_id": "mock-key-id",
-            "private_key": "-----BEGIN PRIVATE KEY-----\nMIIBOgIBAAJBALfakekeydata\n-----END PRIVATE KEY-----\n",
+            "private_key": "-----BEGIN PRIVATE KEY-----\nbW9jay1rZXk=\n-----END PRIVATE KEY-----\n",
             "client_email": "mock-sa@test-project.iam.gserviceaccount.com",
             "client_id": "12345678901234567890",
             "auth_uri": "https://accounts.google.com/o/oauth2/auth",
