@@ -12,7 +12,7 @@ def _format_bullets(lines: Sequence[str], *, fallback: str) -> str:
     return "\n".join(f"- {entry}" for entry in entries)
 
 
-def build_mcc_bible_summary(
+def build_mcc_bible_sections(
     *,
     chunk_count: int,
     facility: str | None,
@@ -23,7 +23,7 @@ def build_mcc_bible_summary(
     diagnoses: Sequence[str],
     healthcare_providers: Sequence[str],
     medications: Sequence[str],
-) -> str:
+) -> list[tuple[str, str]]:
     provider_lines = []
     if provider_seen:
         provider_lines.append(provider_seen)
@@ -67,6 +67,32 @@ def build_mcc_bible_summary(
             ),
         ),
     ]
+    return sections
+
+
+def build_mcc_bible_summary(
+    *,
+    chunk_count: int,
+    facility: str | None,
+    provider_seen: str | None,
+    reason_lines: Sequence[str],
+    clinical_findings: Sequence[str],
+    care_plan: Sequence[str],
+    diagnoses: Sequence[str],
+    healthcare_providers: Sequence[str],
+    medications: Sequence[str],
+) -> str:
+    sections = build_mcc_bible_sections(
+        chunk_count=chunk_count,
+        facility=facility,
+        provider_seen=provider_seen,
+        reason_lines=reason_lines,
+        clinical_findings=clinical_findings,
+        care_plan=care_plan,
+        diagnoses=diagnoses,
+        healthcare_providers=healthcare_providers,
+        medications=medications,
+    )
     return "\n\n".join(
         f"{heading}:\n{body.strip()}"
         for heading, body in sections

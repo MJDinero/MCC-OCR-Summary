@@ -143,7 +143,7 @@ async def test_storage_service_metrics_success():
     message = StorageRequestMessage(
         job_id="job-2",
         trace_id="trace-2",
-        final_summary="final text",
+        final_summary={"schema_version": "test", "sections": []},
         per_chunk_summaries=[
             SummaryResultMessage(
                 job_id="job-2",
@@ -186,7 +186,7 @@ async def test_storage_service_failure_to_dlq():
     message = StorageRequestMessage(
         job_id="job-fail",
         trace_id="trace-fail",
-        final_summary="final text",
+        final_summary={"schema_version": "test", "sections": []},
         per_chunk_summaries=[],
         object_uri="gs://bucket/file.pdf",
     )

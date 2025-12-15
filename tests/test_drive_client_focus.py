@@ -332,6 +332,10 @@ def test_upload_pdf_validations(monkeypatch):
     with pytest.raises(ValueError):
         drive_client.upload_pdf(b"not-pdf", "name.pdf")
 
+    monkeypatch.delenv("DRIVE_REPORT_FOLDER_ID", raising=False)
+    monkeypatch.delenv("DRIVE_OUTPUT_FOLDER_ID", raising=False)
+    monkeypatch.delenv("OUTPUT_FOLDER_ID", raising=False)
+
     class _Cfg:
         drive_report_folder_id = ""
         drive_shared_drive_id = None

@@ -8,7 +8,7 @@ import base64
 import logging
 import os
 import json
-from typing import Any, Callable, Dict, Mapping, Optional, Tuple
+from typing import Any, Callable, Dict, Mapping, Optional, Tuple, TYPE_CHECKING
 from uuid import uuid4
 
 from fastapi import FastAPI, HTTPException, Request
@@ -71,7 +71,21 @@ else:  # pragma: no cover - fallback for older client libraries
         ExecutionsClient as _ExecutionsClient,
     )
 
-_wf_client = _ExecutionsClient()
+if TYPE_CHECKING:
+    from google.cloud.workflows.executions_v1 import (
+        ExecutionsClient as ExecutionsClientType,
+    )
+else:  # pragma: no cover - runtime type fallback
+    ExecutionsClientType = Any
+
+_wf_client: ExecutionsClientType | None = None
+
+
+def _get_workflow_client() -> ExecutionsClientType:
+    global _wf_client
+    if _wf_client is None:
+        _wf_client = _ExecutionsClient()
+    return _wf_client
 
 
 def _truncate_event(event: Any, limit: int = 512) -> str:
@@ -309,7 +323,7 @@ async def ingest(request: Request) -> Dict[str, Any]:
     workflow_name = _env("WORKFLOW_NAME", "docai-pipeline")
     parent = f"projects/{project}/locations/{region}/workflows/{workflow_name}"
 
-    execution = _wf_client.create_execution(
+    execution = _get_workflow_client().create_execution(
         request={
             "parent": parent,
             "execution": {"argument": json.dumps(argument)},

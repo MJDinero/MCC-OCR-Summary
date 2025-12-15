@@ -192,7 +192,7 @@ class StorageRequestMessage:
 
     job_id: str
     trace_id: str
-    final_summary: str
+    final_summary: dict[str, Any]
     per_chunk_summaries: list[SummaryResultMessage]
     object_uri: str
     metadata: dict[str, str] = field(default_factory=dict)

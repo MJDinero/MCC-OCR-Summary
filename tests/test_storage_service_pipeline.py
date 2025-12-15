@@ -36,7 +36,7 @@ async def test_storage_service_persists_summary():
     message = StorageRequestMessage(
         job_id="job-1",
         trace_id="trace-1",
-        final_summary="The final summary text.",
+        final_summary={"schema_version": "test", "sections": []},
         per_chunk_summaries=[
             SummaryResultMessage(
                 job_id="job-1",
@@ -78,7 +78,7 @@ async def test_storage_service_sends_to_dlq_on_failure():
     message = StorageRequestMessage(
         job_id="job-2",
         trace_id="trace-2",
-        final_summary="Final summary",
+        final_summary={"schema_version": "test", "sections": []},
         per_chunk_summaries=[],
         object_uri="gs://bucket/doc.pdf",
     )

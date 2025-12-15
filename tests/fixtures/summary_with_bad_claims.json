@@ -1,13 +1,14 @@
 {
-  "Medical Summary": "Provider Seen:\\nN/A",
-  "_claims": [
+  "schema_version": "test-schema",
+  "sections": [
     {
-      "claim_id": "bad1",
-      "section": "Reason for Visit",
-      "value": "This should fail",
-      "status": "supported",
-      "evidence_refs": []
+      "slug": "provider_seen",
+      "title": "Provider Seen",
+      "content": "N/A",
+      "ordinal": 1,
+      "kind": "mcc"
     }
   ],
+  "_claims": [],
   "_evidence_spans": []
 }

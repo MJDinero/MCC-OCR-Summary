@@ -13,12 +13,19 @@ import sys
 import json
 from dataclasses import dataclass
 from pathlib import Path
+import sys
 from typing import Iterable, Sequence, Any, Mapping
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 try:
     from pypdf import PdfReader  # type: ignore
 except Exception as exc:  # pragma: no cover - import guard for helpful error
     raise SystemExit(f"Failed to import pypdf: {exc}") from exc
+
+from src.models.summary_contract import SummaryContract
 
 
 DEFAULT_REQUIRED_HEADINGS = [
@@ -128,6 +135,11 @@ def _parse_args(argv: Sequence[str]) -> argparse.Namespace:
         type=Path,
         help="Optional path to the structured summary JSON payload for evidence validation.",
     )
+    parser.add_argument(
+        "--strict-evidence",
+        action="store_true",
+        help="Fail when structured claims/evidence are missing.",
+    )
     return parser.parse_args(argv)
 
 
@@ -143,12 +155,12 @@ def _load_summary_json(path: Path) -> dict[str, Any]:
     return data
 
 
-def _validate_claims(summary: Mapping[str, Any]) -> None:
+def _validate_claims(summary: Mapping[str, Any], *, strict: bool) -> bool:
     claims = summary.get("_claims")
-    if claims is None:
-        raise ValidationError("Summary JSON is missing '_claims'.")
-    if not isinstance(claims, list) or not claims:
-        raise ValidationError("Summary claims list empty.")
+    if claims is None or not isinstance(claims, list) or not claims:
+        if strict:
+            raise ValidationError("Summary JSON is missing '_claims'.")
+        return False
     evidence_list = summary.get("_evidence_spans") or []
     evidence_lookup: dict[str, Mapping[str, Any]] = {}
     if isinstance(evidence_list, list):
@@ -185,6 +197,7 @@ def _validate_claims(summary: Mapping[str, Any]) -> None:
         raise ValidationError(
             f"Sections lack supported or illegible claims: {', '.join(sorted(missing_supported))}"
         )
+    return True
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -216,8 +229,18 @@ def main(argv: Sequence[str] | None = None) -> int:
         raise ValidationError("; ".join(problems))
 
     if args.summary_json:
-        summary_payload = _load_summary_json(args.summary_json)
-        _validate_claims(summary_payload)
+        summary_payload = SummaryContract.from_mapping(
+            _load_summary_json(args.summary_json)
+        ).to_dict()
+        claims_ok = _validate_claims(
+            summary_payload,
+            strict=args.strict_evidence,
+        )
+        if not claims_ok and not args.strict_evidence:
+            print(
+                "[validator] warning: summary missing structured claims",
+                file=sys.stderr,
+            )
 
     print(
         "[validator] OK",

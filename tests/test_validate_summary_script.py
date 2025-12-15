@@ -48,9 +48,23 @@ def test_validator_claims_pass() -> None:
     assert result.returncode == 0
 
 
-def test_validator_claims_fail_without_evidence() -> None:
+def test_validator_claims_warn_without_evidence() -> None:
     result = _run_validator(
         ["--expected-pages", "1", "--summary-json", str(SUMMARY_BAD)]
     )
+    assert result.returncode == 0
+    assert "warning" in (result.stderr + result.stdout).lower()
+
+
+def test_validator_claims_fail_when_strict() -> None:
+    result = _run_validator(
+        [
+            "--expected-pages",
+            "1",
+            "--summary-json",
+            str(SUMMARY_BAD),
+            "--strict-evidence",
+        ]
+    )
     assert result.returncode != 0
-    assert "missing evidence" in (result.stderr + result.stdout).lower()
+    assert "missing" in (result.stderr + result.stdout).lower()

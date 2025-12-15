@@ -16,10 +16,11 @@ from src.api.ingest import router as ingest_router
 from src.api.process import router as process_router
 from src.errors import ValidationError
 from src.logging_setup import configure_logging
+from src.models.summary_contract import SummaryContract, SummarySection, resolve_schema_version
 from src.services import drive_client as drive_client_module
 from src.services.docai_helper import OCRService
 from src.services.metrics import PrometheusMetrics, NullMetrics
-from src.services.pdf_writer import MinimalPDFBackend, PDFWriter
+from src.services.pdf_writer_refactored import PDFWriterRefactored
 from src.services.pipeline import (
     create_state_store_from_env,
     create_workflow_launcher_from_env,
@@ -107,18 +108,51 @@ def _build_summariser(stub_mode: bool, *, cfg) -> Any:
             chunk_target_chars = 1200
             chunk_hard_max = 1800
 
-            def summarise(self, text: str) -> dict[str, str]:
+            def _summarise_contract(
+                self, text: str, doc_metadata: dict[str, Any] | None = None
+            ) -> dict[str, Any]:
                 payload = (text or "").strip()
                 trimmed = payload if len(payload) <= 2000 else payload[:2000] + "..."
-                return {
-                    "Patient Information": "N/A",
-                    "Medical Summary": trimmed or "N/A",
-                    "Billing Highlights": "N/A",
-                    "Legal / Notes": "N/A",
-                }
+                patient_info = (
+                    str(doc_metadata.get("patient_info")).strip()
+                    if doc_metadata and doc_metadata.get("patient_info")
+                    else "Not provided"
+                )
+                sections = [
+                    SummarySection(
+                        slug="patient_information",
+                        title="Patient Information",
+                        content=patient_info,
+                        ordinal=1,
+                        kind="context",
+                    ),
+                    SummarySection(
+                        slug="medical_summary",
+                        title="Medical Summary",
+                        content=trimmed or "N/A",
+                        ordinal=2,
+                        kind="narrative",
+                    ),
+                ]
+                contract = SummaryContract(
+                    schema_version=resolve_schema_version(),
+                    sections=sections,
+                    claims=[],
+                    evidence_spans=[],
+                    metadata={"source": "stub", "summary_chars": len(trimmed)},
+                    claims_notice="stub_mode",
+                )
+                return contract.to_dict()
 
-            async def summarise_async(self, text: str) -> dict[str, str]:
-                return self.summarise(text)
+            def summarise(
+                self, text: str, *, doc_metadata: dict[str, Any] | None = None
+            ) -> dict[str, Any]:
+                return self._summarise_contract(text, doc_metadata)
+
+            async def summarise_async(
+                self, text: str, *, doc_metadata: dict[str, Any] | None = None
+            ) -> dict[str, Any]:
+                return self._summarise_contract(text, doc_metadata)
 
         return _StubSummariser()
 
@@ -178,7 +212,7 @@ def create_app() -> FastAPI:
         app.state.ocr_service = OCRService(processor_id=cfg.doc_ai_processor_id, config=cfg)  # type: ignore[assignment]
 
     app.state.summariser = _build_summariser(stub_mode, cfg=cfg)
-    app.state.pdf_writer = PDFWriter(MinimalPDFBackend())
+    app.state.pdf_writer = PDFWriterRefactored()
     app.state.drive_client = _DriveClientAdapter(stub=stub_mode, config=cfg)
 
     internal_token = resolve_secret_env(

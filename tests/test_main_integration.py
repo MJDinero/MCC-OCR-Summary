@@ -1,7 +1,10 @@
+from typing import Any
+
 import pytest
 from fastapi.testclient import TestClient
 
 from src.main import create_app
+from src.models.summary_contract import SummaryContract, SummarySection
 
 pytestmark = pytest.mark.integration
 
@@ -15,11 +18,30 @@ class StubSummariser:
     chunk_target_chars = 1200
     chunk_hard_max = 1800
 
+    def _contract(self, text: str) -> dict[str, Any]:  # pragma: no cover - simple stub
+        sections = [
+            SummarySection(
+                slug="medical_summary",
+                title="Medical Summary",
+                content="Refactored summary output " + ("-" * 520),
+                ordinal=1,
+                kind="narrative",
+            )
+        ]
+        return SummaryContract(
+            schema_version="test",
+            sections=sections,
+            claims=[],
+            evidence_spans=[],
+            metadata={"source": "test"},
+            claims_notice="stub",
+        ).to_dict()
+
     def summarise(self, text: str):  # pragma: no cover - simple stub
-        return {"Medical Summary": "Refactored summary output " + ("-" * 520)}
+        return self._contract(text)
 
     async def summarise_async(self, text: str):  # pragma: no cover - reuse sync result
-        return self.summarise(text)
+        return self._contract(text)
 
 
 def test_health_and_ingest(monkeypatch):
@@ -51,6 +73,6 @@ def test_health_and_ingest(monkeypatch):
     assert resp.status_code == 202
     body = resp.json()
     assert body["workflow_execution"] == "exec/mock"
-    summary = app.state.summariser.summarise("sample text")
-    summary_text = summary.get("Medical Summary", "")
+    summary_dict = app.state.summariser.summarise("sample text")
+    summary_text = SummaryContract.from_mapping(summary_dict).as_text()
     assert len(summary_text) >= 500

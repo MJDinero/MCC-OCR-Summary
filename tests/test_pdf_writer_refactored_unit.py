@@ -24,11 +24,41 @@ def test_normalise_summary_builds_indices():
         "_medications_list": "Med1",
         "Extra Section": "Value",
     }
-    sections, indices = pdf_mod._normalise_summary(summary)
+    sections, indices, schema_version = pdf_mod._normalise_summary(summary)
     headings = [title for title, _ in sections]
     assert "Structured Indices" in headings
     assert indices["Diagnoses"] == ["Dx1", "Dx2"]
     assert ("Extra Section", "Value") in sections
+    assert schema_version is None
+
+
+def test_normalise_summary_handles_contract():
+    contract = {
+        "schema_version": "test",
+        "sections": [
+            {
+                "slug": "provider_seen",
+                "title": "Provider Seen",
+                "content": "Dr Example",
+                "ordinal": 1,
+                "kind": "mcc",
+                "extra": {"items": ["Dr Example"]},
+            },
+            {
+                "slug": "diagnoses",
+                "title": "Diagnoses",
+                "content": "- Dx",
+                "ordinal": 2,
+                "kind": "mcc",
+                "extra": {"items": ["Dx"]},
+            },
+        ],
+        "_claims": [],
+        "_evidence_spans": [],
+    }
+    sections, indices, schema_version = pdf_mod._normalise_summary(contract)
+    assert schema_version == "test"
+    assert indices["Diagnoses"] == ["Dx"]
 
 
 def test_ensure_bytes_handles_variants():
