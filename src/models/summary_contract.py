@@ -6,7 +6,7 @@ import os
 import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Dict, Mapping, Sequence, cast
+from typing import Any, Dict, Mapping, Sequence
 
 DEFAULT_SUMMARY_SCHEMA_VERSION = os.getenv(
     "SUMMARY_SCHEMA_VERSION", "2025-10-01-contract-v1"

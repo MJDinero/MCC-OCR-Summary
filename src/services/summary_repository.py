@@ -19,6 +19,12 @@ from ..models.events import SummaryResultMessage
 from .storage_service import SummaryRepository
 
 
+def _serialise_final_summary(summary: Mapping[str, Any]) -> str:
+    """Render the contract to a stable JSON string for BigQuery/GCS sinks."""
+
+    return json.dumps(summary, separators=(",", ":"), sort_keys=True)
+
+
 class HybridSummaryRepository(
     SummaryRepository
 ):  # pragma: no cover - requires GCP services
@@ -58,19 +64,20 @@ class HybridSummaryRepository(
         per_chunk_summaries: Sequence[SummaryResultMessage],
         metadata: dict[str, str],
     ) -> None:
-        self._write_gcs(job_id, final_summary, per_chunk_summaries, metadata)
-        self._write_bigquery(job_id, final_summary, per_chunk_summaries, metadata)
+        final_summary_json = _serialise_final_summary(final_summary)
+        self._write_gcs(job_id, final_summary_json, per_chunk_summaries, metadata)
+        self._write_bigquery(job_id, final_summary_json, per_chunk_summaries, metadata)
 
     def _write_gcs(
         self,
         job_id: str,
-        final_summary: Mapping[str, Any],
+        final_summary_json: str,
         per_chunk_summaries: Sequence[SummaryResultMessage],
         metadata: dict[str, str],
     ) -> None:
         payload = {
             "job_id": job_id,
-            "final_summary": final_summary,
+            "final_summary": final_summary_json,
             "per_chunk_summaries": [
                 summary.summary_text for summary in per_chunk_summaries
             ],
@@ -96,7 +103,7 @@ class HybridSummaryRepository(
     def _write_bigquery(
         self,
         job_id: str,
-        final_summary: Mapping[str, Any],
+        final_summary_json: str,
         per_chunk_summaries: Sequence[SummaryResultMessage],
         metadata: dict[str, str],
     ) -> None:
@@ -105,7 +112,7 @@ class HybridSummaryRepository(
         rows = [
             {
                 "job_id": job_id,
-                "final_summary": final_summary,
+                "final_summary": final_summary_json,
                 "chunk_summaries": [
                     summary.summary_text for summary in per_chunk_summaries
                 ],
