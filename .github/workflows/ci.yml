@@ -119,7 +119,7 @@ jobs:
           fi
 
       - name: Generate SBOM (CycloneDX)
-        run: python -m cyclonedx_py requirements --format json --output artifacts/sbom.json --file requirements.txt
+        run: python -m cyclonedx_py requirements requirements.txt --of JSON -o artifacts/sbom.json --no-validate
 
       - name: Prepare redacted validator artifact
         run: |
