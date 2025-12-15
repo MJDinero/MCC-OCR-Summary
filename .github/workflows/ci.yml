@@ -102,7 +102,7 @@ jobs:
           STUB_MODE: "true"
           USE_REFACTORED_SUMMARISER: "true"
           GOOGLE_APPLICATION_CREDENTIALS: /tmp/mock-sa.json
-          SERVICE_ACCOUNT_JSON: '{"type":"service_account","project_id":"test"}'
+          SERVICE_ACCOUNT_JSON: '{"type":"service_account","project_id":"test-project","client_email":"mock-sa@test-project.iam.gserviceaccount.com","token_uri":"https://oauth2.googleapis.com/token"}'
         run: python -m pytest --cov=src -q --cov-report=term --cov-report=xml
 
       - name: Run summary validator
