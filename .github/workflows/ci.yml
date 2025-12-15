@@ -41,33 +41,33 @@ jobs:
           from pathlib import Path
 
           PRIVATE_KEY = """-----BEGIN PRIVATE KEY-----
-MIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQDRZQadZdopPLxU
-f5M1c5rc38WpKYhutDKkBSWcl50YBjL135XyCmcdRSWbEmovX0oIAgnD2jj+Iwai
-pYGa6ZfD1C6WgrkRt9cF87m/kz2AnmYmsrBVFL837ZjV2tVe/MmCv0vbNIu9WsFw
-/EGd7vBg3ZS+MqwCSVDw6QtkvuZ/Rq4L4WJ7mprofVLn+k9j6NJR4fKqNI1NpDkR
-SjV5o8Skl0iUXVEsKvMjCXRw6aJ1lLJkCwuthpEGgqCTUzXauFRiGde7kdkqsdl+
-fcGPXxmpTRWWL+md3kMLKp1cLcmWmMbo7PTnCV66iQ3pGkAteWlslXrjOYclvgq7
-2xQ+COK/AgMBAAECggEBAKX668RmUQkxEKP2QE01ZwNACeFuf6wpAJ9NSSQYdjjt
-6QVHBwfGQThNcGK8tRj58qfoXa820sh4ITFZ+iM+mMNs9MTvuB2YWURpjsqRv0Wt
-yZFRQT8f4/dESkryXQIfZOhUFKAcxcwCHaYe/zBej4JpAhfF+N0TGqrsP9DLFdC6
-WX44xvujG6kFg+5i8OxbkLMhWLU+LTt5T432S0jO1lCd5vox4FurdAdMLenM/ukJ
-3s/GGdLh8Uz+PdO3f3aCREr8t2zAnlDxvvWhDmchvshF/+t2Wx/4HytD3lC75OnA
-w1xK4sFgNHg2Il53gmT7EiZlZzKSAiM6qHSlMOb6wwkCgYEA89Y+ojqETtyye3Xa
-zpfFCqBcKZUyZN9VApZ4Gm8TMVEPi6jIcWRLz8CVa9IMzzuXvuYseLAxCiLdcIks
-3MF20tD4/8O2GyZLuyYA/dOYrkFMMlhxTGgwkBqRuP8suRTSAuRnZzZhF+emqKrx
-XX4Lx0HEo9ehzJWNtk0Pc5VdihUCgYEA29b1m5z6NiBG3M7OzViaPeaWCx99nA5h
-Sw1tQnlRpT3vX7ke1o7U/j6AzQSAThWFy4XtT4RH+CXQh436yhNtcH2N+Z+edp5s
-49Rt3Mf4jnkiSwLGnnq/M8Xw6VjtgJ5eqHmtNosqfhVTC22+hGl0XojIix29vTpi
-kQUbt9vO0oMCgYEA39enKgB0I31g8AuyMYOMJIQv9xB68bU/8h815HZhdR2IGtp4
-H/hFzFNsGE386mU3mcztuGFus3JsPHoBUCreLQwf+ZOt4mCWlxh9Qob0G8vf6jvc
-zpq7Mh7h9aVzZfjiDjulXU/DdFF5Yk+DQiOLJoGOxiYW55vHOzqk26Ob+j0CgYB9
-AaSzkfWtZXkmAesSVTmPzViwhn2UiZDFbqMcU4QbpDZDhi6E7r8quzveWJrky9RC
-wKsKtjt+XXJQQmnDEnz+pEZhFWS0Kq3cd2TpUESEL1lSsgdjAoVK2Vl+NvUGWAeX
-YWkfRM8q1tFcBFF7VcO4Jatzf7vuqA54TCFQ0QqwJQKBgEQZyL9Avj9ndT/QfJ1C
-SaySVQ/2U9+MXeSb+kxBqDnZqJ5hW4hZ7OWzeufCNZz1K85GTojAbYj/CKI3VSl9
-TwR5vWN73jj7ua5u7EgnRB9eP9fdCLWs6ixJHY4mvW4p1AY+QJJwSAPucJyaLzhW
-bYjRVYg7oxQtNQob+T3G6eAm
------END PRIVATE KEY-----"""
+          MIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQDRZQadZdopPLxU
+          f5M1c5rc38WpKYhutDKkBSWcl50YBjL135XyCmcdRSWbEmovX0oIAgnD2jj+Iwai
+          pYGa6ZfD1C6WgrkRt9cF87m/kz2AnmYmsrBVFL837ZjV2tVe/MmCv0vbNIu9WsFw
+          /EGd7vBg3ZS+MqwCSVDw6QtkvuZ/Rq4L4WJ7mprofVLn+k9j6NJR4fKqNI1NpDkR
+          SjV5o8Skl0iUXVEsKvMjCXRw6aJ1lLJkCwuthpEGgqCTUzXauFRiGde7kdkqsdl+
+          fcGPXxmpTRWWL+md3kMLKp1cLcmWmMbo7PTnCV66iQ3pGkAteWlslXrjOYclvgq7
+          2xQ+COK/AgMBAAECggEBAKX668RmUQkxEKP2QE01ZwNACeFuf6wpAJ9NSSQYdjjt
+          6QVHBwfGQThNcGK8tRj58qfoXa820sh4ITFZ+iM+mMNs9MTvuB2YWURpjsqRv0Wt
+          yZFRQT8f4/dESkryXQIfZOhUFKAcxcwCHaYe/zBej4JpAhfF+N0TGqrsP9DLFdC6
+          WX44xvujG6kFg+5i8OxbkLMhWLU+LTt5T432S0jO1lCd5vox4FurdAdMLenM/ukJ
+          3s/GGdLh8Uz+PdO3f3aCREr8t2zAnlDxvvWhDmchvshF/+t2Wx/4HytD3lC75OnA
+          w1xK4sFgNHg2Il53gmT7EiZlZzKSAiM6qHSlMOb6wwkCgYEA89Y+ojqETtyye3Xa
+          zpfFCqBcKZUyZN9VApZ4Gm8TMVEPi6jIcWRLz8CVa9IMzzuXvuYseLAxCiLdcIks
+          3MF20tD4/8O2GyZLuyYA/dOYrkFMMlhxTGgwkBqRuP8suRTSAuRnZzZhF+emqKrx
+          XX4Lx0HEo9ehzJWNtk0Pc5VdihUCgYEA29b1m5z6NiBG3M7OzViaPeaWCx99nA5h
+          Sw1tQnlRpT3vX7ke1o7U/j6AzQSAThWFy4XtT4RH+CXQh436yhNtcH2N+Z+edp5s
+          49Rt3Mf4jnkiSwLGnnq/M8Xw6VjtgJ5eqHmtNosqfhVTC22+hGl0XojIix29vTpi
+          kQUbt9vO0oMCgYEA39enKgB0I31g8AuyMYOMJIQv9xB68bU/8h815HZhdR2IGtp4
+          H/hFzFNsGE386mU3mcztuGFus3JsPHoBUCreLQwf+ZOt4mCWlxh9Qob0G8vf6jvc
+          zpq7Mh7h9aVzZfjiDjulXU/DdFF5Yk+DQiOLJoGOxiYW55vHOzqk26Ob+j0CgYB9
+          AaSzkfWtZXkmAesSVTmPzViwhn2UiZDFbqMcU4QbpDZDhi6E7r8quzveWJrky9RC
+          wKsKtjt+XXJQQmnDEnz+pEZhFWS0Kq3cd2TpUESEL1lSsgdjAoVK2Vl+NvUGWAeX
+          YWkfRM8q1tFcBFF7VcO4Jatzf7vuqA54TCFQ0QqwJQKBgEQZyL9Avj9ndT/QfJ1C
+          SaySVQ/2U9+MXeSb+kxBqDnZqJ5hW4hZ7OWzeufCNZz1K85GTojAbYj/CKI3VSl9
+          TwR5vWN73jj7ua5u7EgnRB9eP9fdCLWs6ixJHY4mvW4p1AY+QJJwSAPucJyaLzhW
+          bYjRVYg7oxQtNQob+T3G6eAm
+          -----END PRIVATE KEY-----"""
 
           payload = {
               "type": "service_account",
