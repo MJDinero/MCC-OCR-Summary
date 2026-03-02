@@ -755,10 +755,31 @@ class CloudWorkflowsLauncher(
         return execution_name
 
 
+def _is_local_or_test_runtime() -> bool:
+    """Return True when local/test defaults are safe to use."""
+
+    if os.getenv("PYTEST_CURRENT_TEST"):
+        return True
+    testing_flag = os.getenv("UNIT_TESTING", "").strip().lower()
+    if testing_flag in {"1", "true", "yes", "on"}:
+        return True
+
+    env_name = os.getenv("ENVIRONMENT", "").strip().lower()
+    if env_name in {"local", "dev", "development", "test", "testing", "unit"}:
+        return True
+    if env_name in {"staging", "prod", "production", "qa", "uat"}:
+        return False
+
+    if os.getenv("K_SERVICE") or os.getenv("K_REVISION") or os.getenv("CLOUD_RUN_JOB"):
+        return False
+
+    return True
+
+
 def create_state_store_from_env() -> PipelineStateStore:
     """Instantiate an appropriate state store based on configuration."""
 
-    backend = os.getenv("PIPELINE_STATE_BACKEND", "memory").lower()
+    backend = (os.getenv("PIPELINE_STATE_BACKEND") or "memory").strip().lower()
     if backend == "gcs":
         bucket = os.getenv("PIPELINE_STATE_BUCKET")
         if not bucket:
@@ -772,6 +793,14 @@ def create_state_store_from_env() -> PipelineStateStore:
             kms_key = resolve_secret_env("CMEK_KEY_NAME", project_id=project_id)
         print(f"STATE_STORE_BACKEND=gcs bucket={bucket} prefix={prefix}", flush=True)
         return GCSStateStore(bucket=bucket, prefix=prefix, kms_key_name=kms_key)
+    if backend != "memory":
+        raise RuntimeError(
+            "Unsupported PIPELINE_STATE_BACKEND. Use 'gcs' in non-local runtimes."
+        )
+    if not _is_local_or_test_runtime():
+        raise RuntimeError(
+            "PIPELINE_STATE_BACKEND=memory is only allowed in local/test runtimes"
+        )
     print("STATE_STORE_BACKEND=memory", flush=True)
     return InMemoryStateStore()
 
@@ -779,8 +808,12 @@ def create_state_store_from_env() -> PipelineStateStore:
 def create_workflow_launcher_from_env() -> WorkflowLauncher:
     """Instantiate a workflow launcher suitable for the current environment."""
 
-    workflow_name = os.getenv("PIPELINE_WORKFLOW_NAME")
+    workflow_name = (os.getenv("PIPELINE_WORKFLOW_NAME") or "").strip()
     if not workflow_name:
+        if not _is_local_or_test_runtime():
+            raise RuntimeError(
+                "PIPELINE_WORKFLOW_NAME must be configured in non-local runtimes"
+            )
         return NoopWorkflowLauncher()
     return CloudWorkflowsLauncher(workflow_name=workflow_name)
 

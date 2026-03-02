@@ -11,6 +11,7 @@ from typing import Any, Mapping, Protocol
 from ..models.events import StorageRequestMessage, SummaryResultMessage
 from .interfaces import MetricsClient, PubSubPublisher
 from .metrics import PrometheusMetrics
+from ..utils.redact import redact_text
 
 LOG = logging.getLogger(__name__)
 
@@ -93,8 +94,9 @@ class StorageService:
         error: Exception,
         duration: float | None = None,
     ) -> None:
+        redacted_error_message, redaction_applied = _redact_error_message(error)
         latency_ms = int(duration * 1000) if duration is not None else None
-        LOG.exception(
+        LOG.error(
             "storage_failed",
             extra={
                 "job_id": message.job_id,
@@ -103,15 +105,16 @@ class StorageService:
                 "stage": "storage",
                 "service": "storage_service",
                 "error_type": type(error).__name__,
-                "redaction_applied": False,
+                "error_message": redacted_error_message,
+                "redaction_applied": redaction_applied,
             },
         )
         payload = {
             "job_id": message.job_id,
             "trace_id": message.trace_id,
             "error_type": type(error).__name__,
-            "error_message": str(error),
-            "redaction_applied": False,
+            "error_message": redacted_error_message,
+            "redaction_applied": redaction_applied,
         }
         await self.publisher.publish(
             self.dlq_topic,
@@ -120,6 +123,14 @@ class StorageService:
         )
         if self.metrics:
             self.metrics.increment("dlq_messages_total", stage="storage")
+
+
+def _redact_error_message(error: Exception) -> tuple[str, bool]:
+    raw_error = str(error)
+    redacted_error = redact_text(raw_error)
+    if not redacted_error:
+        return type(error).__name__, False
+    return redacted_error, redacted_error != raw_error
 
 
 __all__ = ["StorageService", "StorageConfig", "SummaryRepository"]
