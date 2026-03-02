@@ -12,17 +12,18 @@ from __future__ import annotations
 
 import hashlib
 import io
-import logging
-import time
 import json
-import re
+import logging
 import os
+import re
+import time
 from functools import lru_cache
 from typing import Any, Dict, Optional, Tuple
+
+from google.oauth2 import service_account  # type: ignore
 from googleapiclient.discovery import build  # type: ignore
 from googleapiclient.errors import HttpError  # type: ignore
 from googleapiclient.http import MediaIoBaseDownload, MediaIoBaseUpload  # type: ignore
-from google.oauth2 import service_account  # type: ignore
 
 from src.config import get_config
 
@@ -83,7 +84,12 @@ def _list_drive_files(
     try:
         request = service.files().list(**list_kwargs)
     except TypeError:
-        for key in ("supportsAllDrives", "includeItemsFromAllDrives", "driveId", "corpora"):
+        for key in (
+            "supportsAllDrives",
+            "includeItemsFromAllDrives",
+            "driveId",
+            "corpora",
+        ):
             list_kwargs.pop(key, None)
         request = service.files().list(**list_kwargs)
     response = request.execute()
@@ -131,7 +137,7 @@ def _locate_existing_pdf(
     report_name: str,
     file_bytes: bytes,
 ) -> tuple[dict[str, Any] | None, list[str]]:
-    checksum = hashlib.md5(file_bytes).hexdigest().lower()
+    checksum = hashlib.md5(file_bytes, usedforsecurity=False).hexdigest().lower()
     target_size = len(file_bytes)
     conflict_names: list[str] = []
     name_filters = [f"name = {_drive_literal(report_name)}"]

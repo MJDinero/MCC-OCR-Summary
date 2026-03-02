@@ -25,9 +25,10 @@ def main() -> None:
     workers = _worker_count()
     os.environ.setdefault("UVICORN_WORKERS", str(workers))
     port = int(os.getenv("PORT", "8080"))
+    # Cloud Run containers must bind on all interfaces.
     uvicorn.run(
         "src.main:create_app",
-        host="0.0.0.0",
+        host="0.0.0.0",  # nosec B104
         port=port,
         factory=True,
         workers=workers,
