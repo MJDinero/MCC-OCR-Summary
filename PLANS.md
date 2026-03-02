@@ -22,15 +22,15 @@ Always work one item at a time in this order:
 6. decide next item
 Never jump ahead to architecture cleanup while P0/P1 remain open.
 
-## Autonomous phase queue ledger (2026-03-02 pass)
+## Autonomous phase queue ledger (2026-03-02 final-autonomous-pass)
 - Phase 0: `Done`
-- Phase 1: `Done` (trivy blocker resolved on second focused attempt; CI green on run `22597334447`)
+- Phase 1: `Done`
 - Phase 2: `Done`
 - Phase 3: `Done`
-- Phase 4: `Done`
-- Phase 5: `Done` (docs/evidence synchronized to current repo truth)
-- Phase 6: `Blocked/Deferred` (target `PROJECT_ID` / `REGION` and credential context not confirmed)
-- Phase 7: `Done` (loop-back complete; only Phase 6 remains blocked)
+- Phase 4: `Done with blockers` (`deptry` unavailable; `pip-audit` blocked by DNS; Bandit high/medium resolved)
+- Phase 5: `Done`
+- Phase 6: `Blocked` (canonical target known, but auth token refresh fails in non-interactive read-only commands)
+- Phase 7: `In Progress` (final supervisor packaging, PR flow, merge check)
 ## Phase 0 — Repo + GCP read-only audit
 ### Goal
 Establish a trusted baseline before writing changes.
@@ -189,6 +189,31 @@ For each completed item, record:
 - result: `Done. PR #22 merged with successful CI checks; phase loop-back complete.`
 - blockers: `Phase 6 remains blocked/deferred until human confirms canonical staging PROJECT_ID and REGION and read-only credential context for that target.`
 - rollback note: `Revert merge commit 4fae1a75aa221843371e4aad51abf80e17457556 on main if this queue pass must be rolled back.`
+
+- phase: `Final autonomous pass — Phase 0/1/2/3/4/5/6`
+- objective: `Rebuild remaining-work queue, harden repo-local safety/coverage, enforce per-file pylint gate, and attempt canonical read-only GCP audit`
+- files changed:
+- `src/services/drive_client.py`
+- `src/runtime_server.py`
+- `tests/test_summary_contract_module.py`
+- `tests/test_summarization_text_utils.py`
+- `tests/test_pipeline_failures.py`
+- `docs/audit/archive/ChatGPT-5.2-Pro-Audit-2026-02-28.docx`
+- `docs/CURRENT_STATE.md`
+- `PLANS.md`
+- commands run:
+- branch/bootstrap commands (`git fetch origin`, `git checkout main`, `git merge --ff-only origin/main`, `git checkout -b codex/feat/final-autonomous-pass`)
+- `.venv/bin/python -m ruff check src tests`
+- `.venv/bin/python -m mypy --strict src`
+- `.venv/bin/python -m pytest --cov=src --cov-branch --cov-report=term-missing`
+- `.venv/bin/python -m pylint --jobs=1 --score=y --fail-under=9.5 <per-file targets>`
+- `.venv/bin/bandit -r src`
+- `.venv/bin/python -m deptry .`
+- `.venv/bin/pip-audit --local`
+- read-only cloud audit commands for `quantify-agent` / `us-central1` (`gcloud config/auth/run/artifacts/secrets/storage/iam/projects/workflows/pubsub/eventarc/kms`, `bq ls`)
+- result: `Repo-local safety and test confidence improved; branch-coverage gate now passes at 94.91%; required important-file pylint scores pass.`
+- blockers: `Phase 6 blocked by non-interactive gcloud reauthentication failure; deptry/pip-audit blocked by missing module + DNS/network access to PyPI.`
+- rollback note: `Revert final-autonomous-pass commit(s) to restore prior runtime_server/drive_client behavior and pre-pass test suite state.`
 ## Validation
 - Each phase must end with concrete command output and updated evidence.
 - No phase is complete until tests relevant to the touched surface pass.

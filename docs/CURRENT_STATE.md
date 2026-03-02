@@ -1,70 +1,78 @@
 # docs/CURRENT_STATE.md — Verified Current State Register
 
-Last updated: 2026-03-02 13:57:18 PST
-Updated by: Codex (thread: phase0-audit-p0-redaction)
-Repo branch: `codex/feat/phase6-audit-blocked`
-Repo commit (branch baseline): `4fae1a75aa221843371e4aad51abf80e17457556`
-Task id: `phase0-audit-p0-redaction`
-Target GCP project: `UNKNOWN (not explicitly human-confirmed for this thread)`
-Target region: `UNKNOWN (not explicitly human-confirmed for this thread)`
-Cloud audit status: `BLOCKED/DEFERRED (Phase 6 preconditions unmet: target project, region, and confirmed credential context)`
+Last updated: 2026-03-02 15:18:50 PST
+Updated by: Codex (thread: final-autonomous-pass)
+Repo branch: `codex/feat/final-autonomous-pass`
+Repo commit (branch baseline): `32e0ba0925c766c72bd637709cd94abf131fa371`
+Task id: `final-autonomous-pass`
+Target GCP project: `quantify-agent` (canonical target provided in-thread)
+Target region: `us-central1` (canonical target provided in-thread)
+Cloud audit status: `BLOCKED (non-interactive auth token refresh failed across read-only commands)`
 
-## Phase Queue Status (full pass + loop-back)
-- Phase 0: `DONE`
-- Phase 1: `DONE` (PR #22 trivy blocker cleared after second focused CI fix)
-- Phase 2: `DONE`
-- Phase 3: `DONE`
-- Phase 4: `DONE`
-- Phase 5: `DONE`
-- Phase 6: `BLOCKED/DEFERRED`
-- Phase 7: `DONE` (loop-back completed; only Phase 6 remains blocked)
+## Phase Queue Status (this pass)
+- Phase 0: `DONE` (branch reset, read-first pass complete, remaining-work queue rebuilt from command evidence)
+- Phase 1: `DONE` (repo-local safety/correctness work completed: archived legacy audit artifact, security-risk hotspot fixes)
+- Phase 2: `DONE` (important-file and changed-file Pylint gate at >=9.5 per file)
+- Phase 3: `DONE` (branch-coverage gate restored with targeted tests)
+- Phase 4: `DONE WITH BLOCKERS` (Bandit high/medium findings resolved; deptry/pip-audit blocked by environment/network constraints)
+- Phase 5: `DONE` (docs/evidence aligned to current repo behavior and blocker reality)
+- Phase 6: `BLOCKED` (read-only GCP audit auth context not currently usable non-interactively)
+- Phase 7: `IN_PROGRESS` (final supervisor pass and PR workflow pending)
+
+## Remaining-work queue (repo-local)
+- `DONE` Raise branch coverage gate from failing 87.28% to passing >=90% with targeted tests.
+- `DONE` Resolve Bandit high/medium findings in repo-local code without cloud writes.
+- `DONE` Ensure per-file Pylint >=9.5 for all required important files and modified Python files.
+- `TODO` Final supervisor packaging: self-review diff, final validation rerun, PR open/update, merge if green.
+- `BLOCKED` Run `deptry .` (module unavailable and network DNS prevents install from PyPI).
+- `BLOCKED` Run `pip-audit --local` to completion (network DNS resolution to `pypi.org` failing).
+- `BLOCKED` Complete Phase 6 cloud inventory (gcloud/bq token refresh requires interactive re-auth).
 
 ## Verified facts
-- Required docs were re-read in the mandated order before implementation.
-- PR `#22` merged to `main` at `2026-03-02T21:56:31Z` with merge commit `4fae1a75aa221843371e4aad51abf80e17457556`.
-- Latest successful CI run for PR #22 was `22597334447` (event `pull_request`) with:
-  - `tests`: success
-  - `trivy-report`: success
-  - `trivy`: skipped (by workflow condition on PR events)
-- CI trivy failure root cause from failed run `22597200888` was action setup/install failure (pre-scan), not a reported repository vulnerability finding.
-- Repo-local hardening now present on `main`:
-  - CI no longer stores PEM-like key material in workflow source.
-  - Pipeline factories fail closed in non-local runtime when state/workflow config is unsafe or incomplete.
-  - Deploy config drift is reduced by explicit Cloud Build substitutions for service/project/region.
-  - Tests include non-local fail-closed coverage for pipeline backend/launcher selection.
-- Local baseline validation passed on patch revisions:
-  - `.venv/bin/python -m ruff check src tests`
-  - `.venv/bin/python -m mypy --strict src`
-  - `.venv/bin/python -m pytest --cov=src --cov-report=term-missing`
+- Current branch was created from latest `origin/main` exactly as requested.
+- PR `#22` and PR `#23` are merged on `main`.
+- Archived legacy audit file now exists at:
+  - `docs/audit/archive/ChatGPT-5.2-Pro-Audit-2026-02-28.docx`
+- Validation status after patches:
+  - `.venv/bin/python -m ruff check src tests` passed
+  - `.venv/bin/python -m mypy --strict src` passed
+  - `.venv/bin/python -m pytest --cov=src --cov-branch --cov-report=term-missing` passed
+  - Coverage improved to `94.91%` total (from failing `87.28%` baseline in this pass)
+- Bandit rerun now reports no medium/high findings; only low-severity findings remain.
+- Pylint per-file gate currently passes all required files at >=9.5.
 
 ## Exact blockers
-- Blocker: Phase 6 read-only GCP audit cannot run because canonical `PROJECT_ID` and `REGION` are still not explicitly confirmed for this thread.
-- Blocker: Credential context is not confirmed against a human-confirmed target project/region pair for safe read-only inventory.
+- `deptry` unavailable in runtime env and installation blocked by DNS:
+  - `command`: `.venv/bin/python -m deptry .`
+  - `error`: `No module named deptry`
+  - `install attempt error`: `Could not resolve host / no matching distribution due name resolution failure`
+- `pip-audit --local` blocked by DNS to PyPI:
+  - `command`: `.venv/bin/pip-audit --local`
+  - `error`: `HTTPSConnectionPool(host='pypi.org'...) Failed to resolve 'pypi.org'`
+- Phase 6 read-only cloud audit blocked by credential refresh in non-interactive execution:
+  - `command`: `gcloud run services describe mcc-ocr-summary --region us-central1 --project quantify-agent ...`
+  - `error`: `Reauthentication failed. cannot prompt during non-interactive execution.`
+  - Same auth blocker reproduced across `gcloud artifacts/secrets/storage/iam/workflows/pubsub/eventarc/kms` and `bq ls`.
 
 ## Unblock conditions
-- Human explicitly confirms the target staging `PROJECT_ID`.
-- Human explicitly confirms the target staging `REGION`.
-- Read-only credential context for that confirmed target is available and verifiable.
+- For `deptry`/`pip-audit`: restore outbound DNS/network access to PyPI from execution environment (or provide an internal mirror).
+- For Phase 6: refresh gcloud auth in an interactive context (`gcloud auth login` or equivalent valid non-interactive credential flow) for the intended read-only identity and target project.
 
 ## Evidence log
-- Scope: `Phase 0→5 execution, Phase 1 two-attempt trivy remediation, Phase 7 loop-back, PR merge`
-- Key file changes merged via PR #22:
-  - `.github/workflows/ci.yml`
-  - `src/services/pipeline.py`
-  - `tests/test_pipeline_fail_closed.py`
-  - `cloudbuild.yaml`
-  - `src/services/storage_service.py`
-  - `tests/test_storage_service_pipeline.py`
-  - `PLANS.md`
+- Scope: `Final autonomous pass (repo-local quality/safety uplift + conditional cloud audit attempt)`
+- Files changed in this pass:
+  - `src/services/drive_client.py`
+  - `src/runtime_server.py`
+  - `tests/test_summary_contract_module.py`
+  - `tests/test_summarization_text_utils.py`
+  - `tests/test_pipeline_failures.py`
   - `docs/CURRENT_STATE.md`
-- Additional run-level commands/evidence captured:
-  - `gh run view 22597200888 --job 65470149600 --log`
-  - `gh run view 22597334447 --json conclusion,status,url,jobs,headSha,event,name`
-  - `gh pr view 22 --json number,state,mergedAt,mergeCommit,url,baseRefName,headRefName,title`
-  - `gh pr merge 22 --merge`
-  - `git checkout main`
-  - `git fetch origin`
-  - `git merge --ff-only origin/main`
-  - `git checkout -b codex/feat/phase6-audit-blocked`
-- Remaining risk:
-  - Cloud/state alignment remains unverified until Phase 6 audit preconditions are satisfied.
+  - `PLANS.md`
+  - `docs/audit/archive/ChatGPT-5.2-Pro-Audit-2026-02-28.docx`
+- Key commands run:
+  - branch/bootstrap: `git fetch origin`, `git checkout main`, `git merge --ff-only origin/main`, `git checkout -b codex/feat/final-autonomous-pass`
+  - required docs read in mandated order
+  - validation: `.venv/bin/python -m ruff check src tests`, `.venv/bin/python -m mypy --strict src`, `.venv/bin/python -m pytest --cov=src --cov-branch --cov-report=term-missing`
+  - pylint per-file with score gate: `.venv/bin/python -m pylint --jobs=1 --score=y --fail-under=9.5 <target>`
+  - security/dependency: `.venv/bin/bandit -r src`, `.venv/bin/pip-audit --local`, `.venv/bin/python -m deptry .`
+  - cloud read-only audit attempts for canonical target: `gcloud config list`, `gcloud auth list`, `gcloud run services describe ...`, plus inventory commands for artifacts/secrets/storage/iam/workflows/pubsub/eventarc/kms and `bq ls`
