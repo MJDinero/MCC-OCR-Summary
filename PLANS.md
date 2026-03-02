@@ -114,6 +114,28 @@ For each completed item, record:
 - result
 - blockers
 - rollback note
+
+## Progress log
+- phase: `Phase 0 + Phase 1 (first repo-local P0 item)`
+- objective: `Complete repo audit baseline, defer blocked cloud audit, and harden storage failure redaction for logs + DLQ payload`
+- files changed:
+- `src/services/storage_service.py`
+- `tests/test_storage_service_pipeline.py`
+- `docs/CURRENT_STATE.md`
+- `PLANS.md`
+- commands run:
+- `git fetch origin`
+- `git checkout main`
+- `git merge --ff-only origin/main`
+- `git checkout -b codex/feat/phase0-audit-p0-redaction`
+- repo audit/read commands for required docs and hotspots
+- `.venv/bin/python -m pytest tests/test_storage_service_pipeline.py -q --no-cov`
+- `.venv/bin/python -m ruff check src tests`
+- `.venv/bin/python -m mypy --strict src`
+- `.venv/bin/python -m pytest --cov=src --cov-report=term-missing`
+- result: `Done for this task. Redaction is explicit and tested on storage failure path; required local validation passed.`
+- blockers: `Read-only GCP audit deferred (target project/region not human-confirmed for task; credential context not confirmed).`
+- rollback note: `Revert commit for this branch to restore prior failure logging/DLQ behavior if needed.`
 ## Validation
 - Each phase must end with concrete command output and updated evidence.
 - No phase is complete until tests relevant to the touched surface pass.
@@ -123,4 +145,3 @@ For each completed item, record:
 - If a phase requires destructive cloud changes, convert that step into HUMAN MUST RUN and
 continue only on repo-safe work.
 - If two iterations fail to improve the same exit criterion, stop and escalate.
-
