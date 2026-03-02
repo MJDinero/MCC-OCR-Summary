@@ -24,13 +24,13 @@ Never jump ahead to architecture cleanup while P0/P1 remain open.
 
 ## Autonomous phase queue ledger (2026-03-02 pass)
 - Phase 0: `Done`
-- Phase 1: `Todo` (repo-local remediation implemented; waiting for PR check rerun evidence)
+- Phase 1: `Done` (trivy blocker resolved on second focused attempt; CI green on run `22597334447`)
 - Phase 2: `Done`
 - Phase 3: `Done`
 - Phase 4: `Done`
 - Phase 5: `Done` (docs/evidence synchronized to current repo truth)
-- Phase 6: `Deferred` (target `PROJECT_ID` / `REGION` and credential context not confirmed)
-- Phase 7: `Todo` (loop-back after CI refresh)
+- Phase 6: `Blocked/Deferred` (target `PROJECT_ID` / `REGION` and credential context not confirmed)
+- Phase 7: `Done` (loop-back complete; only Phase 6 remains blocked)
 ## Phase 0 — Repo + GCP read-only audit
 ### Goal
 Establish a trusted baseline before writing changes.
@@ -166,6 +166,29 @@ For each completed item, record:
 - result: `Done for repo-local scope. Trivy hygiene patch and fail-closed orchestration/state controls are in place with passing local validation.`
 - blockers: `Phase 1 remains pending remote confirmation until PR #22 checks rerun on pushed commit; Phase 6 remains deferred pending human-confirmed target project/region and credential context.`
 - rollback note: `Revert this queue-pass commit(s) to restore prior CI credential fixture, pipeline fallback behavior, and deploy substitution defaults.`
+
+- phase: `Phase 1 (attempt 2) + Phase 7`
+- objective: `Resolve persistent trivy-report CI failure, merge green PR #22, and complete loop-back status evaluation`
+- files changed:
+- `.github/workflows/ci.yml`
+- `docs/CURRENT_STATE.md`
+- `PLANS.md`
+- commands run:
+- `gh run view 22597200888 --job 65470149600 --log`
+- `.venv/bin/python -m ruff check src tests`
+- `.venv/bin/python -m mypy --strict src`
+- `.venv/bin/python -m pytest --cov=src --cov-report=term-missing`
+- `gh run view 22597334447 --json conclusion,status,url,jobs,headSha,event,name`
+- `gh pr view 22 --json number,state,mergeable,mergeStateStatus,statusCheckRollup,url`
+- `gh pr merge 22 --merge`
+- `gh pr view 22 --json number,state,mergedAt,mergeCommit,url,baseRefName,headRefName,title`
+- `git checkout main`
+- `git fetch origin`
+- `git merge --ff-only origin/main`
+- `git checkout -b codex/feat/phase6-audit-blocked`
+- result: `Done. PR #22 merged with successful CI checks; phase loop-back complete.`
+- blockers: `Phase 6 remains blocked/deferred until human confirms canonical staging PROJECT_ID and REGION and read-only credential context for that target.`
+- rollback note: `Revert merge commit 4fae1a75aa221843371e4aad51abf80e17457556 on main if this queue pass must be rolled back.`
 ## Validation
 - Each phase must end with concrete command output and updated evidence.
 - No phase is complete until tests relevant to the touched surface pass.
