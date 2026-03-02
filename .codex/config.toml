@@ -1,0 +1,43 @@
+# .codex/config.toml
+# Project-scoped Codex defaults for trusted local use.
+# Keep this file conservative and portable across CLI/IDE/App where supported.
+
+model = "gpt-5.3-codex"
+model_reasoning_effort = "high"
+approval_policy = "on-request"
+sandbox_mode = "workspace-write"
+web_search = "cached"
+personality = "pragmatic"
+project_doc_max_bytes = 65536
+
+[shell_environment_policy]
+include_only = [
+  "PATH",
+  "HOME",
+  "USER",
+  "SHELL",
+  "TERM",
+  "LANG",
+  "LC_ALL",
+  "VIRTUAL_ENV",
+  "PYENV_VERSION",
+  "CLOUDSDK_CONFIG",
+  "GOOGLE_CLOUD_PROJECT",
+  "CLOUDSDK_CORE_PROJECT",
+]
+
+[features]
+shell_snapshot = true
+collaboration_modes = true
+request_rule = true
+
+# Validation
+# 1. Trust the project in Codex.
+# 2. Confirm Codex loads this file for the repo.
+# 3. Ask Codex to summarize the effective config and current instruction sources.
+# 4. Verify web_search defaults to cached and sandbox/approval are as expected.
+
+# Failure Modes
+# - If the project is marked untrusted, project-scoped `.codex/` config will be ignored.
+# - If gcloud commands require extra env vars, add them deliberately rather than using broad pass-through.
+# - Do not add profile-specific behavior here unless your active client surface supports it for your workflow.

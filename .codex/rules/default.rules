@@ -1,0 +1,128 @@
+# .codex/rules/default.rules
+# Conservative execution policy for MCC-OCR-Summary.
+# Goal: allow safe local verification, prompt on cloud/write-risk operations, forbid destructive shortcuts.
+
+# Allow local quality commands.
+prefix_rule(
+  pattern = ["python", "-m", "ruff"],
+  decision = "allow",
+  justification = "Safe local linting",
+  match = ["python -m ruff check src tests"],
+)
+
+prefix_rule(
+  pattern = ["python", "-m", "mypy"],
+  decision = "allow",
+  justification = "Safe local type-checking",
+  match = ["python -m mypy --strict src"],
+)
+
+prefix_rule(
+  pattern = ["python", "-m", "pytest"],
+  decision = "allow",
+  justification = "Safe local test execution",
+  match = ["python -m pytest --cov=src --cov-report=term-missing"],
+)
+
+prefix_rule(
+  pattern = ["git", "status"],
+  decision = "allow",
+  justification = "Safe local repo inspection",
+  match = ["git status --short"],
+)
+
+prefix_rule(
+  pattern = ["git", "diff"],
+  decision = "allow",
+  justification = "Safe local diff inspection",
+  match = ["git diff --stat"],
+)
+
+prefix_rule(
+  pattern = ["git", "log"],
+  decision = "allow",
+  justification = "Safe local history inspection",
+  match = ["git log --oneline -n 10"],
+)
+
+# Prompt for cloud and network-sensitive operators.
+prefix_rule(
+  pattern = ["gcloud"],
+  decision = "prompt",
+  justification = "All GCP commands require operator review. Read-only is preferred; writes are HUMAN MUST RUN unless explicitly approved.",
+  match = ["gcloud config list"],
+)
+
+prefix_rule(
+  pattern = ["gsutil"],
+  decision = "prompt",
+  justification = "Storage inspection commands require operator review.",
+  match = ["gsutil ls"],
+)
+
+prefix_rule(
+  pattern = ["bq"],
+  decision = "prompt",
+  justification = "BigQuery commands require operator review.",
+  match = ["bq ls"],
+)
+
+prefix_rule(
+  pattern = ["gh", "pr", "view"],
+  decision = "prompt",
+  justification = "PR inspection is allowed with review.",
+  match = ["gh pr view 1 --json title,body"],
+)
+
+prefix_rule(
+  pattern = ["git", "push"],
+  decision = "prompt",
+  justification = "Pushing code changes requires operator review.",
+  match = ["git push origin feature/refactor-storage-redaction"],
+)
+
+prefix_rule(
+  pattern = ["gh", "pr", "create"],
+  decision = "prompt",
+  justification = "Opening a PR is allowed with review.",
+  match = ["gh pr create --fill"],
+)
+
+# Forbid destructive or policy-breaking shortcuts.
+prefix_rule(
+  pattern = ["git", "reset", "--hard"],
+  decision = "forbidden",
+  justification = "Destructive history rewrites are not allowed in Codex tasks. Use targeted revert or ask for approval.",
+  match = ["git reset --hard HEAD"],
+)
+
+prefix_rule(
+  pattern = ["rm", "-rf"],
+  decision = "forbidden",
+  justification = "Recursive forced deletion is not allowed. Use targeted file edits or ask for a human decision.",
+  match = ["rm -rf .venv"],
+)
+
+prefix_rule(
+  pattern = ["terraform"],
+  decision = "forbidden",
+  justification = "Infrastructure mutation is HUMAN MUST RUN for this project.",
+  match = ["terraform apply"],
+)
+
+prefix_rule(
+  pattern = ["kubectl"],
+  decision = "forbidden",
+  justification = "Cluster mutation is out of scope for Codex in this repo.",
+  match = ["kubectl apply -f k8s.yaml"],
+)
+
+# Validation
+# codex execpolicy check --pretty --rules .codex/rules/default.rules -- python -m pytest --cov=src --cov-report=term-missing
+# codex execpolicy check --pretty --rules .codex/rules/default.rules -- gcloud config list
+# codex execpolicy check --pretty --rules .codex/rules/default.rules -- git reset --hard HEAD
+
+# Failure Modes
+# - If a safe command is still prompting, add a narrower allow rule instead of broadening policy.
+# - If a cloud command needs to run, keep it prompted unless a human explicitly approves that category.
+# - Never weaken forbidden rules just to speed up a refactor loop.
