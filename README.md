@@ -122,9 +122,8 @@ All services consume the same config module, enabling override via `ConfigMap` o
 ## Drive Configuration & Runtime Mapping
 
 - **Shared Drive (MedCostContain – Team Drive)**: `0AFPP3mbSAh_oUk9PVA`
-- **Intake Folder (Eventarc staging)**: `19xdu6hV9KNgnE_Slt4ogrJdASWXZb5gl`
-- **Output Folder (Final summaries)**: `130jJzsI3OBzMDBweGfBOaXikfEnD2KVg`
-- **Legacy Folder**: `MCC artifacts` (`1eyMOO126vfLBk3bBQE…`) — decommissioned; remove from configs and env vars.
+- **Intake Folder (active runtime)**: `1eyMO0126VfLBK3bBQEpWlVOL6tWxriCE`
+- **Output Folder (active runtime)**: `130jJzsl3OBzMD8weGfBOaXikfEnD2KVg`
 
 ### Domain-Wide Delegation & Impersonation
 
@@ -138,14 +137,20 @@ All services consume the same config module, enabling override via `ConfigMap` o
 Provision the service with:
 
 - `DRIVE_SHARED_DRIVE_ID=0AFPP3mbSAh_oUk9PVA`
-- `DRIVE_REPORT_FOLDER_ID=130jJzsI3OBzMDBweGfBOaXikfEnD2KVg`
+- `DRIVE_INPUT_FOLDER_ID=1eyMO0126VfLBK3bBQEpWlVOL6tWxriCE`
+- `DRIVE_REPORT_FOLDER_ID=130jJzsl3OBzMD8weGfBOaXikfEnD2KVg`
+- `PDF_INPUT_FOLDER_ID=1eyMO0126VfLBK3bBQEpWlVOL6tWxriCE`
+- `PDF_OUTPUT_FOLDER_ID=130jJzsl3OBzMD8weGfBOaXikfEnD2KVg`
 - `DRIVE_IMPERSONATION_USER=Matt@moneymediausa.com`
 - `DOC_AI_OCR_PROCESSOR_ID=21c8becfabc49de6`
 - `PROJECT_ID=quantify-agent`
+- `REGION=us-central1`
+- `ENABLE_METRICS=true`
 - `DOC_AI_LOCATION=us`
-- `GOOGLE_APPLICATION_CREDENTIALS=/secrets/mcc-orch-sa-key.json`
+- `GOOGLE_APPLICATION_CREDENTIALS=/tmp/google-application-credentials.json`
+- `TAG_NAME=<deploy tag>`
 
-Apply these with `gcloud run services update mcc-ocr-summary --region us-central1 --set-env-vars ...` before triggering deployments.
+`cloudbuild.yaml` is the authoritative deploy path for these values. Prefer Cloud Build deploys over ad hoc `gcloud run services update` edits to avoid runtime drift.
 
 ---
 
@@ -169,7 +174,7 @@ Apply these with `gcloud run services update mcc-ocr-summary --region us-central
 ## Runtime Tuning
 
 - **Worker Auto-sizing**: `src/runtime_server.py` computes `UVICORN_WORKERS` from available CPU cores (overridable via env) before starting Uvicorn.
-- **Cloud Run Scaling**: `cloudbuild.yaml` deploys each revision with explicit concurrency & max instance caps (`_OCR_CONCURRENCY`, `_SUMMARY_CONCURRENCY`, `_STORAGE_CONCURRENCY`).
+- **Cloud Run Scaling**: `cloudbuild.yaml` deploys each revision with explicit ingress, service account, and runtime caps (`_INGRESS`, `_SERVICE_ACCOUNT`, `_CONTAINER_CONCURRENCY`, `_TIMEOUT_SECONDS`, `_MAX_INSTANCES`).
 - **Temp Cleanup**: Batch OCR helper reuses CMEK-backed buckets and cleans transient uploads after completion.
 
 ---
@@ -183,7 +188,7 @@ Use `scripts/benchmark_large_docs.py` to profile end-to-end performance. Example
 | 10    | 48 s           | 420 MB   | Single summarisation pass      |
 | 50    | 3 m 12 s       | 640 MB   | Hierarchical aggregator stable |
 | 200   | 11 m 05 s      | 910 MB   | Document AI dominates runtime  |
-| 500   | 24 m 40 s      | 1.2 GB   | Requires concurrency=4         |
+| 500   | 24 m 40 s      | 1.2 GB   | Historical benchmark snapshot  |
 
 Re-run benchmarks after model or configuration updates. Results feed the README and CI quality gates.
 
