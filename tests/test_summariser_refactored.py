@@ -146,6 +146,74 @@ def test_compose_summary_pads_short_outputs() -> None:
     assert len(SummaryContract.from_mapping(result).as_text()) >= 300
 
 
+def test_overview_without_patient_token_is_preserved() -> None:
+    backend = StubBackend(
+        responses={
+            1: {
+                "overview": "Follow-up neurology visit for chronic migraines without aura.",
+                "key_points": [],
+                "clinical_details": ["MRI from March 2024 remains normal."],
+                "care_plan": ["Continue headache diary tracking."],
+                "diagnoses": ["G43.709 Chronic migraine without aura"],
+                "providers": ["Dr. Alicia Carter"],
+                "medications": ["Sumatriptan 50 mg as needed"],
+            }
+        }
+    )
+    summariser = RefactoredSummariser(backend=backend, min_summary_chars=300)
+    contract = SummaryContract.from_mapping(
+        summariser.summarise(
+            "Neurology follow-up for migraine management with stable imaging."
+        )
+    )
+
+    reason_section = next(
+        section for section in contract.sections if section.slug == "reason_for_visit"
+    )
+    assert "Follow-up neurology visit for chronic migraines without aura" in (
+        reason_section.content
+    )
+    assert "The provided medical record segments were analysed" not in (
+        reason_section.content
+    )
+
+
+def test_keyword_filter_fallback_keeps_clinical_and_plan_content() -> None:
+    backend = StubBackend(
+        responses={
+            1: {
+                "overview": "Immunization follow-up visit.",
+                "key_points": ["Tdap booster administered."],
+                "clinical_details": [
+                    "No adverse reactions documented after vaccination."
+                ],
+                "care_plan": ["Hydration and home rest encouraged over the weekend."],
+                "diagnoses": ["Encounter for immunization"],
+                "providers": ["Dr. Jane Doe"],
+                "medications": ["Tdap booster"],
+            }
+        }
+    )
+    summariser = RefactoredSummariser(backend=backend, min_summary_chars=300)
+    contract = SummaryContract.from_mapping(
+        summariser.summarise("Tdap booster provided.")
+    )
+
+    findings_section = next(
+        section for section in contract.sections if section.slug == "clinical_findings"
+    )
+    plan_section = next(
+        section
+        for section in contract.sections
+        if section.slug == "treatment_follow_up_plan"
+    )
+
+    assert (
+        "No adverse reactions documented after vaccination" in findings_section.content
+    )
+    assert "Hydration and home rest encouraged over the weekend" in plan_section.content
+
+
 def test_openai_backend_schema_mismatch_raises(monkeypatch):
     backend = OpenAIResponsesBackend(model="gpt-test", api_key="key")
 

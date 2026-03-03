@@ -1,70 +1,77 @@
 # docs/CURRENT_STATE.md — Verified Current State Register
 
-Last updated: 2026-03-03 11:22:30 PST
-Updated by: Codex (thread: deps-and-summary-quality-pass)
+Last updated: 2026-03-03 12:15:45 PST
+Updated by: Codex (thread: deps-and-summary-quality-pass continuation)
 Repo branch: `codex/feat/deps-and-summary-quality-pass`
-Repo commit (branch baseline): `b1a020c7f5d209916e17f5ed9f9e610e364d9b24`
+Repo commit (branch baseline): `208ba3ad779165dd6e95318a98aaf9ab5613ad82`
 Task id: `deps-and-summary-quality-pass`
 Target GCP project: `quantify-agent` (canonical target)
 Target region: `us-central1` (canonical target)
-Cloud audit status: `NOT RUN THIS PASS (repo-local phases only; no cloud writes performed)`
+Cloud audit status: `NOT RUN THIS CONTINUATION (repo-local phases only; no cloud writes performed)`
 
-## Phase Queue Status (this pass)
-- Phase 0: `DONE WITH BLOCKER` (branch bootstrap + full local baseline matrix completed; `git fetch origin` failed twice with GitHub HTTP 500)
-- Phase 1: `DONE WITH BLOCKER` (dependency pin patch prepared; `.venv` sync blocked by DNS/PyPI resolution after two focused retries)
-- Phase 2: `DONE` (large-PDF summarization path investigated with code evidence; targeted fixes + characterization tests added)
-- Phase 3: `DONE` (optional cleanup limited to inventory only; no broad delete/prune)
-- Phase 4: `DONE` (full quality matrix rerun; strict gates green except known deptry/pip-audit backlog)
-- Phase 5: `BLOCKED` (local commit created; push/PR blocked by repeated GitHub HTTP 500 errors)
+## Phase Queue Status (this continuation)
+- Phase 0: `DONE` (verified clean branch state, preserved local commit stack, confirmed unique branch diff vs `origin/main`)
+- Phase 1: `DONE` (published branch to origin and opened PR `#28` after resolving sandboxed network/auth checks)
+- Phase 2: `DONE` (repo-root `.venv` synced from `requirements.txt`; dependency tooling rerun successfully)
+- Phase 3: `DONE` (additional summarization-quality fix applied with targeted regression tests)
+- Phase 4: `DONE` (full supervisor matrix rerun; strict gates pass, with known residual dependency backlog)
+- Phase 5: `QUEUED` (awaiting post-commit push/check/merge actions for this continuation)
 
-## Branch Bootstrap (Required Sequence)
-- `git fetch origin` -> `BLOCKED` (two attempts; `The requested URL returned error: 500`)
-- `git checkout main` -> `Already on 'main'`
-- `git merge --ff-only origin/main` -> `Already up to date`
-- `git checkout -b codex/feat/deps-and-summary-quality-pass` -> `DONE`
+## Phase 0 Verification Evidence
+- `git status --short --branch` -> `## codex/feat/deps-and-summary-quality-pass` (clean)
+- `git log --oneline -5 --decorate` -> HEAD `208ba3a`, branch contains unpublished task commits above `origin/main` `b1a020c`
+- `git diff --stat origin/main...HEAD` -> `6` files changed (`288` insertions, `76` deletions) before continuation edits
+- `git rev-parse HEAD` -> `208ba3ad779165dd6e95318a98aaf9ab5613ad82`
 
-## Baseline Validation Matrix (Phase 0)
+## Phase 1 Publish Recovery Evidence
+- `git remote -v` -> `origin https://github.com/MJDinero/MCC-OCR-Summary.git`
+- `gh auth status` (escalated) -> authenticated account `MJDinero`, valid token scopes include `repo` and `workflow`
+- `git ls-remote origin HEAD` (escalated) -> connectivity restored
+- `git push -u origin codex/feat/deps-and-summary-quality-pass` (escalated) -> `PASS` (new remote branch created)
+- PR opened and corrected: `https://github.com/MJDinero/MCC-OCR-Summary/pull/28`
+
+## Phase 2 Dependency Sync Results
+- `test -x .venv/bin/python` -> `PASS`
+- `.venv/bin/python --version` -> `Python 3.12.8`
+- `.venv/bin/python -m pip install -r requirements.txt` (escalated) -> `PASS`
+  - confirmed updates in repo venv: `python-multipart 0.0.22`, `urllib3 2.6.3`, `pypdf 6.7.4`, `pyasn1 0.6.2`, `wheel 0.46.2`
+- `.venv/bin/python -m deptry .` -> `FAIL` (`82` DEP002 issues; down from `84`, direct `reportlab` DEP003 cleared in prior step)
+- `.venv/bin/pip-audit --local` (escalated) -> improved to `6` vulnerabilities, later reduced to `3` after local env hygiene:
+  - upgraded `pip` to `26.0.1`
+  - installed patched `filelock==3.20.3` (tooling dependency for pip-audit)
+  - remaining advisories: `orjson 3.11.3`, `pillow 12.0.0`, `protobuf 4.25.8`
+
+## Phase 3 Summarization Quality Changes (this continuation)
+- `src/services/summariser_refactored.py`
+  - removed overly strict `"patient"` token gate when selecting overview lines
+  - added fallback pass for `key_points`, `clinical_details`, and `care_plan` when keyword filtering would otherwise drop valid content
+- `tests/test_summariser_refactored.py`
+  - added regression that preserves overview content even without the word `"patient"`
+  - added regression that preserves clinical/plan lines when keyword filters are too narrow
+
+## Phase 4 Supervisor Validation Matrix (this continuation)
+- `.venv/bin/python -m ruff check --select I --fix src/services/summariser_refactored.py tests/test_summariser_refactored.py` -> `PASS` (1 fix)
+- `.venv/bin/python -m ruff format src/services/summariser_refactored.py tests/test_summariser_refactored.py` -> `PASS` (1 file reformatted)
 - `.venv/bin/python -m ruff check src tests` -> `PASS`
-- `.venv/bin/python -m mypy --strict src` -> `PASS` (`43` source files)
-- `.venv/bin/python -m pytest --cov=src --cov-branch --cov-report=term-missing` -> `PASS` (`191 passed`, `6 skipped`, coverage `94.91%`)
-- `.venv/bin/python -m pylint --jobs=1 --score=y --fail-under=9.5 <important files>` -> `PASS` (overall `9.75/10`; cache write warning only)
-- `.venv/bin/bandit -r src` -> `LOW-ONLY FINDINGS` (`11 low`, `0 medium`, `0 high`)
-- `.venv/bin/python -m deptry .` -> `FAIL` (`84` issues: high volume DEP002 + DEP003 for direct `reportlab` import)
-- `.venv/bin/pip-audit --local` -> `FAIL` (`25` vulnerabilities across `10` packages)
+- `.venv/bin/python -m mypy --strict src` -> `PASS` (`43` files)
+- `.venv/bin/python -m pytest --cov=src --cov-branch --cov-report=term-missing` -> `PASS` (`195 passed`, `6 skipped`, coverage `96.66%`)
+- `.venv/bin/python -m pylint --jobs=1 --score=y --fail-under=9.5 <important+changed summarization paths>` -> `PASS` (overall `9.90/10`)
+- Per-file pylint scores:
+  - `src/services/summariser_refactored.py` -> `9.87/10`
+  - `src/services/summarization/formatter.py` -> `10.00/10`
+  - `src/services/summarization/text_utils.py` -> `10.00/10`
+  - `tests/test_summariser_refactored.py` -> `9.91/10`
+- `.venv/bin/python -m bandit -r src` -> `LOW-ONLY FINDINGS` (`11 low`, `0 medium`, `0 high`)
+- rerun dependency tools:
+  - `.venv/bin/python -m deptry .` -> `82` issues (deferred backlog)
+  - `.venv/bin/pip-audit --local` -> `3` vulnerabilities (deferred high-risk surface)
 
-## Rebuilt Queue for This Pass
-### Dependency items safe to attempt now
-- `python-multipart` `0.0.20` -> `>=0.0.22`
-- `urllib3` `2.5.0` -> `>=2.6.3`
-- `pypdf` runtime/env drift (`.venv` has `4.2.0`) -> align to patched `6.7.x`
-- add direct `reportlab` requirement (`deptry` DEP003 on `src/services/pdf_writer.py`)
-
-### Dependency items deferred/risky for this pass unless cleanly validated
-- `protobuf` fix line requires major jump (`5.29.6+`) across Google client dependency surface
-- `orjson` advisory has no fixed version listed in `pip-audit`; treat as remove-only if safely unused
-
-### Summarization quality investigation hotspots (active path)
-- Active runtime uses `RefactoredSummariser` (`src/main.py`) and `SummaryContract -> PDFWriterRefactored` (`src/api/process.py`).
-- `OpenAIResponsesBackend.summarise_chunk` fallback behavior is narrow (only `TypeError`/`AttributeError`), which can push low-quality heuristic summaries in SDK mismatch scenarios.
-- `clean_ocr_output` flattens whitespace/line breaks before summarization, reducing structural cues used by provider/signature extractors for long OCR text.
-- `_compose_summary` currently pads short outputs by repeating filler fragments, which can produce repetitive low-coherence text blocks.
-
-## Implemented in This Pass (Phases 1-4)
-- `requirements.txt` updated for prioritized safe targets (`python-multipart`, `urllib3`, `pypdf`) plus direct `reportlab` declaration and additional security pin updates.
-- `src/services/summariser_refactored.py` fixed OpenAI Responses structured-output call to use `text.format` JSON schema (active SDK-compatible path), relaxed over-strict detail/plan filtering, removed runtime chunk-count marker from summary text, switched provider-signature extraction to raw OCR source, and replaced low-coherence filler padding with structured supplemental context + deterministic fallback guidance.
-- `src/services/summarization/formatter.py` removed technical chunk-count line from patient-facing provider section.
-- `tests/test_summariser_refactored.py` expanded with characterization tests:
-  - OpenAI backend uses `text.format` JSON schema and avoids deprecated `response_format`.
-  - Runtime summary text omits chunk-count telemetry marker.
-
-## Exact Blockers in This Pass
-- `git fetch origin` currently blocked by remote GitHub HTTP 500; local baseline is still aligned to `origin/main` commit `b1a020c`.
-- `.venv` dependency sync is blocked by DNS resolution failures to PyPI (`No matching distribution found` after repeated `nodename nor servname provided` errors), preventing local installation validation of upgraded requirement pins.
-- `git push -u origin codex/feat/deps-and-summary-quality-pass` failed three times with GitHub HTTP 500, blocking PR creation and merge for this pass.
-
-## Archive Commit Decision
-- Decision: `KEEP` commit `683624b` (`docs: archive legacy audit reports`).
-- Why: the commit only moved historical files from `audit/` to `docs/audit/archive/legacy/`, added `audit/README.md` as a forward pointer, and updated one README link. No active runtime/deploy/test files were moved and no active reference breaks were found.
+## Remaining Blockers / Deferred Risks
+- `deptry` backlog (`82` DEP002 items) is still broad and requires a separate scoped dependency-pruning pass.
+- `pip-audit` residual findings require higher-risk decisions:
+  - `protobuf` requires major line jump (`5.29.6+` or `6.33.5`)
+  - `orjson` advisory has no listed fix version
+  - `pillow` fix (`12.1.1`) is transitive under `reportlab` and should be handled with a scoped compatibility check.
 
 ## Historical Snapshot (2026-03-02 phase6-reaudit-deps-closeout)
 

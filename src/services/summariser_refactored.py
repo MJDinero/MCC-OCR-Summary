@@ -735,23 +735,37 @@ class RefactoredSummariser:
         overview_lines = self._dedupe_ordered(
             aggregated["overview"],
             limit=self.max_overview_lines,
-            require_tokens=("patient",),
         )
         key_points = self._dedupe_ordered(
             aggregated["key_points"],
             limit=self.max_key_points,
             keywords=self._KEY_POINT_TOKENS,
         )
+        if not key_points and aggregated["key_points"]:
+            key_points = self._dedupe_ordered(
+                aggregated["key_points"],
+                limit=self.max_key_points,
+            )
         clinical_details = self._dedupe_ordered(
             aggregated["clinical_details"],
             limit=self.max_clinical_details,
             keywords=self._DETAIL_TOKENS,
         )
+        if not clinical_details and aggregated["clinical_details"]:
+            clinical_details = self._dedupe_ordered(
+                aggregated["clinical_details"],
+                limit=self.max_clinical_details,
+            )
         care_plan = self._dedupe_ordered(
             aggregated["care_plan"],
             limit=self.max_care_plan,
             keywords=self._PLAN_TOKENS,
         )
+        if not care_plan and aggregated["care_plan"]:
+            care_plan = self._dedupe_ordered(
+                aggregated["care_plan"],
+                limit=self.max_care_plan,
+            )
         diagnoses = self._dedupe_ordered(
             aggregated["diagnoses"], limit=self.max_diagnoses
         )
