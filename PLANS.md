@@ -22,7 +22,18 @@ Always work one item at a time in this order:
 6. decide next item
 Never jump ahead to architecture cleanup while P0/P1 remain open.
 
-## Autonomous phase queue ledger (2026-03-02 final-autonomous-pass)
+## Autonomous phase queue ledger (2026-03-02 phase6-reaudit-deps-closeout)
+- Phase 0: `Done` (branch state verified; archive commit `683624b` reviewed and kept)
+- Phase 1: `Done` (repo-root `.venv` verified at `/Users/quantanalytics/dev/MCC-OCR-Summary/.venv/bin/python`)
+- Phase 2: `Done with blockers` (`deptry` install blocked by DNS/PyPI resolution; `pip-audit` blocked by DNS to `pypi.org`)
+- Phase 3: `Done with blocker` (gcloud auth/config verified; ADC token minting blocked by DNS to `oauth2.googleapis.com`)
+- Phase 4: `Done` (full read-only GCP inventory command set executed for `quantify-agent` / `us-central1`)
+- Phase 5: `Done` (live-vs-repo drift classified with concrete mismatches)
+- Phase 6: `Done` (minimal repo-local reconciliation in ledgers only)
+- Phase 7: `Done` (docs-only integrity checks performed)
+- Phase 8: `Done` (`PLANS.md` and `docs/CURRENT_STATE.md` updated with evidence)
+
+## Historical autonomous phase queue ledger (2026-03-02 final-autonomous-pass)
 - Phase 0: `Done`
 - Phase 1: `Done`
 - Phase 2: `Done`
@@ -229,6 +240,44 @@ For each completed item, record:
 - result: `Done. Phase 7 marked complete; only explicit blocked items remain (Phase 6 auth + deptry/pip-audit environment blockers).`
 - blockers: `No additional unblocked repo-local tasks remain after PR #24 merge.`
 - rollback note: `Revert closeout docs commit if ledger status needs correction.`
+
+- phase: `Phase 0 + Phase 1 + Phase 2 + Phase 3 + Phase 4 + Phase 5 + Phase 6 + Phase 7 + Phase 8 (phase6-reaudit-deps-closeout)`
+- objective: `Verify repo-root .venv, rerun dependency tooling at repo root, complete canonical read-only GCP inventory, and reconcile live-vs-repo drift with minimal safe repo-local updates.`
+- files changed:
+- `docs/CURRENT_STATE.md`
+- `PLANS.md`
+- commands run:
+- Phase 0 git checks: `git status --short --branch`, `git log --oneline -3 --decorate`, `git show --stat --name-status 683624b`, plus commit-content/reference inspection
+- Phase 1 venv checks: `pwd`, `git rev-parse --show-toplevel`, `test -x .venv/bin/python`, `ls .venv/bin/python`, `.venv/bin/python --version`
+- Phase 2 dependency tooling:
+  - `.venv/bin/python -m pip install deptry pip-audit`
+  - `.venv/bin/python -m deptry .`
+  - `.venv/bin/python -m pip_audit --local`
+  - `.venv/bin/pip-audit --local`
+- Phase 3 auth checks:
+  - `gcloud auth list --format='table(account,status)'`
+  - `gcloud config list --format='text(core.project,core.account,compute.region,run.region,workflows.location)'`
+  - `gcloud auth application-default print-access-token >/dev/null`
+- Phase 4 read-only cloud inventory:
+  - `gcloud run services describe mcc-ocr-summary --region us-central1 --project quantify-agent --format='yaml(metadata.name,status.url,spec.template.spec.serviceAccountName,spec.template.metadata.annotations,spec.template.spec.containers)'`
+  - `gcloud artifacts repositories list --project quantify-agent --location us-central1 --format='table(name,format,description)'`
+  - `gcloud secrets list --project quantify-agent --format='table(name,replication.policy)'`
+  - `gcloud storage buckets list --project quantify-agent --format='table(name,location)'`
+  - `gcloud iam service-accounts list --project quantify-agent --format='table(email,displayName,disabled)'`
+  - `gcloud projects get-iam-policy quantify-agent --format='table(bindings.role)'`
+  - `gcloud workflows list --location us-central1 --project quantify-agent --format='table(name,state)'`
+  - `gcloud eventarc triggers list --location us-central1 --project quantify-agent --format='table(name,transport.pubsub.topic)'`
+  - `gcloud pubsub topics list --project quantify-agent --format='table(name)'`
+  - `gcloud kms keyrings list --location us-central1 --project quantify-agent --format='table(name)'`
+  - `bq ls --project_id=quantify-agent`
+  - supplemental projection: `gcloud run services describe ... --format='yaml(metadata.annotations,spec.template.metadata.annotations,spec.template.spec.containerConcurrency,spec.template.spec.timeoutSeconds,spec.template.spec.serviceAccountName,status.url)'`
+- docs-only validation: `git status --short --branch`, `git diff -- docs/CURRENT_STATE.md PLANS.md`
+- result: `Done for this pass. Full read-only Phase 6 cloud audit succeeded for canonical target; major config/documentation drift identified and recorded; archive commit confirmed safe to keep.`
+- blockers:
+  - `deptry` installation blocked by DNS/PyPI resolution (`No matching distribution found for deptry` after repeated name-resolution failures).
+  - `pip-audit` blocked by DNS to `pypi.org`.
+  - `gcloud auth application-default print-access-token` blocked by DNS to `oauth2.googleapis.com` (CLI read-only inventory still succeeded).
+- rollback note: `Revert this pass's docs-only commit to restore prior ledger state if needed.`
 ## Validation
 - Each phase must end with concrete command output and updated evidence.
 - No phase is complete until tests relevant to the touched surface pass.
