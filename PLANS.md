@@ -22,6 +22,32 @@ Always work one item at a time in this order:
 6. decide next item
 Never jump ahead to architecture cleanup while P0/P1 remain open.
 
+## Autonomous phase queue ledger (2026-03-03 deps-and-summary-quality-pass continuation)
+- Phase 0: `Done` (verified local branch preservation at `208ba3a` with clean worktree and expected unique commit stack)
+- Phase 1: `Done` (branch push recovered successfully; PR `#28` opened and corrected)
+- Phase 2: `Done` (repo `.venv` synced successfully; dependency posture improved)
+- Phase 3: `Done` (additional summarization-quality patch and regression tests completed)
+- Phase 4: `Done` (full supervisor validation rerun; strict gates pass)
+- Phase 5: `Queued` (awaiting latest continuation commit push, PR check watch, and merge decision)
+
+### Rebuilt remaining-work queue for this continuation
+1. `dependency issues fixed in this pass`
+- `python-multipart` `0.0.20 -> 0.0.22`
+- `urllib3` `2.5.0 -> 2.6.3`
+- `pypdf` `.venv` drift corrected to `6.7.4`
+- direct `reportlab` declaration already present; DEP003 for `pdf_writer.py` no longer present
+- local tooling vuln reductions: `pip` upgraded to `26.0.1`, `filelock` installed at patched `3.20.3`
+2. `dependency issues deferred (higher-risk or unresolved fix path)`
+- `protobuf` `4.25.8` advisory fix requires major jump (`5.29.6+` / `6.33.5`) across Google client surface
+- `orjson` `3.11.3` advisory has no listed fixed version
+- `pillow` `12.0.0` advisory fix (`12.1.1`) is transitive under `reportlab` and needs scoped compatibility validation
+- `deptry` backlog remains large (`82` DEP002 items) and needs a dedicated prune/split pass
+3. `summarization / formatting hotspots`
+- Active runtime path remains `src/services/summariser_refactored.py` via `src/main.py`.
+- `Resolved`: overview selection no longer drops useful content solely because `"patient"` token is absent.
+- `Resolved`: key-point/detail/plan fallback now preserves valid lines when strict keyword filters over-prune.
+- `Resolved`: new tests enforce non-lossy overview/detail/plan behavior for short synthetic OCR content.
+
 ## Autonomous phase queue ledger (2026-03-03 config-align-live-runtime)
 - Phase 0: `Done` (read-only runtime verification rerun for `quantify-agent` / `us-central1`, including Cloud Run IAM policy)
 - Phase 1: `Done` (live-vs-repo alignment matrix built and classified)
@@ -147,6 +173,92 @@ For each completed item, record:
 - rollback note
 
 ## Progress log
+- phase: `Phase 0 + Phase 1 + Phase 2 + Phase 3 + Phase 4 (deps-and-summary-quality-pass continuation)`
+- objective: `Recover/publish existing local branch work, resync repo venv, harden summarization content retention, and rerun full supervisor gates`
+- files changed:
+- `src/services/summariser_refactored.py`
+- `tests/test_summariser_refactored.py`
+- `docs/CURRENT_STATE.md`
+- `PLANS.md`
+- commands run:
+- phase 0 branch checks:
+  - `git status --short --branch`
+  - `git log --oneline -5 --decorate`
+  - `git diff --stat origin/main...HEAD`
+  - `git rev-parse HEAD`
+- phase 1 publish recovery:
+  - `git remote -v`
+  - `gh auth status`
+  - `git ls-remote origin HEAD`
+  - `git push -u origin codex/feat/deps-and-summary-quality-pass`
+  - `gh pr list --head codex/feat/deps-and-summary-quality-pass ...`
+  - `gh pr create --base main --head codex/feat/deps-and-summary-quality-pass ...`
+  - `gh pr edit 28 --body ...`
+- phase 2 dependency sync:
+  - `test -x .venv/bin/python`
+  - `.venv/bin/python --version`
+  - `.venv/bin/python -m pip install -r requirements.txt`
+  - `.venv/bin/python -m deptry .`
+  - `.venv/bin/pip-audit --local`
+  - `.venv/bin/python -m pip uninstall -y filelock`
+  - `.venv/bin/python -m pip install --upgrade pip`
+  - `.venv/bin/python -m pip install filelock==3.20.3`
+  - `.venv/bin/pip-audit --local`
+- phase 3 targeted validation:
+  - `.venv/bin/python -m pytest tests/test_summariser_refactored.py -q --no-cov`
+- phase 4 supervisor pass:
+  - `.venv/bin/python -m ruff check --select I --fix src/services/summariser_refactored.py tests/test_summariser_refactored.py`
+  - `.venv/bin/python -m ruff format src/services/summariser_refactored.py tests/test_summariser_refactored.py`
+  - `.venv/bin/python -m ruff check src tests`
+  - `.venv/bin/python -m mypy --strict src`
+  - `.venv/bin/python -m pytest --cov=src --cov-branch --cov-report=term-missing`
+  - `.venv/bin/python -m pylint --jobs=1 --score=y --fail-under=9.5 <important+changed summarization paths>`
+  - `PYTHONPATH=. .venv/bin/python -m pylint --jobs=1 --score=y --fail-under=9.5 <per-file score capture>`
+  - `.venv/bin/python -m bandit -r src`
+  - `.venv/bin/python -m deptry .`
+  - `.venv/bin/pip-audit --local`
+- result: `Done for phases 0-4. Existing local branch work was preserved and published; PR #28 is open; summarization path now preserves non-generic overview/detail/plan content with passing targeted and full-suite tests.`
+- blockers:
+- `deptry` remains at `82` DEP002 findings (broad prune/split backlog).
+- `pip-audit` residual advisories remain for `orjson`, `pillow`, and `protobuf` (higher-risk fix surface).
+- rollback note: `Revert this continuation commit to restore previous strict filtering behavior in summariser and remove new regression expectations.`
+
+- phase: `Phase 0 + Phase 1 + Phase 2 + Phase 3 + Phase 4 (deps-and-summary-quality-pass)`
+- objective: `Revalidate baseline, apply safe dependency pin updates where possible, fix active large-PDF summarization quality regressions, and rerun strict quality gates`
+- files changed:
+- `requirements.txt`
+- `src/services/summariser_refactored.py`
+- `src/services/summarization/formatter.py`
+- `tests/test_summariser_refactored.py`
+- `docs/CURRENT_STATE.md`
+- `PLANS.md`
+- commands run:
+- branch bootstrap + baseline commands (`git status`, `git log`, full validation matrix, `bandit`, `deptry`, `pip-audit`)
+- dependency attempt commands:
+  - `.venv/bin/python -m pip install -r requirements.txt` (attempted twice)
+- summarization-targeted validation:
+  - `.venv/bin/python -m pytest tests/test_summariser_refactored.py -q --no-cov`
+  - `.venv/bin/python -m pytest tests/test_summary_contract_integration.py -q --no-cov`
+- final supervisor pass commands:
+  - `.venv/bin/python -m ruff check src tests`
+  - `.venv/bin/python -m mypy --strict src`
+  - `.venv/bin/python -m pytest --cov=src --cov-branch --cov-report=term-missing`
+  - `.venv/bin/python -m pylint --jobs=1 --score=y --fail-under=9.5 <important+changed+hotspot files>`
+  - `.venv/bin/python -m pylint --jobs=1 --score=y --fail-under=9.5 <module-by-module file score capture>`
+  - `.venv/bin/bandit -r src`
+  - `.venv/bin/python -m deptry .`
+  - `.venv/bin/pip-audit --local`
+- phase 5 commands:
+  - `git add PLANS.md docs/CURRENT_STATE.md requirements.txt src/services/summariser_refactored.py src/services/summarization/formatter.py tests/test_summariser_refactored.py`
+  - `git commit -m "fix: improve large-pdf summary quality and update dependency pins"`
+  - `git push -u origin codex/feat/deps-and-summary-quality-pass` (attempted three times)
+- result: `Done for phases 0-4 and local phase-5 commit creation. Large-PDF summarization path now uses SDK-valid structured output and improved formatting/aggregation behavior with passing tests and full repo gates.`
+- blockers:
+- `git fetch origin` failed twice with GitHub HTTP 500.
+- `.venv` dependency sync blocked by DNS/PyPI resolution (`No matching distribution found` after repeated name-resolution failures), so vulnerability reduction could not be validated in the local environment.
+- `git push -u origin codex/feat/deps-and-summary-quality-pass` failed three times with GitHub HTTP 500, blocking PR creation/merge for this pass.
+- rollback note: `Revert this pass commit(s) to restore previous summariser/formatter behavior and dependency pins.`
+
 - phase: `Phase 0 + Phase 1 (first repo-local P0 item)`
 - objective: `Complete repo audit baseline, defer blocked cloud audit, and harden storage failure redaction for logs + DLQ payload`
 - files changed:

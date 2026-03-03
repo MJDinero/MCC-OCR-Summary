@@ -1,13 +1,87 @@
 # docs/CURRENT_STATE.md — Verified Current State Register
 
-Last updated: 2026-03-03 10:26:53 PST
-Updated by: Codex (thread: config-align-live-runtime)
-Repo branch: `codex/feat/config-align-live-runtime`
-Repo commit (branch baseline): `b1a020c3c99f4fb4879c11735ddc029ba8305bcc`
-Task id: `config-align-live-runtime`
-Target GCP project: `quantify-agent` (approved canonical target)
-Target region: `us-central1` (approved canonical target)
-Cloud audit status: `DONE (read-only commands only; no cloud writes)`
+Last updated: 2026-03-03 12:15:45 PST
+Updated by: Codex (thread: deps-and-summary-quality-pass continuation)
+Repo branch: `codex/feat/deps-and-summary-quality-pass`
+Repo commit (branch baseline): `208ba3ad779165dd6e95318a98aaf9ab5613ad82`
+Task id: `deps-and-summary-quality-pass`
+Target GCP project: `quantify-agent` (canonical target)
+Target region: `us-central1` (canonical target)
+Cloud audit status: `NOT RUN THIS CONTINUATION (repo-local phases only; no cloud writes performed)`
+
+## Phase Queue Status (this continuation)
+- Phase 0: `DONE` (verified clean branch state, preserved local commit stack, confirmed unique branch diff vs `origin/main`)
+- Phase 1: `DONE` (published branch to origin and opened PR `#28` after resolving sandboxed network/auth checks)
+- Phase 2: `DONE` (repo-root `.venv` synced from `requirements.txt`; dependency tooling rerun successfully)
+- Phase 3: `DONE` (additional summarization-quality fix applied with targeted regression tests)
+- Phase 4: `DONE` (full supervisor matrix rerun; strict gates pass, with known residual dependency backlog)
+- Phase 5: `QUEUED` (awaiting post-commit push/check/merge actions for this continuation)
+
+## Phase 0 Verification Evidence
+- `git status --short --branch` -> `## codex/feat/deps-and-summary-quality-pass` (clean)
+- `git log --oneline -5 --decorate` -> HEAD `208ba3a`, branch contains unpublished task commits above `origin/main` `b1a020c`
+- `git diff --stat origin/main...HEAD` -> `6` files changed (`288` insertions, `76` deletions) before continuation edits
+- `git rev-parse HEAD` -> `208ba3ad779165dd6e95318a98aaf9ab5613ad82`
+
+## Phase 1 Publish Recovery Evidence
+- `git remote -v` -> `origin https://github.com/MJDinero/MCC-OCR-Summary.git`
+- `gh auth status` (escalated) -> authenticated account `MJDinero`, valid token scopes include `repo` and `workflow`
+- `git ls-remote origin HEAD` (escalated) -> connectivity restored
+- `git push -u origin codex/feat/deps-and-summary-quality-pass` (escalated) -> `PASS` (new remote branch created)
+- PR opened and corrected: `https://github.com/MJDinero/MCC-OCR-Summary/pull/28`
+
+## Phase 2 Dependency Sync Results
+- `test -x .venv/bin/python` -> `PASS`
+- `.venv/bin/python --version` -> `Python 3.12.8`
+- `.venv/bin/python -m pip install -r requirements.txt` (escalated) -> `PASS`
+  - confirmed updates in repo venv: `python-multipart 0.0.22`, `urllib3 2.6.3`, `pypdf 6.7.4`, `pyasn1 0.6.2`, `wheel 0.46.2`
+- `.venv/bin/python -m deptry .` -> `FAIL` (`82` DEP002 issues; down from `84`, direct `reportlab` DEP003 cleared in prior step)
+- `.venv/bin/pip-audit --local` (escalated) -> improved to `6` vulnerabilities, later reduced to `3` after local env hygiene:
+  - upgraded `pip` to `26.0.1`
+  - installed patched `filelock==3.20.3` (tooling dependency for pip-audit)
+  - remaining advisories: `orjson 3.11.3`, `pillow 12.0.0`, `protobuf 4.25.8`
+
+## Phase 3 Summarization Quality Changes (this continuation)
+- `src/services/summariser_refactored.py`
+  - removed overly strict `"patient"` token gate when selecting overview lines
+  - added fallback pass for `key_points`, `clinical_details`, and `care_plan` when keyword filtering would otherwise drop valid content
+- `tests/test_summariser_refactored.py`
+  - added regression that preserves overview content even without the word `"patient"`
+  - added regression that preserves clinical/plan lines when keyword filters are too narrow
+
+## Phase 4 Supervisor Validation Matrix (this continuation)
+- `.venv/bin/python -m ruff check --select I --fix src/services/summariser_refactored.py tests/test_summariser_refactored.py` -> `PASS` (1 fix)
+- `.venv/bin/python -m ruff format src/services/summariser_refactored.py tests/test_summariser_refactored.py` -> `PASS` (1 file reformatted)
+- `.venv/bin/python -m ruff check src tests` -> `PASS`
+- `.venv/bin/python -m mypy --strict src` -> `PASS` (`43` files)
+- `.venv/bin/python -m pytest --cov=src --cov-branch --cov-report=term-missing` -> `PASS` (`195 passed`, `6 skipped`, coverage `96.66%`)
+- `.venv/bin/python -m pylint --jobs=1 --score=y --fail-under=9.5 <important+changed summarization paths>` -> `PASS` (overall `9.90/10`)
+- Per-file pylint scores:
+  - `src/services/summariser_refactored.py` -> `9.87/10`
+  - `src/services/summarization/formatter.py` -> `10.00/10`
+  - `src/services/summarization/text_utils.py` -> `10.00/10`
+  - `tests/test_summariser_refactored.py` -> `9.91/10`
+- `.venv/bin/python -m bandit -r src` -> `LOW-ONLY FINDINGS` (`11 low`, `0 medium`, `0 high`)
+- rerun dependency tools:
+  - `.venv/bin/python -m deptry .` -> `82` issues (deferred backlog)
+  - `.venv/bin/pip-audit --local` -> `3` vulnerabilities (deferred high-risk surface)
+
+## Remaining Blockers / Deferred Risks
+- `deptry` backlog (`82` DEP002 items) is still broad and requires a separate scoped dependency-pruning pass.
+- `pip-audit` residual findings require higher-risk decisions:
+  - `protobuf` requires major line jump (`5.29.6+` or `6.33.5`)
+  - `orjson` advisory has no listed fix version
+  - `pillow` fix (`12.1.1`) is transitive under `reportlab` and should be handled with a scoped compatibility check.
+
+## Historical Snapshot (2026-03-03 config-align-live-runtime)
+- Last updated: `2026-03-03 10:26:53 PST`
+- Updated by: `Codex (thread: config-align-live-runtime)`
+- Repo branch: `codex/feat/config-align-live-runtime`
+- Repo commit (branch baseline): `b1a020c3c99f4fb4879c11735ddc029ba8305bcc`
+- Task id: `config-align-live-runtime`
+- Target GCP project: `quantify-agent` (approved canonical target)
+- Target region: `us-central1` (approved canonical target)
+- Cloud audit status: `DONE (read-only commands only; no cloud writes)`
 
 ## Phase Queue Status (this pass)
 - Phase 0: `DONE` (repo + live runtime re-verified with read-only commands)

@@ -12,7 +12,7 @@ def _format_bullets(lines: Sequence[str], *, fallback: str) -> str:
     return "\n".join(f"- {entry}" for entry in entries)
 
 
-def build_mcc_bible_sections(
+def build_mcc_bible_sections(  # pylint: disable=too-many-arguments
     *,
     chunk_count: int,
     facility: str | None,
@@ -24,6 +24,7 @@ def build_mcc_bible_sections(
     healthcare_providers: Sequence[str],
     medications: Sequence[str],
 ) -> list[tuple[str, str]]:
+    _ = chunk_count
     provider_lines = []
     if provider_seen:
         provider_lines.append(provider_seen)
@@ -31,7 +32,6 @@ def build_mcc_bible_sections(
         provider_lines.append("Provider not documented.")
     if facility:
         provider_lines.append(f"Facility: {facility}")
-    provider_lines.append(f"Document processed in {chunk_count} chunk(s).")
 
     sections = [
         ("Provider Seen", "\n".join(line for line in provider_lines if line).strip()),
@@ -70,7 +70,7 @@ def build_mcc_bible_sections(
     return sections
 
 
-def build_mcc_bible_summary(
+def build_mcc_bible_summary(  # pylint: disable=too-many-arguments
     *,
     chunk_count: int,
     facility: str | None,
@@ -94,7 +94,5 @@ def build_mcc_bible_summary(
         medications=medications,
     )
     return "\n\n".join(
-        f"{heading}:\n{body.strip()}"
-        for heading, body in sections
-        if body.strip()
+        f"{heading}:\n{body.strip()}" for heading, body in sections if body.strip()
     )
