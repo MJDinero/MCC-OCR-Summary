@@ -1,8 +1,13 @@
+# Legacy reference manifest only.
+# Active deployment source of truth is cloudbuild.yaml + live Cloud Run service spec.
 apiVersion: serving.knative.dev/v1
 kind: Service
 metadata:
   name: mcc-ocr-summary
   namespace: default
+  annotations:
+    mcc.dev/manifest-status: "legacy-reference-only"
+    mcc.dev/authoritative-deploy: "cloudbuild.yaml"
 spec:
   template:
     metadata:
