@@ -210,7 +210,8 @@ Re-run benchmarks after model or configuration updates. Results feed the README 
 - **Document AI Throttling** – Increase exponential backoff parameters in `OCRService._process_with_retry` or scale concurrency via Pub/Sub subscription settings.
 - **LLM Timeouts** – Adjust `MAX_OUTPUT_TOKENS` and `TEMPERATURE`, or switch the `LanguageModelClient` implementation to Vertex AI streaming.
 
-For further details, see `AGENTS.md` and `audit/technical_audit_v11j.md`.
+For further details, see `AGENTS.md` and
+`docs/audit/archive/legacy/technical_audit_v11j.md`.
 
 - **Smoke Test (staging / prod)**
   ```bash
