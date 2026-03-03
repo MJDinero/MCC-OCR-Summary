@@ -1,6 +1,6 @@
 # docs/CURRENT_STATE.md — Verified Current State Register
 
-Last updated: 2026-03-03 11:19:30 PST
+Last updated: 2026-03-03 11:20:58 PST
 Updated by: Codex (thread: deps-and-summary-quality-pass)
 Repo branch: `codex/feat/deps-and-summary-quality-pass`
 Repo commit (branch baseline): `b1a020c7f5d209916e17f5ed9f9e610e364d9b24`
@@ -15,7 +15,7 @@ Cloud audit status: `NOT RUN THIS PASS (repo-local phases only; no cloud writes 
 - Phase 2: `DONE` (large-PDF summarization path investigated with code evidence; targeted fixes + characterization tests added)
 - Phase 3: `DONE` (optional cleanup limited to inventory only; no broad delete/prune)
 - Phase 4: `DONE` (full quality matrix rerun; strict gates green except known deptry/pip-audit backlog)
-- Phase 5: `PENDING` (commit/push/PR/merge sequence)
+- Phase 5: `BLOCKED` (local commit created; push/PR blocked by repeated GitHub HTTP 500 errors)
 
 ## Branch Bootstrap (Required Sequence)
 - `git fetch origin` -> `BLOCKED` (two attempts; `The requested URL returned error: 500`)
@@ -60,6 +60,7 @@ Cloud audit status: `NOT RUN THIS PASS (repo-local phases only; no cloud writes 
 ## Exact Blockers in This Pass
 - `git fetch origin` currently blocked by remote GitHub HTTP 500; local baseline is still aligned to `origin/main` commit `b1a020c`.
 - `.venv` dependency sync is blocked by DNS resolution failures to PyPI (`No matching distribution found` after repeated `nodename nor servname provided` errors), preventing local installation validation of upgraded requirement pins.
+- `git push -u origin codex/feat/deps-and-summary-quality-pass` failed twice with GitHub HTTP 500, blocking PR creation and merge for this pass.
 
 ## Archive Commit Decision
 - Decision: `KEEP` commit `683624b` (`docs: archive legacy audit reports`).
