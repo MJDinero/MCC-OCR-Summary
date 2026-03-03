@@ -48,6 +48,16 @@ Never jump ahead to architecture cleanup while P0/P1 remain open.
 - `Resolved`: key-point/detail/plan fallback now preserves valid lines when strict keyword filters over-prune.
 - `Resolved`: new tests enforce non-lossy overview/detail/plan behavior for short synthetic OCR content.
 
+## Autonomous phase queue ledger (2026-03-03 config-align-live-runtime)
+- Phase 0: `Done` (read-only runtime verification rerun for `quantify-agent` / `us-central1`, including Cloud Run IAM policy)
+- Phase 1: `Done` (live-vs-repo alignment matrix built and classified)
+- Phase 2: `Done` (`cloudbuild.yaml` + `README.md` aligned to approved live runtime values)
+- Phase 3: `Done` (`pipeline.yaml` explicitly marked as legacy/non-authoritative while preserved for tests/reference)
+- Phase 4: `Done` (`reportlab` direct dependency metadata corrected; `pip-audit` inventory captured and prioritized)
+- Phase 5: `Done` (required validation matrix passed: ruff, mypy strict, pytest with branch coverage)
+- Phase 6: `Done` (strict self-review complete; no cloud writes, narrow scope maintained)
+- Phase 7: `Blocked` (awaiting post-update commit/push/PR lifecycle)
+
 ## Autonomous phase queue ledger (2026-03-02 phase6-reaudit-deps-closeout)
 - Phase 0: `Done` (branch state verified; archive commit `683624b` reviewed and kept)
 - Phase 1: `Done` (repo-root `.venv` verified at `/Users/quantanalytics/dev/MCC-OCR-Summary/.venv/bin/python`)
@@ -390,6 +400,35 @@ For each completed item, record:
   - `pip-audit` blocked by DNS to `pypi.org`.
   - `gcloud auth application-default print-access-token` blocked by DNS to `oauth2.googleapis.com` (CLI read-only inventory still succeeded).
 - rollback note: `Revert this pass's docs-only commit to restore prior ledger state if needed.`
+
+- phase: `Phase 0 + Phase 1 + Phase 2 + Phase 3 + Phase 4 + Phase 5 + Phase 6 (config-align-live-runtime)`
+- objective: `Use approved live runtime as operational truth and align repo-controlled deploy/docs with minimal safe changes, including pipeline.yaml status resolution and dependency metadata hygiene.`
+- files changed:
+- `cloudbuild.yaml`
+- `README.md`
+- `pipeline.yaml`
+- `tests/test_infra_manifest.py`
+- `requirements.txt`
+- `docs/CURRENT_STATE.md`
+- `PLANS.md`
+- commands run:
+- branch/bootstrap: `git fetch origin`, `git checkout main`, `git merge --ff-only origin/main`, `git checkout -b codex/feat/config-align-live-runtime`
+- read-only verification:
+  - `git status --short --branch`
+  - `gcloud auth list --format='table(account,status)'`
+  - `gcloud config list --format='text(core.project,core.account,compute.region,run.region,workflows.location)'`
+  - `gcloud run services describe mcc-ocr-summary --region us-central1 --project quantify-agent --format='yaml(metadata.name,status.url,spec.template.spec.serviceAccountName,spec.template.metadata.annotations,spec.template.spec.containers,metadata.annotations)'`
+  - `gcloud run services get-iam-policy mcc-ocr-summary --region us-central1 --project quantify-agent --format='json'`
+  - supplemental projection: `gcloud run services describe ... --format='yaml(metadata.annotations,spec.template.metadata.annotations,spec.template.spec.containerConcurrency,spec.template.spec.timeoutSeconds,spec.template.spec.serviceAccountName,status.url)'`
+- dependency tooling: `.venv/bin/python -m deptry .`, `.venv/bin/pip-audit --local`
+- validation:
+  - `.venv/bin/python -m ruff check src tests`
+  - `.venv/bin/python -m mypy --strict src`
+  - `.venv/bin/python -m pytest --cov=src --cov-branch --cov-report=term-missing`
+  - `git diff --check`
+- result: `Done for repo-local scope. Deploy/runtime config is aligned to verified live values; pipeline.yaml ambiguity is removed; reportlab declaration corrected; full validation matrix passed.`
+- blockers: `No blocking issue for repo-local alignment. Vulnerability remediation is intentionally deferred to a dedicated dependency-hardening task.`
+- rollback note: `Revert this pass commit to restore prior cloudbuild/runtime doc/manifest metadata state.`
 ## Validation
 - Each phase must end with concrete command output and updated evidence.
 - No phase is complete until tests relevant to the touched surface pass.

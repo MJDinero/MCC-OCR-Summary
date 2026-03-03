@@ -73,125 +73,155 @@ Cloud audit status: `NOT RUN THIS CONTINUATION (repo-local phases only; no cloud
   - `orjson` advisory has no listed fix version
   - `pillow` fix (`12.1.1`) is transitive under `reportlab` and should be handled with a scoped compatibility check.
 
-## Historical Snapshot (2026-03-02 phase6-reaudit-deps-closeout)
+## Historical Snapshot (2026-03-03 config-align-live-runtime)
+- Last updated: `2026-03-03 10:26:53 PST`
+- Updated by: `Codex (thread: config-align-live-runtime)`
+- Repo branch: `codex/feat/config-align-live-runtime`
+- Repo commit (branch baseline): `b1a020c3c99f4fb4879c11735ddc029ba8305bcc`
+- Task id: `config-align-live-runtime`
+- Target GCP project: `quantify-agent` (approved canonical target)
+- Target region: `us-central1` (approved canonical target)
+- Cloud audit status: `DONE (read-only commands only; no cloud writes)`
 
 ## Phase Queue Status (this pass)
-- Phase 0: `DONE` (branch state verified; archive decision recorded)
-- Phase 1: `DONE` (repo-root `.venv` verified)
-- Phase 2: `DONE WITH BLOCKERS` (`deptry`/`pip-audit` blocked by DNS to PyPI)
-- Phase 3: `DONE WITH BLOCKER` (gcloud account/project verified; ADC token refresh failed due DNS to `oauth2.googleapis.com`)
-- Phase 4: `DONE` (full read-only GCP inventory command set executed)
-- Phase 5: `DONE` (live-vs-repo drift classified)
-- Phase 6: `DONE` (minimal repo-local ledger-only updates)
-- Phase 7: `DONE` (docs-only integrity checks completed)
-- Phase 8: `DONE` (this file + `PLANS.md` updated with evidence)
+- Phase 0: `DONE` (repo + live runtime re-verified with read-only commands)
+- Phase 1: `DONE` (live-vs-repo alignment matrix built and classified)
+- Phase 2: `DONE` (repo-controlled deploy/docs aligned to approved live runtime)
+- Phase 3: `DONE` (`pipeline.yaml` explicitly marked legacy/non-authoritative)
+- Phase 4: `DONE` (`reportlab` direct dependency declaration fixed; vulnerabilities inventoried/prioritized)
+- Phase 5: `DONE` (full required validation commands passed)
+- Phase 6: `DONE` (strict self-review complete; scope stayed config/docs/metadata-focused)
+- Phase 7: `BLOCKED` (awaiting post-update commit/push/PR lifecycle)
 
-## Repo-Root `.venv` Verification
-- `pwd` -> `/Users/quantanalytics/dev/MCC-OCR-Summary`
-- `git rev-parse --show-toplevel` -> `/Users/quantanalytics/dev/MCC-OCR-Summary`
-- `test -x .venv/bin/python` -> `0`
-- `.venv/bin/python --version` -> `Python 3.12.8`
-
-## Dependency Hygiene Results
-- `command`: `.venv/bin/python -m pip install deptry pip-audit`
-  - `result`: `BLOCKED`
-  - `error`: repeated connection failures to `/simple/deptry/` and `No matching distribution found for deptry` with DNS/name-resolution failure.
-- `command`: `.venv/bin/python -m deptry .`
-  - `result`: `BLOCKED`
-  - `error`: `No module named deptry`
-- `command`: `.venv/bin/python -m pip_audit --local`
-  - `result`: `BLOCKED`
-  - `error`: `Failed to resolve 'pypi.org'`
-- `fallback`: `.venv/bin/pip-audit --local`
-  - `result`: `BLOCKED`
-  - `error`: `Failed to resolve 'pypi.org'`
-
-## Auth Verification
-- `gcloud auth list --format='table(account,status)'` succeeded; active account is `Matt@moneymediausa.com`.
-- `gcloud config list --format='text(core.project,core.account,compute.region,run.region,workflows.location)'` succeeded with:
-  - `project=quantify-agent`
-  - `account=Matt@moneymediausa.com`
-  - `compute.region=us-central1`
-  - `run.region=us-central1`
-  - `workflows.location=us-central1`
-- `gcloud auth application-default print-access-token >/dev/null` failed:
-  - `error`: `Failed to resolve 'oauth2.googleapis.com'`
-
-## Live GCP Values Observed (Read-Only)
+## Live Runtime Values Re-Verified (2026-03-03)
+- Project/region: `quantify-agent` / `us-central1`
 - Cloud Run service: `mcc-ocr-summary`
 - Cloud Run URLs:
-  - status URL: `https://mcc-ocr-summary-6vupjpy5la-uc.a.run.app`
-  - metadata URLs annotation includes both:
-    - `https://mcc-ocr-summary-720850296638.us-central1.run.app`
-    - `https://mcc-ocr-summary-6vupjpy5la-uc.a.run.app`
-- Ingress posture: `run.googleapis.com/ingress=all` (and `ingress-status=all`)
+  - `https://mcc-ocr-summary-6vupjpy5la-uc.a.run.app`
+  - `https://mcc-ocr-summary-720850296638.us-central1.run.app`
 - Service account: `mcc-orch-sa@quantify-agent.iam.gserviceaccount.com`
-- Container image: `us-central1-docker.pkg.dev/quantify-agent/mcc/mcc-ocr-summary:ops-final-20251117-1613`
-- Concurrency / timeout / max instances:
+- Ingress: `all`
+- Auth posture from IAM policy: `roles/run.invoker` bound only to service accounts; no `allUsers`/`allAuthenticatedUsers` binding observed.
+- Image/tag: `us-central1-docker.pkg.dev/quantify-agent/mcc/mcc-ocr-summary:ops-final-20251117-1613`
+- Runtime controls:
   - `containerConcurrency=1`
   - `timeoutSeconds=3600`
   - `autoscaling.knative.dev/maxScale=1`
 - OCR processor IDs:
   - `DOC_AI_PROCESSOR_ID=21c8becfabc49de6`
   - `DOC_AI_OCR_PROCESSOR_ID=21c8becfabc49de6`
-- Drive folder IDs:
+- Drive IDs:
   - `DRIVE_INPUT_FOLDER_ID=1eyMO0126VfLBK3bBQEpWlVOL6tWxriCE`
   - `DRIVE_REPORT_FOLDER_ID=130jJzsl3OBzMD8weGfBOaXikfEnD2KVg`
-- Metrics setting: `ENABLE_METRICS=true`
-- Buckets in runtime env:
+- Metrics flag: `ENABLE_METRICS=true`
+- Runtime buckets:
   - `INTAKE_GCS_BUCKET=mcc-intake`
   - `OUTPUT_GCS_BUCKET=mcc-output`
   - `SUMMARY_BUCKET=mcc-output`
-- Secrets wired in runtime env:
-  - `OPENAI_API_KEY` -> Secret `OPENAI_API_KEY`
-  - `INTERNAL_EVENT_TOKEN` -> Secret `internal-event-token`
-  - `SERVICE_ACCOUNT_JSON` -> Secret `mcc_orch_sa_key`
-- Inventory snapshots:
-  - Artifact Registry repos: `cloud-run-source-deploy`, `mcc`, `mcc-artifacts`, `mcc-docker`, `mcc-ocr-summary`
-  - Secret names visible (metadata only): `OPENAI_API_KEY`, `internal-event-token`, `mcc_orch_sa_key`, plus additional project secrets
-  - Buckets include: `mcc-intake`, `mcc-output`, `mcc-state-quantify-agent-us-central1-322786`, `quantify-agent-mcc-phi-artifacts`, `quantify-agent-mcc-phi-raw`, and others
-  - Workflow: `docai-pipeline` (ACTIVE)
-  - Eventarc trigger: `mcc-intake-trigger` -> topic `eventarc-us-central1-mcc-intake-trigger-757`
-  - Pub/Sub topics include: `mcc-intake`, `mcc-orchestrator`, `mcc-dlq`, `mcc-intake-dlq`, `mcc-ocr-pipeline-dlq`, eventarc topic
-  - KMS keyring: `projects/quantify-agent/locations/us-central1/keyRings/mcc-keyring`
-  - BigQuery datasets: `mcc_observability`, `run_googleapis_com`
 
-## Drift Reconciliation
-1. `repo stale, live likely correct`
-   - `cloudbuild.yaml` `DRIVE_INPUT_FOLDER_ID` is `19xdu6hV9KNgnE_Slt4ogrJdASWXZb5gl` but live is `1eyMO0126VfLBK3bBQEpWlVOL6tWxriCE`.
-   - `cloudbuild.yaml` `DRIVE_REPORT_FOLDER_ID` is `1eyMO0126VfLBK3bBQEpWlVOL6tWxriCE` but live is `130jJzsl3OBzMD8weGfBOaXikfEnD2KVg`.
-   - `cloudbuild.yaml` sets `ENABLE_METRICS=false` but live is `true`.
-   - `cloudbuild.yaml` `_TAG=v11mvp` but live revision runs `ops-final-20251117-1613`.
-   - Live env has additional vars not present in `cloudbuild.yaml` (`SUMMARY_COMPOSE_MODE`, `PDF_WRITER_MODE`, `PDF_GUARD_ENABLED`, `ENABLE_NOISE_FILTERS`, `TAG_NAME`, `PDF_INPUT_FOLDER_ID`, `PDF_OUTPUT_FOLDER_ID`).
-2. `live drift, repo likely intended`
-   - No high-confidence item in this pass.
-3. `documentation drift only`
-   - `pipeline.yaml` still describes a two-container service (`mcc-orchestrator:latest` + GMP sidecar, `containerConcurrency=4`, `timeoutSeconds=1200`) and does not match the observed Cloud Run service spec.
-   - `README.md` Drive mapping section contains folder IDs that do not match observed runtime env values.
-4. `ambiguous, needs human decision`
-   - Ingress posture is currently `all`; repo deploy truth (`cloudbuild.yaml`) does not explicitly enforce ingress or unauthenticated access policy.
-   - Cloud Run service account/concurrency/timeout/max-scale are not explicitly pinned in `cloudbuild.yaml`; drift could recur on future deploys.
+## Alignment Matrix (Live Truth vs Repo)
 
-## Exact Blockers Remaining
-- Dependency tooling is still blocked by DNS resolution to PyPI (`deptry` install and `pip-audit` index lookups).
-- ADC token minting is blocked by DNS resolution to `oauth2.googleapis.com`; CLI read-only inventory still worked for the requested command set.
+| Surface | Live Runtime (2026-03-03) | Repo Before This Pass | Classification | Outcome |
+| --- | --- | --- | --- | --- |
+| Project / region | `quantify-agent` / `us-central1` | same in `cloudbuild.yaml` | `safe to align automatically` | no change needed |
+| Cloud Run URLs | both URLs above | mostly tracked in docs, not deploy-pinned | `documentation clarification only` | refreshed in this file |
+| Service account | `mcc-orch-sa@...` | not explicitly pinned in `cloudbuild.yaml` | `safe to align automatically` | pinned with `_SERVICE_ACCOUNT` + deploy arg |
+| Ingress + IAM posture | ingress `all`; invoker restricted to service accounts | ingress/auth not explicit in deploy config | `security-sensitive` | ingress pinned in `cloudbuild.yaml`; IAM remains HUMAN MUST RUN |
+| Image/tag | `ops-final-20251117-1613` | `_TAG=v11mvp` | `safe to align automatically` | `_TAG` default aligned to verified live tag |
+| OCR processor ID | `21c8becfabc49de6` | already matched | `safe to align automatically` | no functional change |
+| Drive input/report IDs | `1eyMO...` / `130jJ...` | stale values in `cloudbuild.yaml` + `README.md` | `safe to align automatically` | updated config/docs to live IDs |
+| Metrics flag | `true` | `ENABLE_METRICS=false` in `cloudbuild.yaml` | `safe to align automatically` | set `ENABLE_METRICS=true` |
+| Buckets | `mcc-intake`, `mcc-output`, `mcc-output` | already matched | `safe to align automatically` | no functional change |
+| Concurrency / timeout / maxScale | `1` / `3600` / `1` | not pinned in `cloudbuild.yaml` | `safe to align automatically` | deploy flags pinned (`--concurrency`, `--timeout`, `--max-instances`) |
+| `pipeline.yaml` status | live runtime does not use its spec | ambiguous legacy manifest with stale runtime values | `documentation clarification only` | marked as `legacy-reference-only`; tests enforce explicit status |
+
+## `pipeline.yaml` Decision
+- Decision: `B` (not authoritative deployment path).
+- Reason:
+  - Root policy treats `cloudbuild.yaml` as deploy truth unless superseded.
+  - `pipeline.yaml` is referenced by tests and still useful as a legacy reference.
+  - Keeping it without a status marker was misleading.
+- Action taken:
+  - Added file-level legacy notice and metadata annotations:
+    - `mcc.dev/manifest-status=legacy-reference-only`
+    - `mcc.dev/authoritative-deploy=cloudbuild.yaml`
+  - Added test guard in `tests/test_infra_manifest.py` to keep this status explicit.
+
+## Dependency Hygiene + Vulnerability Inventory
+- `deptry` result: `DONE` (tool runs; many mixed `DEP002` findings intentionally not mass-pruned here).
+- High-confidence metadata issue: `reportlab` imported directly in `src/services/pdf_writer.py` and previously undeclared.
+  - Action: added `reportlab==4.2.0` to `requirements.txt`.
+
+### pip-audit Prioritization (`.venv/bin/pip-audit --local`)
+- Result: `Found 25 known vulnerabilities in 10 packages`.
+- Runtime-critical candidates (prioritize first):
+  - `python-multipart` (`GHSA-wp53-j4wj-2cfg`, fix `0.0.22`)
+  - `pypdf` (multiple GHSA IDs, fix chain up to `6.7.4`)
+  - `protobuf` (`GHSA-7gcm-g887-7qv7`, fix `5.29.6` / `6.33.5`; constrained by current `<5` policy)
+  - `urllib3` (three GHSA IDs, fixes up to `2.6.3`)
+  - `orjson` (`GHSA-hx9q-6w63-j58v`, no fix version listed)
+- Likely tooling or non-runtime-first:
+  - `pip`, `wheel`, `filelock`
+- Mixed/depends-on-runtime-path usage:
+  - `pillow` (used by PDF/image paths in some stacks; validate usage before remediation)
+  - `pyasn1` (mostly auth/crypto stack dependency)
+
+## Files Changed This Pass
+- `cloudbuild.yaml`
+- `README.md`
+- `pipeline.yaml`
+- `tests/test_infra_manifest.py`
+- `requirements.txt`
+- `PLANS.md` (current pass evidence entry)
+- `docs/CURRENT_STATE.md` (this file)
+
+## Validation Evidence
+- Passed: `.venv/bin/python -m ruff check src tests`
+- Passed: `.venv/bin/python -m mypy --strict src`
+- Passed: `.venv/bin/python -m pytest --cov=src --cov-branch --cov-report=term-missing`
+  - `192 passed, 6 skipped`
+  - coverage summary: `Total coverage: 94.91%`
+- Passed: `git diff --check`
+- Supplemental config checks:
+  - `yaml.safe_load('cloudbuild.yaml')`
+  - `yaml.safe_load('pipeline.yaml')`
+
+## Risks / Unknowns / Rollback
+- Remaining risks:
+  - Ingress remains `all` by approved runtime policy; although IAM invoker is currently restricted, this is security-sensitive and should stay under explicit review.
+  - `pip-audit` findings are recorded but not remediated in this scoped pass.
+  - `protobuf` vulnerability remediation likely conflicts with current `<5` compatibility constraint and needs a separate compatibility task.
+- Rollback:
+  - Revert this pass commit to restore prior repo config/doc state.
+- No cloud writes performed.
 
 ## Evidence Log (Commands Run This Pass)
-- Phase 0: `git status --short --branch`, `git log --oneline -3 --decorate`, `git show --stat --name-status 683624b`, commit-content/reference inspection commands
-- Read-first docs: `AGENTS.md`, `PLANS.md`, `docs/CURRENT_STATE.md`, `docs/REFACTOR_RUNBOOK.md`, `docs/ARCHITECTURE.md`, `docs/CODEBASE_MAP.md`, `docs/TESTING.md`, `docs/GCP_REFACTOR_PLAN.md`
-- Phase 1: `pwd`, `git rev-parse --show-toplevel`, `test -x .venv/bin/python`, `ls .venv/bin/python`, `.venv/bin/python --version`
-- Phase 2: `.venv/bin/python -m pip install deptry pip-audit`, `.venv/bin/python -m deptry .`, `.venv/bin/python -m pip_audit --local`, `.venv/bin/pip-audit --local`
-- Phase 3: `gcloud auth list ...`, `gcloud config list ...`, `gcloud auth application-default print-access-token >/dev/null`
-- Phase 4 command set:
-  - `gcloud run services describe ...`
-  - `gcloud artifacts repositories list ...`
-  - `gcloud secrets list ...`
-  - `gcloud storage buckets list ...`
-  - `gcloud iam service-accounts list ...`
-  - `gcloud projects get-iam-policy ...`
-  - `gcloud workflows list ...`
-  - `gcloud eventarc triggers list ...`
-  - `gcloud pubsub topics list ...`
-  - `gcloud kms keyrings list ...`
-  - `bq ls --project_id=quantify-agent`
-  - supplemental read-only projection for ingress/concurrency/timeout.
+- Branch/bootstrap:
+  - `git fetch origin`
+  - `git checkout main`
+  - `git merge --ff-only origin/main`
+  - `git checkout -b codex/feat/config-align-live-runtime`
+- Read-first docs:
+  - `AGENTS.md`
+  - `PLANS.md`
+  - `docs/CURRENT_STATE.md`
+  - `docs/REFACTOR_RUNBOOK.md`
+  - `docs/ARCHITECTURE.md`
+  - `docs/CODEBASE_MAP.md`
+  - `docs/TESTING.md`
+  - `docs/GCP_REFACTOR_PLAN.md`
+- Phase 0 verification:
+  - `git status --short --branch`
+  - `gcloud auth list --format='table(account,status)'`
+  - `gcloud config list --format='text(core.project,core.account,compute.region,run.region,workflows.location)'`
+  - `gcloud run services describe mcc-ocr-summary --region us-central1 --project quantify-agent --format='yaml(metadata.name,status.url,spec.template.spec.serviceAccountName,spec.template.metadata.annotations,spec.template.spec.containers,metadata.annotations)'`
+  - `gcloud run services get-iam-policy mcc-ocr-summary --region us-central1 --project quantify-agent --format='json'`
+  - `gcloud run services describe mcc-ocr-summary --region us-central1 --project quantify-agent --format='yaml(metadata.annotations,spec.template.metadata.annotations,spec.template.spec.containerConcurrency,spec.template.spec.timeoutSeconds,spec.template.spec.serviceAccountName,status.url)'`
+- Dependency audit:
+  - `.venv/bin/python -m deptry .`
+  - `.venv/bin/pip-audit --local`
+- Validation:
+  - `.venv/bin/python -m ruff check src tests`
+  - `.venv/bin/python -m mypy --strict src`
+  - `.venv/bin/python -m pytest --cov=src --cov-branch --cov-report=term-missing`
+  - `git diff --check`
