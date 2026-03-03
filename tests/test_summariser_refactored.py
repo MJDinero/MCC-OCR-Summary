@@ -1,24 +1,24 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 import json
 import sys
-from typing import Dict, Any
+from dataclasses import dataclass
 from types import SimpleNamespace
+from typing import Any, Dict
 
 import pytest
 
 from src.errors import SummarizationError
 from src.models.summary_contract import SummaryContract
 from src.services.summariser_refactored import (
-    RefactoredSummariser,
     ChunkSummaryBackend,
-    OpenAIResponsesBackend,
     HeuristicChunkBackend,
-    _split_gcs_uri,
-    _merge_dicts,
-    _load_input_payload,
+    OpenAIResponsesBackend,
+    RefactoredSummariser,
     _cli,
+    _load_input_payload,
+    _merge_dicts,
+    _split_gcs_uri,
 )
 
 
@@ -110,9 +110,14 @@ def test_refactored_summary_structure_and_length() -> None:
         section for section in contract.sections if section.slug == "diagnoses"
     )
     diagnoses_items = diagnoses_section.extra.get("items", [])
-    assert diagnoses_items and "G43.709 Chronic migraine without aura" in diagnoses_items[0]
+    assert (
+        diagnoses_items
+        and "G43.709 Chronic migraine without aura" in diagnoses_items[0]
+    )
     providers_section = next(
-        section for section in contract.sections if section.slug == "healthcare_providers"
+        section
+        for section in contract.sections
+        if section.slug == "healthcare_providers"
     )
     providers_items = providers_section.extra.get("items", [])
     assert providers_items and providers_items[0].startswith("Dr. Alicia Carter")
@@ -183,6 +188,53 @@ def test_openai_backend_schema_mismatch_raises(monkeypatch):
         backend.summarise_chunk(
             chunk_text="data", chunk_index=1, total_chunks=1, estimated_tokens=500
         )
+
+
+def test_openai_backend_uses_responses_text_format(monkeypatch):
+    backend = OpenAIResponsesBackend(model="gpt-test", api_key="key")
+    captured: Dict[str, Any] = {}
+    payload = {
+        "overview": "Structured summary chunk",
+        "key_points": ["Key point"],
+        "clinical_details": ["Clinical detail"],
+        "care_plan": ["Care plan"],
+        "diagnoses": ["Diagnosis"],
+        "providers": ["Provider"],
+        "medications": ["Medication"],
+        "schema_version": OpenAIResponsesBackend.CHUNK_SCHEMA_VERSION,
+    }
+
+    def _fake_create(**kwargs: Any):
+        captured.update(kwargs)
+        return SimpleNamespace(
+            output=[
+                SimpleNamespace(
+                    content=[
+                        SimpleNamespace(type="output_text", text=json.dumps(payload))
+                    ]
+                )
+            ]
+        )
+
+    class _FakeClient:
+        def __init__(self, api_key: str) -> None:
+            self.api_key = api_key
+            self.responses = SimpleNamespace(create=_fake_create)
+
+    monkeypatch.setitem(
+        sys.modules,
+        "openai",
+        SimpleNamespace(OpenAI=lambda api_key: _FakeClient(api_key)),
+    )
+
+    result = backend.summarise_chunk(
+        chunk_text="data", chunk_index=1, total_chunks=1, estimated_tokens=120
+    )
+
+    assert "response_format" not in captured
+    assert captured["text"]["format"]["type"] == "json_schema"
+    assert captured["text"]["format"]["name"] == "chunk_summary_v2025_10_01"
+    assert result["schema_version"] == OpenAIResponsesBackend.CHUNK_SCHEMA_VERSION
 
 
 def test_heuristic_backend_includes_schema_version():
@@ -378,6 +430,44 @@ def test_openai_backend_falls_back_to_heuristic(monkeypatch):
     )
     assert result["schema_version"] == OpenAIResponsesBackend.CHUNK_SCHEMA_VERSION
     assert "hypertension" in " ".join(result["diagnoses"]).lower()
+
+
+def test_refactored_summary_omits_chunk_count_runtime_marker() -> None:
+    text = (
+        "Patient reports recurring lumbar pain after an occupational injury. "
+        "Dr. Alicia Carter reviewed imaging and confirmed persistent muscle spasm. "
+        "Therapy continuation and medication adjustment discussed."
+    ) * 8
+
+    backend = StubBackend(
+        responses={
+            1: {
+                "overview": "Follow-up evaluation for persistent lumbar pain.",
+                "key_points": [
+                    "Symptoms persist with activity-related exacerbation.",
+                    "Provider reviewed prior imaging and exam findings.",
+                ],
+                "clinical_details": [
+                    "Lumbar tenderness and reduced flexion documented during examination.",
+                    "Neurologic deficits not observed.",
+                ],
+                "care_plan": [
+                    "Continue physical therapy and monitor symptom progression.",
+                    "Adjust medication regimen for pain control.",
+                ],
+                "diagnoses": ["Lumbar strain"],
+                "providers": ["Dr. Alicia Carter"],
+                "medications": ["Cyclobenzaprine 5 mg"],
+            }
+        }
+    )
+
+    summariser = RefactoredSummariser(
+        backend=backend, target_chars=350, max_chars=500, overlap_chars=80
+    )
+    summary = summariser.summarise(text)
+    summary_text = SummaryContract.from_mapping(summary).as_text()
+    assert "Document processed in " not in summary_text
 
 
 def test_cli_fallback_to_heuristic_backend(monkeypatch, tmp_path):

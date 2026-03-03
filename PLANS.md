@@ -22,6 +22,32 @@ Always work one item at a time in this order:
 6. decide next item
 Never jump ahead to architecture cleanup while P0/P1 remain open.
 
+## Autonomous phase queue ledger (2026-03-03 deps-and-summary-quality-pass)
+- Phase 0: `Done with blocker` (branch bootstrap completed; `git fetch origin` failed twice with GitHub HTTP 500, then local `main` and `origin/main` were already aligned at `b1a020c`)
+- Phase 1: `Done with blocker` (safe dependency pin patch prepared, but `.venv` sync/install blocked by DNS/PyPI resolution after two focused attempts)
+- Phase 2: `Done` (active summarization root-cause fixes implemented with characterization tests)
+- Phase 3: `Done` (optional cleanup limited to inventory; no broad prune/delete)
+- Phase 4: `Done` (full validation matrix rerun; strict gates green except known dependency backlog tools)
+- Phase 5: `Pending` (PR/merge path after green validation)
+
+### Rebuilt remaining-work queue for this pass
+1. `dependency issues safe to fix now`
+- `python-multipart` `0.0.20 -> >=0.0.22` (GHSA-wp53-j4wj-2cfg)
+- `urllib3` `2.5.0 -> >=2.6.3` (multiple GHSA advisories)
+- `pypdf` installed in `.venv` is `4.2.0` despite `requirements.txt` pin drift; upgrade/install to patched `6.7.x`
+- Ensure direct declaration for `reportlab` because `src/services/pdf_writer.py` imports it directly (`deptry` DEP003)
+2. `dependency issues likely risky / defer unless validation stays clean`
+- `protobuf` `4.25.8` advisory fix requires major line jump (`5.29.6+`); treat as higher-risk runtime change due Google client compatibility surface
+- `orjson` `3.11.3` has advisory without listed fixed release; consider removal only if confirmed unused and non-transitive
+3. `summarization / formatting hotspots to investigate`
+- Active runtime path uses `src/services/summariser_refactored.py` from `src/main.py` and API/process path uses `SummaryContract -> PDFWriterRefactored`.
+- `Resolved`: OpenAI Responses call now uses SDK-supported `text.format` JSON schema path (not deprecated `response_format`).
+- `Resolved`: provider/signature extraction now reads raw OCR text instead of whitespace-flattened text.
+- `Resolved`: short-summary padding now adds structured supplemental context and deterministic guidance instead of raw repeated filler.
+- `Resolved`: patient-facing provider section no longer includes runtime chunk-count telemetry.
+4. `optional cleanup inventory candidates (no broad deletion)`
+- Massive `deptry` DEP002 list likely mixes dev tooling + transitive pins; only high-confidence changes in touched surface should be applied this pass.
+
 ## Autonomous phase queue ledger (2026-03-02 phase6-reaudit-deps-closeout)
 - Phase 0: `Done` (branch state verified; archive commit `683624b` reviewed and kept)
 - Phase 1: `Done` (repo-root `.venv` verified at `/Users/quantanalytics/dev/MCC-OCR-Summary/.venv/bin/python`)
@@ -137,6 +163,37 @@ For each completed item, record:
 - rollback note
 
 ## Progress log
+- phase: `Phase 0 + Phase 1 + Phase 2 + Phase 3 + Phase 4 (deps-and-summary-quality-pass)`
+- objective: `Revalidate baseline, apply safe dependency pin updates where possible, fix active large-PDF summarization quality regressions, and rerun strict quality gates`
+- files changed:
+- `requirements.txt`
+- `src/services/summariser_refactored.py`
+- `src/services/summarization/formatter.py`
+- `tests/test_summariser_refactored.py`
+- `docs/CURRENT_STATE.md`
+- `PLANS.md`
+- commands run:
+- branch bootstrap + baseline commands (`git status`, `git log`, full validation matrix, `bandit`, `deptry`, `pip-audit`)
+- dependency attempt commands:
+  - `.venv/bin/python -m pip install -r requirements.txt` (attempted twice)
+- summarization-targeted validation:
+  - `.venv/bin/python -m pytest tests/test_summariser_refactored.py -q --no-cov`
+  - `.venv/bin/python -m pytest tests/test_summary_contract_integration.py -q --no-cov`
+- final supervisor pass commands:
+  - `.venv/bin/python -m ruff check src tests`
+  - `.venv/bin/python -m mypy --strict src`
+  - `.venv/bin/python -m pytest --cov=src --cov-branch --cov-report=term-missing`
+  - `.venv/bin/python -m pylint --jobs=1 --score=y --fail-under=9.5 <important+changed+hotspot files>`
+  - `.venv/bin/python -m pylint --jobs=1 --score=y --fail-under=9.5 <module-by-module file score capture>`
+  - `.venv/bin/bandit -r src`
+  - `.venv/bin/python -m deptry .`
+  - `.venv/bin/pip-audit --local`
+- result: `Done for phases 0-4. Large-PDF summarization path now uses SDK-valid structured output and improved formatting/aggregation behavior with passing tests and full repo gates.`
+- blockers:
+- `git fetch origin` failed twice with GitHub HTTP 500.
+- `.venv` dependency sync blocked by DNS/PyPI resolution (`No matching distribution found` after repeated name-resolution failures), so vulnerability reduction could not be validated in the local environment.
+- rollback note: `Revert this pass commit(s) to restore previous summariser/formatter behavior and dependency pins.`
+
 - phase: `Phase 0 + Phase 1 (first repo-local P0 item)`
 - objective: `Complete repo audit baseline, defer blocked cloud audit, and harden storage failure redaction for logs + DLQ payload`
 - files changed:

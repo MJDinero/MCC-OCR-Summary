@@ -1,17 +1,71 @@
 # docs/CURRENT_STATE.md — Verified Current State Register
 
-Last updated: 2026-03-02 20:03:45 PST
-Updated by: Codex (thread: phase6-reaudit-deps-closeout)
-Repo branch: `codex/feat/phase6-reaudit-deps-closeout`
-Repo commit (branch baseline): `683624ba4233519dcfd37bbf7882f178fcc22e95`
-Task id: `phase6-reaudit-deps-closeout`
+Last updated: 2026-03-03 11:19:30 PST
+Updated by: Codex (thread: deps-and-summary-quality-pass)
+Repo branch: `codex/feat/deps-and-summary-quality-pass`
+Repo commit (branch baseline): `b1a020c7f5d209916e17f5ed9f9e610e364d9b24`
+Task id: `deps-and-summary-quality-pass`
 Target GCP project: `quantify-agent` (canonical target)
 Target region: `us-central1` (canonical target)
-Cloud audit status: `DONE (full read-only command set executed; no cloud writes)`
+Cloud audit status: `NOT RUN THIS PASS (repo-local phases only; no cloud writes performed)`
+
+## Phase Queue Status (this pass)
+- Phase 0: `DONE WITH BLOCKER` (branch bootstrap + full local baseline matrix completed; `git fetch origin` failed twice with GitHub HTTP 500)
+- Phase 1: `DONE WITH BLOCKER` (dependency pin patch prepared; `.venv` sync blocked by DNS/PyPI resolution after two focused retries)
+- Phase 2: `DONE` (large-PDF summarization path investigated with code evidence; targeted fixes + characterization tests added)
+- Phase 3: `DONE` (optional cleanup limited to inventory only; no broad delete/prune)
+- Phase 4: `DONE` (full quality matrix rerun; strict gates green except known deptry/pip-audit backlog)
+- Phase 5: `PENDING` (commit/push/PR/merge sequence)
+
+## Branch Bootstrap (Required Sequence)
+- `git fetch origin` -> `BLOCKED` (two attempts; `The requested URL returned error: 500`)
+- `git checkout main` -> `Already on 'main'`
+- `git merge --ff-only origin/main` -> `Already up to date`
+- `git checkout -b codex/feat/deps-and-summary-quality-pass` -> `DONE`
+
+## Baseline Validation Matrix (Phase 0)
+- `.venv/bin/python -m ruff check src tests` -> `PASS`
+- `.venv/bin/python -m mypy --strict src` -> `PASS` (`43` source files)
+- `.venv/bin/python -m pytest --cov=src --cov-branch --cov-report=term-missing` -> `PASS` (`191 passed`, `6 skipped`, coverage `94.91%`)
+- `.venv/bin/python -m pylint --jobs=1 --score=y --fail-under=9.5 <important files>` -> `PASS` (overall `9.75/10`; cache write warning only)
+- `.venv/bin/bandit -r src` -> `LOW-ONLY FINDINGS` (`11 low`, `0 medium`, `0 high`)
+- `.venv/bin/python -m deptry .` -> `FAIL` (`84` issues: high volume DEP002 + DEP003 for direct `reportlab` import)
+- `.venv/bin/pip-audit --local` -> `FAIL` (`25` vulnerabilities across `10` packages)
+
+## Rebuilt Queue for This Pass
+### Dependency items safe to attempt now
+- `python-multipart` `0.0.20` -> `>=0.0.22`
+- `urllib3` `2.5.0` -> `>=2.6.3`
+- `pypdf` runtime/env drift (`.venv` has `4.2.0`) -> align to patched `6.7.x`
+- add direct `reportlab` requirement (`deptry` DEP003 on `src/services/pdf_writer.py`)
+
+### Dependency items deferred/risky for this pass unless cleanly validated
+- `protobuf` fix line requires major jump (`5.29.6+`) across Google client dependency surface
+- `orjson` advisory has no fixed version listed in `pip-audit`; treat as remove-only if safely unused
+
+### Summarization quality investigation hotspots (active path)
+- Active runtime uses `RefactoredSummariser` (`src/main.py`) and `SummaryContract -> PDFWriterRefactored` (`src/api/process.py`).
+- `OpenAIResponsesBackend.summarise_chunk` fallback behavior is narrow (only `TypeError`/`AttributeError`), which can push low-quality heuristic summaries in SDK mismatch scenarios.
+- `clean_ocr_output` flattens whitespace/line breaks before summarization, reducing structural cues used by provider/signature extractors for long OCR text.
+- `_compose_summary` currently pads short outputs by repeating filler fragments, which can produce repetitive low-coherence text blocks.
+
+## Implemented in This Pass (Phases 1-4)
+- `requirements.txt` updated for prioritized safe targets (`python-multipart`, `urllib3`, `pypdf`) plus direct `reportlab` declaration and additional security pin updates.
+- `src/services/summariser_refactored.py` fixed OpenAI Responses structured-output call to use `text.format` JSON schema (active SDK-compatible path), relaxed over-strict detail/plan filtering, removed runtime chunk-count marker from summary text, switched provider-signature extraction to raw OCR source, and replaced low-coherence filler padding with structured supplemental context + deterministic fallback guidance.
+- `src/services/summarization/formatter.py` removed technical chunk-count line from patient-facing provider section.
+- `tests/test_summariser_refactored.py` expanded with characterization tests:
+  - OpenAI backend uses `text.format` JSON schema and avoids deprecated `response_format`.
+  - Runtime summary text omits chunk-count telemetry marker.
+
+## Exact Blockers in This Pass
+- `git fetch origin` currently blocked by remote GitHub HTTP 500; local baseline is still aligned to `origin/main` commit `b1a020c`.
+- `.venv` dependency sync is blocked by DNS resolution failures to PyPI (`No matching distribution found` after repeated `nodename nor servname provided` errors), preventing local installation validation of upgraded requirement pins.
 
 ## Archive Commit Decision
 - Decision: `KEEP` commit `683624b` (`docs: archive legacy audit reports`).
 - Why: the commit only moved historical files from `audit/` to `docs/audit/archive/legacy/`, added `audit/README.md` as a forward pointer, and updated one README link. No active runtime/deploy/test files were moved and no active reference breaks were found.
+
+## Historical Snapshot (2026-03-02 phase6-reaudit-deps-closeout)
 
 ## Phase Queue Status (this pass)
 - Phase 0: `DONE` (branch state verified; archive decision recorded)

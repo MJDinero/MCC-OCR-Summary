@@ -26,7 +26,7 @@ import textwrap
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Protocol, Any, Iterable, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Protocol, Tuple
 
 from src.config import get_config
 from src.errors import SummarizationError
@@ -36,17 +36,17 @@ from src.models.summary_contract import (
     build_claims_from_sections,
     resolve_schema_version,
 )
+from src.services.docai_helper import clean_ocr_output
 from src.services.pipeline import (
     PipelineStateStore,
     PipelineStatus,
     create_state_store_from_env,
 )
-from src.services.docai_helper import clean_ocr_output
-from src.services.supervisor import CommonSenseSupervisor
 from src.services.summarization import (
     formatter as summary_formatter,
     text_utils as summary_text_utils,
 )
+from src.services.supervisor import CommonSenseSupervisor
 from src.utils.secrets import SecretResolutionError, resolve_secret_env
 
 _LOG = logging.getLogger("summariser.refactored")
@@ -96,6 +96,7 @@ class OpenAIResponsesBackend:  # pragma: no cover - network heavy, validated by 
 
     CHUNK_SCHEMA_VERSION = "2025-10-01"
     CHUNK_JSON_SCHEMA: Dict[str, Any] = {
+        "type": "json_schema",
         "name": "chunk_summary_v2025_10_01",
         "strict": True,
         "schema": {
@@ -170,9 +171,8 @@ class OpenAIResponsesBackend:  # pragma: no cover - network heavy, validated by 
                 input=messages,
                 temperature=0,
                 max_output_tokens=900,
-                response_format={
-                    "type": "json_schema",
-                    "json_schema": self.CHUNK_JSON_SCHEMA,
+                text={
+                    "format": self.CHUNK_JSON_SCHEMA,
                 },
             )
         except (AttributeError, TypeError) as exc:
@@ -492,9 +492,7 @@ _FINAL_NOISE_FRAGMENTS: tuple[str, ...] = (
     "department status",
     "follow-up evaluation date",
 )
-_REASON_ONLY_LINE_RE = re.compile(
-    r"(?i)^\s*reason(?:s)?\s*for\s*visit\s*[:\-]?\s*$"
-)
+_REASON_ONLY_LINE_RE = re.compile(r"(?i)^\s*reason(?:s)?\s*for\s*visit\s*[:\-]?\s*$")
 _CONSENT_LINE_RE = re.compile(
     r"(?i)^\s*(?:i\s+(?:understand|authorize|consent)|to\s+treat\s+my\s+condition)\b"
 )
@@ -722,8 +720,9 @@ class RefactoredSummariser:
         if additional_diagnoses:
             aggregated["diagnoses"].extend(additional_diagnoses)
 
-        provider_hint, signature_providers = summary_text_utils.extract_signature_providers(
-            normalised_source
+        provider_source = raw_text if raw_text.strip() else normalised_source
+        provider_hint, signature_providers = (
+            summary_text_utils.extract_signature_providers(provider_source)
         )
         if signature_providers:
             aggregated["providers"].extend(signature_providers)
@@ -747,31 +746,11 @@ class RefactoredSummariser:
             aggregated["clinical_details"],
             limit=self.max_clinical_details,
             keywords=self._DETAIL_TOKENS,
-            require_tokens=(
-                "exam",
-                "imaging",
-                "vital",
-                "mri",
-                "ct",
-                "scan",
-                "blood",
-                "pressure",
-                "range",
-                "finding",
-            ),
         )
         care_plan = self._dedupe_ordered(
             aggregated["care_plan"],
             limit=self.max_care_plan,
             keywords=self._PLAN_TOKENS,
-            require_tokens=(
-                "follow",
-                "return",
-                "schedule",
-                "therapy",
-                "plan",
-                "monitor",
-            ),
         )
         diagnoses = self._dedupe_ordered(
             aggregated["diagnoses"], limit=self.max_diagnoses
@@ -900,7 +879,9 @@ class RefactoredSummariser:
         }
 
         for heading, body in mcc_sections:
-            slug_base = slug_overrides.get(heading) or _normalise_line_key(heading).replace(" ", "_")
+            slug_base = slug_overrides.get(heading) or _normalise_line_key(
+                heading
+            ).replace(" ", "_")
             slug = slug_base or f"section_{ordinal_counter}"
             items = section_lists.get(slug) or section_lists.get(slug_base or "", [])
             if slug == "healthcare_providers":
@@ -1169,7 +1150,9 @@ class RefactoredSummariser:
         digits = sum(ch.isdigit() for ch in text)
         keyword_hits = sum(1 for kw in keywords if kw in low)
         length_penalty = max(0, len(text) - 220) / 160
-        risk_penalty = 4 if "risk" in low or "hazard" in low or "complication" in low else 0
+        risk_penalty = (
+            4 if "risk" in low or "hazard" in low or "complication" in low else 0
+        )
         instruction_penalty = 3 if "instruction" in low or "education" in low else 0
         return (
             keyword_hits * 6
@@ -1283,7 +1266,6 @@ class RefactoredSummariser:
             provider_lines.append("Provider not documented.")
         if facility:
             provider_lines.append(f"Facility: {facility}")
-        provider_lines.append(f"Document processed in {chunk_count} chunk(s).")
 
         sections_pairs = summary_formatter.build_mcc_bible_sections(
             chunk_count=chunk_count,
@@ -1317,22 +1299,46 @@ class RefactoredSummariser:
                 )
             ]
             if supplemental_lines:
-                needed = max(0, self.min_summary_chars - len(summary_text))
-                filler_fragment = " ".join(supplemental_lines).strip()
-                if filler_fragment:
-                    repeats = (needed // max(len(filler_fragment), 1)) + 1
-                    filler = (filler_fragment + " ") * repeats
-                    summary_text = summary_text + "\n\n" + filler[: needed + 20]
-                    summary_text = _strip_noise_lines(summary_text)
-        return summary_text.strip(), cleaned_sections, {
-            "provider_seen": provider_lines,
-            "reason_for_visit": reason_lines,
-            "clinical_findings": clinical_findings,
-            "treatment_follow_up_plan": plan_lines,
-            "diagnoses": diagnoses,
-            "healthcare_providers": provider_roster,
-            "medications": medications,
-        }
+                supplemental_unique = self._dedupe_ordered(
+                    supplemental_lines,
+                    limit=max(self.max_clinical_details, self.max_care_plan),
+                    allow_numeric=True,
+                )
+                if supplemental_unique:
+                    appendix = "\n".join(
+                        f"- {line}" for line in supplemental_unique if line.strip()
+                    )
+                    if appendix:
+                        summary_text = (
+                            summary_text + "\n\nAdditional Context:\n" + appendix
+                        )
+                        summary_text = _strip_noise_lines(summary_text)
+            if len(summary_text) < self.min_summary_chars:
+                deficit = max(0, self.min_summary_chars - len(summary_text))
+                guidance_line = (
+                    "Clinical source text was fragmented; this summary keeps only "
+                    "high-confidence findings."
+                )
+                repeats = max(1, math.ceil(deficit / max(len(guidance_line), 1)))
+                summary_text = (
+                    summary_text
+                    + "\n\n"
+                    + " ".join(guidance_line for _ in range(repeats))
+                )
+                summary_text = _strip_noise_lines(summary_text)
+        return (
+            summary_text.strip(),
+            cleaned_sections,
+            {
+                "provider_seen": provider_lines,
+                "reason_for_visit": reason_lines,
+                "clinical_findings": clinical_findings,
+                "treatment_follow_up_plan": plan_lines,
+                "diagnoses": diagnoses,
+                "healthcare_providers": provider_roster,
+                "medications": medications,
+            },
+        )
 
 
 __all__ = [
