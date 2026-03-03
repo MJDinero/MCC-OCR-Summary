@@ -191,12 +191,12 @@ For each completed item, record:
 - phase 5 commands:
   - `git add PLANS.md docs/CURRENT_STATE.md requirements.txt src/services/summariser_refactored.py src/services/summarization/formatter.py tests/test_summariser_refactored.py`
   - `git commit -m "fix: improve large-pdf summary quality and update dependency pins"`
-  - `git push -u origin codex/feat/deps-and-summary-quality-pass` (attempted twice)
+  - `git push -u origin codex/feat/deps-and-summary-quality-pass` (attempted three times)
 - result: `Done for phases 0-4 and local phase-5 commit creation. Large-PDF summarization path now uses SDK-valid structured output and improved formatting/aggregation behavior with passing tests and full repo gates.`
 - blockers:
 - `git fetch origin` failed twice with GitHub HTTP 500.
 - `.venv` dependency sync blocked by DNS/PyPI resolution (`No matching distribution found` after repeated name-resolution failures), so vulnerability reduction could not be validated in the local environment.
-- `git push -u origin codex/feat/deps-and-summary-quality-pass` failed twice with GitHub HTTP 500, blocking PR creation/merge for this pass.
+- `git push -u origin codex/feat/deps-and-summary-quality-pass` failed three times with GitHub HTTP 500, blocking PR creation/merge for this pass.
 - rollback note: `Revert this pass commit(s) to restore previous summariser/formatter behavior and dependency pins.`
 
 - phase: `Phase 0 + Phase 1 (first repo-local P0 item)`
