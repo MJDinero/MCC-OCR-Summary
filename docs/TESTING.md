@@ -29,6 +29,15 @@ Suggested route checks:
 - GET `/healthz`
 - GET `/ingest/status/{job_id}`
 
+## Live large-PDF regression checks
+When validating known Drive regression samples, run the human-invoked flow in
+`docs/LIVE_REGRESSION_LARGE_PDF.md`.
+
+Minimum contract checks for each response:
+- `report_file_id` present and well-formed
+- `supervisor_passed=true`
+- `request_id` present
+
 ## Coverage policy
 - Measure coverage against `src`, not a narrow subpackage.
 - Do not reduce coverage scope or inflate coverage by omission.

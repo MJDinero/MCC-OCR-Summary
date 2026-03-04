@@ -1,7 +1,7 @@
 ###############################################
 # Central constraints for dependency resolution
-# Rationale: google-cloud-* libs currently require protobuf <5.0.0.
-# We observed runtime/import issues with protobuf 5.x, so we cap below 5.
-# Adjust cautiously; upgrade only after validating compatibility.
+# Rationale: documentai>=3.x supports protobuf 5.x, and pip-audit requires
+# protobuf >=5.29.6 for GHSA-7gcm-g887-7qv7 remediation.
+# Keep protobuf on the audited 5.x line until a validated 6.x migration pass.
 ###############################################
-protobuf<5.0.0
+protobuf>=5.29.6,<6.0.0

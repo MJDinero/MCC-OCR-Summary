@@ -1,77 +1,107 @@
 # docs/CURRENT_STATE.md — Verified Current State Register
 
-Last updated: 2026-03-03 12:15:45 PST
-Updated by: Codex (thread: deps-and-summary-quality-pass continuation)
-Repo branch: `codex/feat/deps-and-summary-quality-pass`
-Repo commit (branch baseline): `208ba3ad779165dd6e95318a98aaf9ab5613ad82`
-Task id: `deps-and-summary-quality-pass`
+Last updated: 2026-03-03 16:12:40 PST
+Updated by: Codex (thread: dependency-hardening-and-live-regression-prep)
+Repo branch: `codex/feat/dependency-hardening-and-live-regression-prep`
+Repo commit (branch baseline): `2d9c54f3674c73894bbff2489321f231f645181b`
+Task id: `dependency-hardening-and-live-regression-prep`
 Target GCP project: `quantify-agent` (canonical target)
 Target region: `us-central1` (canonical target)
-Cloud audit status: `NOT RUN THIS CONTINUATION (repo-local phases only; no cloud writes performed)`
+Cloud audit status: `NOT RUN (repo-local phases only; no cloud writes performed)`
 
-## Phase Queue Status (this continuation)
-- Phase 0: `DONE` (verified clean branch state, preserved local commit stack, confirmed unique branch diff vs `origin/main`)
-- Phase 1: `DONE` (published branch to origin and opened PR `#28` after resolving sandboxed network/auth checks)
-- Phase 2: `DONE` (repo-root `.venv` synced from `requirements.txt`; dependency tooling rerun successfully)
-- Phase 3: `DONE` (additional summarization-quality fix applied with targeted regression tests)
-- Phase 4: `DONE` (full supervisor matrix rerun; strict gates pass, with known residual dependency backlog)
-- Phase 5: `QUEUED` (awaiting post-commit push/check/merge actions for this continuation)
+## Phase Queue Status (this pass)
+- Phase 0: `DONE` (branch/log baseline and full validation matrix collected; queue rebuilt)
+- Phase 1: `DONE` (controlled dependency hardening completed with verified compatibility)
+- Phase 2: `DONE` (large-PDF regression prep completed with new characterization tests + runbook/helper)
+- Phase 3: `DEFERRED` (no further code-level summarizer defect found after new regression evidence)
+- Phase 4: `DONE` (cleanup inventory captured only; no broad deletion performed)
+- Phase 5: `DONE` (full supervisor validation rerun complete)
+- Phase 6: `QUEUED` (commit/push/PR/merge pending)
 
-## Phase 0 Verification Evidence
-- `git status --short --branch` -> `## codex/feat/deps-and-summary-quality-pass` (clean)
-- `git log --oneline -5 --decorate` -> HEAD `208ba3a`, branch contains unpublished task commits above `origin/main` `b1a020c`
-- `git diff --stat origin/main...HEAD` -> `6` files changed (`288` insertions, `76` deletions) before continuation edits
-- `git rev-parse HEAD` -> `208ba3ad779165dd6e95318a98aaf9ab5613ad82`
+## Phase 0 Baseline + Queue Rebuild
+- `git status --short --branch` -> `## codex/feat/dependency-hardening-and-live-regression-prep`
+- `git log --oneline -5 --decorate` -> HEAD on merged `origin/main` (`2d9c54f`)
+- Baseline validation before patching:
+  - `.venv/bin/python -m ruff check src tests` -> `PASS`
+  - `.venv/bin/python -m mypy --strict src` -> `PASS`
+  - `.venv/bin/python -m pytest --cov=src --cov-branch --cov-report=term-missing` -> `PASS` (`196 passed`, `6 skipped`, coverage `96.66%`)
+  - per-file `pylint` important set -> `PASS` (`>=9.5`)
+  - `.venv/bin/bandit -r src` -> `11 low`, `0 medium/high`
+  - `.venv/bin/python -m deptry .` -> `82` DEP002 issues
+  - `.venv/bin/pip-audit --local` -> `3` vulns (`orjson`, `pillow`, `protobuf`)
+- Queue classification:
+  - safe now: runtime/dev dependency hygiene split and deptry reduction
+  - focused compatibility work: `protobuf` fix via `google-cloud-documentai` upgrade path
+  - live-regression prep: long-document summarizer path characterization + human-run validation tooling
+  - inventory only: cleanup candidates (no broad purge)
 
-## Phase 1 Publish Recovery Evidence
-- `git remote -v` -> `origin https://github.com/MJDinero/MCC-OCR-Summary.git`
-- `gh auth status` (escalated) -> authenticated account `MJDinero`, valid token scopes include `repo` and `workflow`
-- `git ls-remote origin HEAD` (escalated) -> connectivity restored
-- `git push -u origin codex/feat/deps-and-summary-quality-pass` (escalated) -> `PASS` (new remote branch created)
-- PR opened and corrected: `https://github.com/MJDinero/MCC-OCR-Summary/pull/28`
+## Phase 1 Dependency Hardening Results
+- Compatibility evidence:
+  - `.venv/bin/python -m pip install --dry-run protobuf==5.29.6 google-cloud-documentai==2.23.0` -> `ResolutionImpossible` (`documentai<5.0.0dev` blocker)
+  - `.venv/bin/python -m pip install --dry-run protobuf==5.29.6 google-cloud-documentai>=2.23.0` -> resolver selects `google-cloud-documentai==3.10.0` and succeeds
+- Changes applied:
+  - `requirements.txt` reduced to direct runtime dependencies
+  - `requirements-dev.txt` now owns test/tooling dependencies (`bandit`, `deptry`, `pip-audit`, etc.)
+  - `constraints.txt` updated to `protobuf>=5.29.6,<6.0.0`
+  - `orjson` removed from runtime dependency surface and uninstalled from `.venv`
+  - upgraded: `google-cloud-documentai 2.23.0 -> 3.10.0`, `protobuf 4.25.8 -> 5.29.6`, `pillow 12.0.0 -> 12.1.1`
+- Post-change dependency validation:
+  - `.venv/bin/python -m pip check` -> `No broken requirements found`
+  - `.venv/bin/pip-audit --local` -> `No known vulnerabilities found`
+  - `.venv/bin/python -m deptry .` -> `2` DEP002 findings (`pillow`, `python-multipart`, both intentional runtime non-import dependencies)
 
-## Phase 2 Dependency Sync Results
-- `test -x .venv/bin/python` -> `PASS`
-- `.venv/bin/python --version` -> `Python 3.12.8`
-- `.venv/bin/python -m pip install -r requirements.txt` (escalated) -> `PASS`
-  - confirmed updates in repo venv: `python-multipart 0.0.22`, `urllib3 2.6.3`, `pypdf 6.7.4`, `pyasn1 0.6.2`, `wheel 0.46.2`
-- `.venv/bin/python -m deptry .` -> `FAIL` (`82` DEP002 issues; down from `84`, direct `reportlab` DEP003 cleared in prior step)
-- `.venv/bin/pip-audit --local` (escalated) -> improved to `6` vulnerabilities, later reduced to `3` after local env hygiene:
-  - upgraded `pip` to `26.0.1`
-  - installed patched `filelock==3.20.3` (tooling dependency for pip-audit)
-  - remaining advisories: `orjson 3.11.3`, `pillow 12.0.0`, `protobuf 4.25.8`
+## Phase 2 Large-PDF Regression Preparation
+- Verified runtime path for long-document summarization:
+  - `src/api/process.py::_execute_pipeline` -> `app.state.summariser.summarise_async`
+  - `src/main.py::_build_summariser` wires `RefactoredSummariser`
+  - `src/services/summariser_refactored.py::summarise` -> `_compose_summary`
+  - `src/services/summarization/formatter.py::build_mcc_bible_sections`
+- Added characterization/contract coverage:
+  - `tests/test_summariser_refactored.py`
+    - `test_large_ocr_like_input_retains_content_and_claim_evidence`
+  - `tests/test_summary_formatter.py`
+    - heading and blank-line/fallback formatting guards
+- Added live-regression prep artifacts (human-invoked only):
+  - `docs/LIVE_REGRESSION_LARGE_PDF.md`
+  - `scripts/verify_live_regression.py`
+  - `tests/test_verify_live_regression_script.py`
+  - `docs/TESTING.md` updated with live large-PDF regression section
 
-## Phase 3 Summarization Quality Changes (this continuation)
-- `src/services/summariser_refactored.py`
-  - removed overly strict `"patient"` token gate when selecting overview lines
-  - added fallback pass for `key_points`, `clinical_details`, and `care_plan` when keyword filtering would otherwise drop valid content
-- `tests/test_summariser_refactored.py`
-  - added regression that preserves overview content even without the word `"patient"`
-  - added regression that preserves clinical/plan lines when keyword filters are too narrow
+## Phase 3 Targeted Summarization Refinement Decision
+- Status: `DEFERRED (no additional code patch required in this pass)`
+- Evidence: new large-input retention/contract tests pass without exposing a new correctness defect requiring source changes.
 
-## Phase 4 Supervisor Validation Matrix (this continuation)
-- `.venv/bin/python -m ruff check --select I --fix src/services/summariser_refactored.py tests/test_summariser_refactored.py` -> `PASS` (1 fix)
-- `.venv/bin/python -m ruff format src/services/summariser_refactored.py tests/test_summariser_refactored.py` -> `PASS` (1 file reformatted)
+## Phase 4 Optional Cleanup Inventory (No Broad Purge)
+- Candidate inventory only:
+  - follow-up option to codify `deptry` ignores for intentional runtime plugin/transitive dependencies
+  - follow-up option to reconcile or retire stale `requirements.lock` generation workflow
+
+## Phase 5 Supervisor Validation Matrix (Final)
 - `.venv/bin/python -m ruff check src tests` -> `PASS`
-- `.venv/bin/python -m mypy --strict src` -> `PASS` (`43` files)
-- `.venv/bin/python -m pytest --cov=src --cov-branch --cov-report=term-missing` -> `PASS` (`195 passed`, `6 skipped`, coverage `96.66%`)
-- `.venv/bin/python -m pylint --jobs=1 --score=y --fail-under=9.5 <important+changed summarization paths>` -> `PASS` (overall `9.90/10`)
-- Per-file pylint scores:
-  - `src/services/summariser_refactored.py` -> `9.87/10`
-  - `src/services/summarization/formatter.py` -> `10.00/10`
-  - `src/services/summarization/text_utils.py` -> `10.00/10`
-  - `tests/test_summariser_refactored.py` -> `9.91/10`
-- `.venv/bin/python -m bandit -r src` -> `LOW-ONLY FINDINGS` (`11 low`, `0 medium`, `0 high`)
-- rerun dependency tools:
-  - `.venv/bin/python -m deptry .` -> `82` issues (deferred backlog)
-  - `.venv/bin/pip-audit --local` -> `3` vulnerabilities (deferred high-risk surface)
+- `.venv/bin/python -m mypy --strict src` -> `PASS`
+- `.venv/bin/python -m pytest --cov=src --cov-branch --cov-report=term-missing` -> `PASS`
+  - `203 passed`, `6 skipped`, coverage `97.14%`
+- Per-file pylint (important + changed Python files): all `>= 9.5`
+  - `src.main` -> `10.00/10`
+  - `src.services.storage_service` -> `9.81/10`
+  - `src.services.pipeline` -> `9.86/10`
+  - `src.api.ingest` -> `10.00/10`
+  - `src.api.process` -> `10.00/10`
+  - `src.services.summariser_refactored` -> `9.87/10`
+  - `src.services.summarization.formatter` -> `10.00/10`
+  - `tests.test_summariser_refactored` -> `9.92/10`
+  - `tests.test_summary_formatter` -> `10.00/10`
+  - `tests.test_verify_live_regression_script` -> `10.00/10`
+  - `scripts/verify_live_regression.py` -> `10.00/10`
+- `.venv/bin/bandit -r src` -> `LOW-ONLY FINDINGS` (`11 low`, `0 medium`, `0 high`)
+- `.venv/bin/python -m deptry .` -> `2` issues (`pillow`, `python-multipart`)
+- `.venv/bin/pip-audit --local` -> `No known vulnerabilities found`
 
-## Remaining Blockers / Deferred Risks
-- `deptry` backlog (`82` DEP002 items) is still broad and requires a separate scoped dependency-pruning pass.
-- `pip-audit` residual findings require higher-risk decisions:
-  - `protobuf` requires major line jump (`5.29.6+` or `6.33.5`)
-  - `orjson` advisory has no listed fix version
-  - `pillow` fix (`12.1.1`) is transitive under `reportlab` and should be handled with a scoped compatibility check.
+## Remaining Risks / Deferred Items
+- `deptry` residual `DEP002` entries are intentional:
+  - `pillow` is pinned for transitive `reportlab` security hygiene.
+  - `python-multipart` is runtime-required by FastAPI multipart/form parsing despite no direct import.
+- No cloud writes performed in this pass.
 
 ## Historical Snapshot (2026-03-03 config-align-live-runtime)
 - Last updated: `2026-03-03 10:26:53 PST`

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sys
 from dataclasses import dataclass
 from types import SimpleNamespace
@@ -44,6 +45,68 @@ class StubBackend(ChunkSummaryBackend):
             "overview", f"Chunk {chunk_index} covers {len(chunk_text.split())} words."
         )
         return result
+
+
+@dataclass
+class MarkerAwareBackend(ChunkSummaryBackend):
+    calls: int = 0
+
+    def summarise_chunk(
+        self,
+        *,
+        chunk_text: str,
+        chunk_index: int,
+        total_chunks: int,
+        estimated_tokens: int,
+    ) -> Dict[str, Any]:
+        _ = total_chunks, estimated_tokens
+        self.calls += 1
+        diagnoses = re.findall(r"DX-\d{2}", chunk_text)
+        providers = re.findall(r"Dr\. Provider\d+", chunk_text)
+        medications = re.findall(r"Med-\d+", chunk_text)
+        phases = re.findall(r"phase \d+", chunk_text)
+
+        diagnosis = diagnoses[0] if diagnoses else f"DX-{chunk_index + 1:02d}"
+        provider = providers[0] if providers else f"Dr. Provider{chunk_index + 1}"
+        medication = medications[0] if medications else f"Med-{chunk_index + 1}"
+        phase = phases[0] if phases else f"phase {chunk_index + 1}"
+
+        return {
+            "overview": (
+                f"Encounter progression references {diagnosis} with persistent lumbar pain."
+            ),
+            "key_points": [
+                f"Patient continues to report lumbar pain associated with {diagnosis}."
+            ],
+            "clinical_details": [
+                f"Objective exam supports diagnosis {dx}."
+                for dx in (diagnoses[:2] or [diagnosis])
+            ],
+            "care_plan": [
+                f"Continue physical therapy {phase} and reassess in follow-up."
+            ],
+            "diagnoses": [f"{diagnosis} Lumbar radiculopathy"],
+            "providers": [provider],
+            "medications": [f"{medication} nightly"],
+        }
+
+
+def _build_large_ocr_like_payload(
+    page_count: int = 8,
+) -> tuple[str, list[dict[str, Any]]]:
+    pages: list[dict[str, Any]] = []
+    parts: list[str] = []
+    for page_number in range(1, page_count + 1):
+        segment = (
+            f"Page {page_number} encounter at Riverside Clinic by Dr. Provider{page_number}. "
+            f"Patient reports symptom cluster {page_number}: severe lumbar pain with radiculopathy. "
+            f"Assessment indicates diagnosis code DX-{page_number:02d}. "
+            f"Treatment plan includes physical therapy phase {page_number} and medication Med-{page_number}. "
+            f"Follow-up in {page_number + 1} weeks. "
+        )
+        pages.append({"page_number": page_number, "text": segment})
+        parts.append(segment * 5)
+    return " ".join(parts), pages
 
 
 def test_refactored_summary_structure_and_length() -> None:
@@ -212,6 +275,46 @@ def test_keyword_filter_fallback_keeps_clinical_and_plan_content() -> None:
         "No adverse reactions documented after vaccination" in findings_section.content
     )
     assert "Hydration and home rest encouraged over the weekend" in plan_section.content
+
+
+def test_large_ocr_like_input_retains_content_and_claim_evidence() -> None:
+    text, pages = _build_large_ocr_like_payload(page_count=8)
+    backend = MarkerAwareBackend()
+    summariser = RefactoredSummariser(
+        backend=backend,
+        target_chars=700,
+        max_chars=900,
+        overlap_chars=120,
+    )
+    contract = SummaryContract.from_mapping(
+        summariser.summarise(
+            text,
+            doc_metadata={"facility": "Riverside Clinic", "pages": pages},
+        )
+    )
+
+    assert backend.calls >= 6
+    reason_section = next(
+        section for section in contract.sections if section.slug == "reason_for_visit"
+    )
+    findings_section = next(
+        section for section in contract.sections if section.slug == "clinical_findings"
+    )
+    diagnoses_section = next(
+        section for section in contract.sections if section.slug == "diagnoses"
+    )
+    diagnosis_items = diagnoses_section.extra.get("items", [])
+
+    assert "DX-01" in reason_section.content
+    assert (
+        "The provided medical record segments were analysed"
+        not in reason_section.content
+    )
+    assert "No specific findings documented in OCR text" not in findings_section.content
+    assert diagnosis_items and any("DX-01" in item for item in diagnosis_items)
+    assert any("DX-08" in item for item in diagnosis_items)
+    assert contract.claims and contract.evidence_spans
+    assert contract.claims_notice is None
 
 
 def test_openai_backend_schema_mismatch_raises(monkeypatch):
