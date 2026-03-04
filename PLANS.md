@@ -22,6 +22,21 @@ Always work one item at a time in this order:
 6. decide next item
 Never jump ahead to architecture cleanup while P0/P1 remain open.
 
+## Autonomous phase queue ledger (2026-03-03 final-hardening-and-regression-orchestration)
+- Phase 0: `Done` (branch/log baseline captured and full validation matrix rerun)
+- Phase 1: `Done` (formalized intentional `deptry` exceptions and retired stale lock workflow)
+- Phase 2: `Done` (live-regression runbook and helper upgraded with deterministic scoring/evidence outputs)
+- Phase 3: `Deferred` (no new summarization defect identified from updated regression evidence tooling)
+- Phase 4: `Done` (targeted cleanup completed: stale `requirements.lock` retired; no broad deletion)
+- Phase 5: `Done` (strict supervisor rerun complete; required gates pass)
+- Phase 6: `Queued` (commit/push/PR/merge lifecycle)
+
+### Remaining queue after phases 0-5
+1. `phase 6 PR lifecycle`
+- commit, push, open PR to `main`, watch checks, and merge when green.
+2. `human-run live validation boundary`
+- real large-PDF live execution remains HUMAN MUST RUN; this pass only packages deterministic repo-local tooling/docs for that flow.
+
 ## Autonomous phase queue ledger (2026-03-03 dependency-hardening-and-live-regression-prep)
 - Phase 0: `Done` (branch/log baseline and full validation matrix captured; remaining-work queue rebuilt)
 - Phase 1: `Done` (dependency hardening completed; `pip-audit` is now clean locally)
@@ -206,6 +221,54 @@ For each completed item, record:
 - rollback note
 
 ## Progress log
+- phase: `Phase 0 + Phase 1 + Phase 2 + Phase 3 + Phase 4 + Phase 5 (final-hardening-and-regression-orchestration)`
+- objective: `Formalize residual dependency policy, retire stale lock workflow drift, strengthen human-run live-regression evidence tooling, and rerun strict supervisor gates.`
+- files changed:
+- `pyproject.toml`
+- `requirements.txt`
+- `README.md`
+- `.github/workflows/ci.yml`
+- `docs/DEPENDENCY_POLICY.md`
+- `docs/LIVE_REGRESSION_LARGE_PDF.md`
+- `docs/LIVE_REGRESSION_EVIDENCE_TEMPLATE.md`
+- `docs/LIVE_REGRESSION_EXPECTED_IDS.example.txt`
+- `docs/TESTING.md`
+- `scripts/verify_live_regression.py`
+- `tests/test_verify_live_regression_script.py`
+- `PLANS.md`
+- `docs/CURRENT_STATE.md`
+- commands run:
+- Phase 0 baseline:
+  - `git status --short --branch`
+  - `git log --oneline -5 --decorate`
+  - `.venv/bin/python -m ruff check src tests`
+  - `.venv/bin/python -m mypy --strict src`
+  - `.venv/bin/python -m pytest --cov=src --cov-branch --cov-report=term-missing`
+  - per-file pylint important set (`--persistent=n`, `--fail-under=9.5`)
+  - `.venv/bin/bandit -r src`
+  - `.venv/bin/python -m deptry .`
+  - `.venv/bin/pip-audit --local`
+- Phase 1 dependency policy + workflow:
+  - `.venv/bin/python -m deptry .`
+  - `.venv/bin/pip-audit --local`
+- Phase 2 targeted validation:
+  - `.venv/bin/python -m ruff check --select I --fix scripts/verify_live_regression.py tests/test_verify_live_regression_script.py`
+  - `.venv/bin/python -m ruff format scripts/verify_live_regression.py tests/test_verify_live_regression_script.py`
+  - `.venv/bin/python -m pytest tests/test_verify_live_regression_script.py -q --no-cov`
+- Phase 5 supervisor rerun:
+  - `.venv/bin/python -m ruff check src tests`
+  - `.venv/bin/python -m ruff check scripts/verify_live_regression.py tests/test_verify_live_regression_script.py`
+  - `.venv/bin/python -m mypy --strict src`
+  - `.venv/bin/python -m pytest --cov=src --cov-branch --cov-report=term-missing`
+  - per-file pylint important + changed script/test set (`--persistent=n`, `--fail-under=9.5`)
+  - `.venv/bin/bandit -r src`
+  - `.venv/bin/python -m deptry .`
+  - `.venv/bin/pip-audit --local`
+- result: `Done for phases 0-5. deptry residual handling is now formalized, requirements lock workflow drift is retired, live-regression evidence capture is materially stronger, and strict local gates pass.`
+- blockers:
+- `Phase 6` remains queued until commit/push/PR/check/merge lifecycle is executed.
+- rollback note: `Revert this pass commit(s) to restore previous dependency policy/workflow behavior and live-regression tooling docs.`
+
 - phase: `Phase 0 + Phase 1 + Phase 2 + Phase 3 + Phase 4 + Phase 5 (dependency-hardening-and-live-regression-prep)`
 - objective: `Reduce dependency/security backlog, prepare large-PDF live regression validation, and rerun full supervisor gates`
 - files changed:
