@@ -249,9 +249,14 @@ For further details, see `AGENTS.md` and
 - Python 3.11 virtualenv recommended:
   ```bash
   python3 -m venv .venv && source .venv/bin/activate
-  python -m pip install -r requirements-dev.txt
+  python -m pip install -r requirements-dev.txt -c constraints.txt
   ```
   (Note: CI installs dependencies offline inside Cloud Build. Local environment requires internet.)
+
+- Dependency policy source of truth:
+  - runtime deps: `requirements.txt` + `constraints.txt`
+  - local/CI tooling deps: `requirements-dev.txt` + `constraints.txt`
+  - `requirements.lock` is retired and is not part of active install, CI, or deploy workflows.
 
 - Run FastAPI locally:
   ```bash

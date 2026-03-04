@@ -1,0 +1,9 @@
+[tool.deptry]
+requirements_files = ["requirements.txt"]
+requirements_files_dev = ["requirements-dev.txt"]
+
+[tool.deptry.per_rule_ignores]
+# Intentional direct runtime dependencies:
+# - pillow: pinned for report/PDF rendering dependency hygiene.
+# - python-multipart: required by FastAPI multipart upload handling.
+DEP002 = ["pillow", "python-multipart"]

@@ -18,6 +18,17 @@ python -m mypy --strict src
 python -m pytest --cov=src --cov-report=term-missing
 ```
 
+## Dependency policy checks
+When dependency metadata is touched, also run:
+
+```bash
+python -m deptry .
+pip-audit --local
+```
+
+`deptry` policy exceptions are centrally encoded in `pyproject.toml` and must
+remain explicit, minimal, and justified.
+
 ## API / runtime validation
 If routes, startup, config, or deploy behavior changed:
 - Verify health endpoint(s).
@@ -37,6 +48,8 @@ Minimum contract checks for each response:
 - `report_file_id` present and well-formed
 - `supervisor_passed=true`
 - `request_id` present
+- expected file ID set matches captured response files
+- scorecard artifact written and reviewed
 
 ## Coverage policy
 - Measure coverage against `src`, not a narrow subpackage.

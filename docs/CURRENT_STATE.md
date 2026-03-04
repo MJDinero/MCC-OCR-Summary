@@ -1,39 +1,120 @@
 # docs/CURRENT_STATE.md — Verified Current State Register
 
-Last updated: 2026-03-03 16:12:40 PST
-Updated by: Codex (thread: dependency-hardening-and-live-regression-prep)
-Repo branch: `codex/feat/dependency-hardening-and-live-regression-prep`
-Repo commit (branch baseline): `2d9c54f3674c73894bbff2489321f231f645181b`
-Task id: `dependency-hardening-and-live-regression-prep`
+Last updated: 2026-03-03 16:54:57 PST
+Updated by: Codex (thread: final-hardening-and-regression-orchestration)
+Repo branch: `codex/feat/final-hardening-and-regression-orchestration`
+Repo commit (branch baseline): `1ba97151432d517c7ef5ba46566acf59ddb3d1c6`
+Task id: `final-hardening-and-regression-orchestration`
 Target GCP project: `quantify-agent` (canonical target)
 Target region: `us-central1` (canonical target)
 Cloud audit status: `NOT RUN (repo-local phases only; no cloud writes performed)`
 
-## Phase Queue Status (this pass)
-- Phase 0: `DONE` (branch/log baseline and full validation matrix collected; queue rebuilt)
-- Phase 1: `DONE` (controlled dependency hardening completed with verified compatibility)
-- Phase 2: `DONE` (large-PDF regression prep completed with new characterization tests + runbook/helper)
-- Phase 3: `DEFERRED` (no further code-level summarizer defect found after new regression evidence)
-- Phase 4: `DONE` (cleanup inventory captured only; no broad deletion performed)
-- Phase 5: `DONE` (full supervisor validation rerun complete)
-- Phase 6: `QUEUED` (commit/push/PR/merge pending)
+## Phase Queue Status (current pass)
+- Phase 0: `DONE` (branch/log baseline and full local validation matrix collected; queue rebuilt)
+- Phase 1: `DONE` (formalized intentional `deptry` policy and reconciled dependency workflow drift)
+- Phase 2: `DONE` (upgraded live-regression runbook + evidence/scoring tooling)
+- Phase 3: `DEFERRED` (no new summarization defect surfaced by new evidence)
+- Phase 4: `DONE` (targeted cleanup complete; stale lock workflow retired without broad deletion)
+- Phase 5: `DONE` (strict supervisor rerun and consistency review complete)
+- Phase 6: `QUEUED` (commit/push/PR/merge lifecycle)
 
-## Phase 0 Baseline + Queue Rebuild
-- `git status --short --branch` -> `## codex/feat/dependency-hardening-and-live-regression-prep`
-- `git log --oneline -5 --decorate` -> HEAD on merged `origin/main` (`2d9c54f`)
+## Phase 0 Baseline + Queue Rebuild (current pass)
+- `git status --short --branch` -> `## codex/feat/final-hardening-and-regression-orchestration`
+- `git log --oneline -5 --decorate` -> HEAD `1ba9715` (merged PR `#29`)
 - Baseline validation before patching:
   - `.venv/bin/python -m ruff check src tests` -> `PASS`
   - `.venv/bin/python -m mypy --strict src` -> `PASS`
-  - `.venv/bin/python -m pytest --cov=src --cov-branch --cov-report=term-missing` -> `PASS` (`196 passed`, `6 skipped`, coverage `96.66%`)
-  - per-file `pylint` important set -> `PASS` (`>=9.5`)
-  - `.venv/bin/bandit -r src` -> `11 low`, `0 medium/high`
-  - `.venv/bin/python -m deptry .` -> `82` DEP002 issues
-  - `.venv/bin/pip-audit --local` -> `3` vulns (`orjson`, `pillow`, `protobuf`)
-- Queue classification:
-  - safe now: runtime/dev dependency hygiene split and deptry reduction
-  - focused compatibility work: `protobuf` fix via `google-cloud-documentai` upgrade path
-  - live-regression prep: long-document summarizer path characterization + human-run validation tooling
-  - inventory only: cleanup candidates (no broad purge)
+  - `.venv/bin/python -m pytest --cov=src --cov-branch --cov-report=term-missing` -> `PASS` (`203 passed`, `6 skipped`, coverage `97.14%`)
+  - per-file `pylint` important set (`--persistent=n`, `--fail-under=9.5`) -> `PASS`
+    - `src.main` `10.00/10`
+    - `src.services.storage_service` `9.81/10`
+    - `src.services.pipeline` `9.86/10`
+    - `src.api.ingest` `10.00/10`
+    - `src.api.process` `10.00/10`
+    - `src.services.summariser_refactored` `9.87/10`
+    - `src.services.summarization.formatter` `10.00/10`
+    - `src.services.summarization.text_utils` `10.00/10`
+  - `.venv/bin/bandit -r src` -> `11 low`, `0 medium`, `0 high`
+  - `.venv/bin/python -m deptry .` -> `2` DEP002 issues (`pillow`, `python-multipart`)
+  - `.venv/bin/pip-audit --local` -> `No known vulnerabilities found`
+
+## Rebuilt Queue Classification (current pass)
+- dependency-policy cleanup:
+  - `DONE`: intentional `deptry` DEP002 residual handling for `pillow` and `python-multipart` encoded in `pyproject.toml` + documented in `docs/DEPENDENCY_POLICY.md`.
+- dependency-process drift:
+  - `DONE`: stale `requirements.lock` retired; local/CI dependency workflows aligned on `requirements.txt` + `requirements-dev.txt` + `constraints.txt`.
+- live-regression support:
+  - `DONE`: runbook/helper artifacts now include expected-ID comparison, strict key checks, duplicate detection, and scorecard output.
+- human boundary:
+  - real large-PDF live execution remains human-invoked only; repo work stayed read-only/tooling/docs.
+
+## Phase 1 Dependency Policy + Workflow Reconciliation (current pass)
+- Policy encoding changes:
+  - added `pyproject.toml` with `[tool.deptry]` configuration.
+  - added explicit `DEP002` per-rule ignores for intentional runtime dependencies:
+    - `pillow`
+    - `python-multipart`
+  - annotated intent inline in `requirements.txt`.
+  - added `docs/DEPENDENCY_POLICY.md` as dependency process source-of-truth.
+- Workflow drift reconciliation:
+  - retired stale `requirements.lock`.
+  - aligned CI dependency installation with constraints:
+    - `.github/workflows/ci.yml` now installs `requirements-dev.txt` with `-c constraints.txt`.
+  - updated `README.md` and `docs/TESTING.md` dependency workflow guidance.
+- Validation:
+  - `.venv/bin/python -m deptry .` -> `PASS` (`Success! No dependency issues found.`)
+  - `.venv/bin/pip-audit --local` -> `PASS` (`No known vulnerabilities found`)
+
+## Phase 2 Live-Regression Tooling/Runbook Upgrade (current pass)
+- `scripts/verify_live_regression.py` improvements:
+  - optional expected source ID set validation via `--expected-file-ids-file`
+  - strict response key-shape validation via `--strict-keys`
+  - duplicate detection for `report_file_id` and `request_id`
+  - optional success-rate threshold via `--min-success-rate`
+  - scorecard artifact output via `--scorecard-out`
+- Runbook/docs artifacts:
+  - updated `docs/LIVE_REGRESSION_LARGE_PDF.md` with deterministic artifact layout, scoring rubric, and stepwise evidence flow.
+  - added `docs/LIVE_REGRESSION_EVIDENCE_TEMPLATE.md`.
+  - added `docs/LIVE_REGRESSION_EXPECTED_IDS.example.txt`.
+- Test coverage:
+  - expanded `tests/test_verify_live_regression_script.py` with scorecard, expected-ID mismatch, and duplicate-ID regression cases.
+
+## Phase 3 Targeted Summarization Refinement Decision (current pass)
+- Status: `DEFERRED`
+- Evidence: phase-2 helper/test additions did not reveal a new summarization correctness defect requiring source changes.
+
+## Phase 4 Optional Cleanup Inventory (current pass)
+- Completed targeted safe cleanup:
+  - removed stale `requirements.lock` to eliminate dependency-process ambiguity.
+- No broad deletion or architecture cleanup performed.
+
+## Phase 5 Supervisor Validation Matrix (current pass)
+- `.venv/bin/python -m ruff check src tests` -> `PASS`
+- `.venv/bin/python -m ruff check scripts/verify_live_regression.py tests/test_verify_live_regression_script.py` -> `PASS`
+- `.venv/bin/python -m mypy --strict src` -> `PASS`
+- `.venv/bin/python -m pytest --cov=src --cov-branch --cov-report=term-missing` -> `PASS`
+  - `205 passed`, `6 skipped`, coverage `97.14%`
+- Per-file pylint (`--persistent=n`, `--jobs=1`, `--fail-under=9.5`) -> `PASS`
+  - `src.main` -> `10.00/10`
+  - `src.services.storage_service` -> `9.81/10`
+  - `src.services.pipeline` -> `9.86/10`
+  - `src.api.ingest` -> `10.00/10`
+  - `src.api.process` -> `10.00/10`
+  - `src.services.summariser_refactored` -> `9.87/10`
+  - `src.services.summarization.formatter` -> `10.00/10`
+  - `src.services.summarization.text_utils` -> `10.00/10`
+  - `scripts/verify_live_regression.py` -> `9.95/10`
+  - `tests/test_verify_live_regression_script.py` -> `10.00/10`
+- `.venv/bin/bandit -r src` -> `LOW-ONLY FINDINGS` (`11 low`, `0 medium`, `0 high`)
+- `.venv/bin/python -m deptry .` -> `PASS` (`Success! No dependency issues found.`)
+- `.venv/bin/pip-audit --local` -> `PASS` (`No known vulnerabilities found`)
+
+## Remaining Risks / Deferred Items (current pass)
+- Real large-PDF live regression execution remains human-invoked and not executed in this repo-local pass.
+- Bandit still reports low-severity findings in unchanged legacy surfaces.
+- No cloud writes performed in this pass.
+
+## Historical Snapshot (2026-03-03 dependency-hardening-and-live-regression-prep)
 
 ## Phase 1 Dependency Hardening Results
 - Compatibility evidence:
