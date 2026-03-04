@@ -22,6 +22,39 @@ Always work one item at a time in this order:
 6. decide next item
 Never jump ahead to architecture cleanup while P0/P1 remain open.
 
+## Autonomous phase queue ledger (2026-03-03 dependency-hardening-and-live-regression-prep)
+- Phase 0: `Done` (branch/log baseline and full validation matrix captured; remaining-work queue rebuilt)
+- Phase 1: `Done` (dependency hardening completed; `pip-audit` is now clean locally)
+- Phase 2: `Done` (large-PDF regression preparation delivered via tests + runbook/helper)
+- Phase 3: `Deferred` (no additional code-level summarization fix required after new evidence)
+- Phase 4: `Done` (optional cleanup inventory captured only; no broad deletion)
+- Phase 5: `Done` (full supervisor validation rerun with required per-file pylint set)
+- Phase 6: `Queued` (commit/push/PR/merge lifecycle pending)
+
+### Rebuilt remaining-work queue for this pass
+1. `dependency issues fixed in this pass`
+- `protobuf` `4.25.8 -> 5.29.6`
+- `google-cloud-documentai` `2.23.0 -> 3.10.0` (compatibility unlock for protobuf remediation)
+- `pillow` `12.0.0 -> 12.1.1`
+- removed unused vulnerable `orjson` from runtime dependency surface
+- `requirements.txt` reduced to direct runtime dependencies
+- `requirements-dev.txt` now carries test/tooling dependencies
+- `deptry` reduced from `82` -> `2` DEP002 findings
+2. `dependency issues deferred (intentional)`
+- `deptry` residual DEP002:
+  - `pillow` (pinned security-sensitive transitive runtime dependency via `reportlab`)
+  - `python-multipart` (runtime-required multipart parser for FastAPI upload path)
+3. `summarization/live-regression prep completed`
+- active runtime path reconfirmed: `src/api/process.py` -> `src/services/summariser_refactored.py` -> `src/services/summarization/formatter.py`
+- new large OCR-like characterization test added (`tests/test_summariser_refactored.py`)
+- new formatter structure tests added (`tests/test_summary_formatter.py`)
+- human-run live regression runbook and helper added:
+  - `docs/LIVE_REGRESSION_LARGE_PDF.md`
+  - `scripts/verify_live_regression.py`
+4. `optional cleanup inventory (no broad purge)`
+- potential follow-up: codify `deptry` intentional runtime/transitive ignores
+- potential follow-up: reconcile or retire stale `requirements.lock` workflow
+
 ## Autonomous phase queue ledger (2026-03-03 deps-and-summary-quality-pass continuation)
 - Phase 0: `Done` (verified local branch preservation at `208ba3a` with clean worktree and expected unique commit stack)
 - Phase 1: `Done` (branch push recovered successfully; PR `#28` opened and corrected)
@@ -173,6 +206,55 @@ For each completed item, record:
 - rollback note
 
 ## Progress log
+- phase: `Phase 0 + Phase 1 + Phase 2 + Phase 3 + Phase 4 + Phase 5 (dependency-hardening-and-live-regression-prep)`
+- objective: `Reduce dependency/security backlog, prepare large-PDF live regression validation, and rerun full supervisor gates`
+- files changed:
+- `requirements.txt`
+- `requirements-dev.txt`
+- `constraints.txt`
+- `tests/test_summariser_refactored.py`
+- `tests/test_summary_formatter.py`
+- `scripts/verify_live_regression.py`
+- `tests/test_verify_live_regression_script.py`
+- `docs/LIVE_REGRESSION_LARGE_PDF.md`
+- `docs/TESTING.md`
+- `docs/CURRENT_STATE.md`
+- `PLANS.md`
+- commands run:
+- phase 0 baseline:
+  - `git status --short --branch`
+  - `git log --oneline -5 --decorate`
+  - `.venv/bin/python -m ruff check src tests`
+  - `.venv/bin/python -m mypy --strict src`
+  - `.venv/bin/python -m pytest --cov=src --cov-branch --cov-report=term-missing`
+  - per-file pylint important set (`--fail-under=9.5`)
+  - `.venv/bin/bandit -r src`
+  - `.venv/bin/python -m deptry .`
+  - `.venv/bin/pip-audit --local`
+- phase 1 dependency hardening:
+  - `.venv/bin/python -m pip install --dry-run protobuf==5.29.6 google-cloud-documentai==2.23.0`
+  - `.venv/bin/python -m pip install --dry-run protobuf==5.29.6 google-cloud-documentai>=2.23.0`
+  - `.venv/bin/python -m pip install -r requirements-dev.txt -c constraints.txt`
+  - `.venv/bin/python -m pip check`
+  - `.venv/bin/python -m deptry .`
+  - `.venv/bin/pip-audit --local`
+- phase 2 targeted validation:
+  - `.venv/bin/python -m ruff check --select I --fix <changed python paths>`
+  - `.venv/bin/python -m ruff format <changed python paths>`
+  - `.venv/bin/python -m pytest tests/test_summariser_refactored.py tests/test_summary_formatter.py tests/test_verify_live_regression_script.py -q --no-cov`
+- phase 5 supervisor pass:
+  - `.venv/bin/python -m ruff check src tests`
+  - `.venv/bin/python -m mypy --strict src`
+  - `.venv/bin/python -m pytest --cov=src --cov-branch --cov-report=term-missing`
+  - per-file pylint important + changed file set (`--fail-under=9.5`)
+  - `.venv/bin/bandit -r src`
+  - `.venv/bin/python -m deptry .`
+  - `.venv/bin/pip-audit --local`
+- result: `Done for phases 0-5. Dependency posture improved materially (pip-audit clean, deptry 82->2), large-PDF regression prep artifacts added, and full local supervisor matrix passed.`
+- blockers:
+- `deptry` retains `2` intentional DEP002 entries (`pillow`, `python-multipart`) pending explicit ignore-policy decision.
+- rollback note: `Revert this pass commit(s) to restore previous dependency metadata and remove live-regression prep artifacts/tests.`
+
 - phase: `Phase 0 + Phase 1 + Phase 2 + Phase 3 + Phase 4 (deps-and-summary-quality-pass continuation)`
 - objective: `Recover/publish existing local branch work, resync repo venv, harden summarization content retention, and rerun full supervisor gates`
 - files changed:
