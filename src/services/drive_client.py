@@ -26,6 +26,7 @@ from googleapiclient.errors import HttpError  # type: ignore
 from googleapiclient.http import MediaIoBaseDownload, MediaIoBaseUpload  # type: ignore
 
 from src.config import get_config
+from src.errors import DriveServiceError
 
 _SCOPES = ["https://www.googleapis.com/auth/drive"]
 _LOG = logging.getLogger("drive_client")
@@ -70,7 +71,7 @@ def _list_drive_files(
     query = _build_drive_query(folder_id, filters)
     list_kwargs: dict[str, Any] = {
         "q": query,
-        "fields": "files(id,name,md5Checksum,size,driveId,parents)",
+        "fields": "files(id,name,md5Checksum,size,driveId,parents,resourceKey,mimeType,modifiedTime)",
         "pageSize": 100,
         "orderBy": "modifiedTime desc",
     }
@@ -94,6 +95,56 @@ def _list_drive_files(
         request = service.files().list(**list_kwargs)
     response = request.execute()
     return list(response.get("files") or [])
+
+
+def list_input_pdfs(
+    folder_id: str,
+    *,
+    drive_id: str | None = None,
+    limit: int = 10,
+) -> list[dict[str, str | None]]:
+    """List PDF files in a Drive input folder sorted by most recently modified."""
+    if not folder_id or not folder_id.strip():
+        raise ValueError("folder_id required")
+    if limit < 1:
+        raise ValueError("limit must be >= 1")
+
+    bounded_limit = min(limit, 100)
+    service = _drive_service()
+    try:
+        files = _list_drive_files(
+            service,
+            folder_id=folder_id.strip(),
+            filters=["mimeType = 'application/pdf'"],
+            drive_id=drive_id,
+        )
+    except HttpError as exc:
+        raise DriveServiceError("Failed to list Drive input PDFs") from exc
+
+    results: list[dict[str, str | None]] = []
+    for candidate in files:
+        file_id_raw = candidate.get("id")
+        file_id = str(file_id_raw).strip() if file_id_raw is not None else ""
+        if not file_id:
+            continue
+        name_raw = candidate.get("name")
+        name = str(name_raw).strip() if isinstance(name_raw, str) else ""
+        resource_key_raw = candidate.get("resourceKey")
+        resource_key = (
+            resource_key_raw.strip()
+            if isinstance(resource_key_raw, str) and resource_key_raw.strip()
+            else None
+        )
+        results.append(
+            {
+                "id": file_id,
+                "name": name or f"{file_id}.pdf",
+                "resource_key": resource_key,
+            }
+        )
+        if len(results) >= bounded_limit:
+            break
+    return results
 
 
 def _split_version_suffix(base_name: str) -> tuple[str, int]:
@@ -627,4 +678,4 @@ def upload_pdf(
     return created["id"]
 
 
-__all__ = ["download_pdf", "upload_pdf"]
+__all__ = ["download_pdf", "upload_pdf", "list_input_pdfs"]

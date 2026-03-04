@@ -19,6 +19,7 @@ from src.errors import (
     SummarizationError,
 )
 from src.models.summary_contract import SummaryContract
+from src.services.drive_bridge import mirror_drive_pdf_to_intake
 from src.services.docai_helper import clean_ocr_output
 from src.services.supervisor import CommonSenseSupervisor
 from src.utils.summary_thresholds import compute_summary_min_chars
@@ -39,6 +40,21 @@ def _extract_correlation_ids(request: Request) -> tuple[str | None, str | None]:
     if not trace_id:
         trace_id = request_id
     return trace_id, request_id
+
+
+def _resolve_drive_poll_limit() -> int:
+    raw_limit = os.getenv("DRIVE_POLL_MAX_FILES", "10").strip()
+    try:
+        limit = int(raw_limit)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=500, detail="Invalid DRIVE_POLL_MAX_FILES configuration"
+        ) from exc
+    if limit < 1 or limit > 100:
+        raise HTTPException(
+            status_code=500, detail="DRIVE_POLL_MAX_FILES must be between 1 and 100"
+        )
+    return limit
 
 
 async def _execute_pipeline(
@@ -359,3 +375,102 @@ async def process_drive(
             "request_id": request_id,
         }
     )
+
+
+@router.post("/drive/poll", tags=["process"])
+async def poll_drive_input_to_ingest(request: Request) -> JSONResponse:
+    """Mirror Drive intake PDFs into GCS so Eventarc can invoke /ingest."""
+    trace_id, request_id = _extract_correlation_ids(request)
+    cfg = request.app.state.config
+    limit = _resolve_drive_poll_limit()
+    drive_client = request.app.state.drive_client
+
+    try:
+        candidates = drive_client.list_input_pdfs(
+            cfg.drive_input_folder_id,
+            drive_id=cfg.drive_shared_drive_id,
+            limit=limit,
+        )
+    except (DriveServiceError, RuntimeError, ValueError) as exc:
+        structured_log(
+            _API_LOG,
+            logging.ERROR,
+            "drive_poll_list_failed",
+            trace_id=trace_id,
+            request_id=request_id,
+            error=str(exc),
+        )
+        raise HTTPException(
+            status_code=502, detail="Failed to list Drive input files"
+        ) from exc
+
+    mirrored: list[dict[str, str]] = []
+    duplicates: list[dict[str, str]] = []
+    failures: list[dict[str, str]] = []
+    for candidate in candidates:
+        file_id_raw = candidate.get("id")
+        file_name_raw = candidate.get("name")
+        resource_key_raw = candidate.get("resource_key")
+        file_id = file_id_raw.strip() if isinstance(file_id_raw, str) else ""
+        file_name = file_name_raw.strip() if isinstance(file_name_raw, str) else None
+        resource_key = (
+            resource_key_raw.strip()
+            if isinstance(resource_key_raw, str) and resource_key_raw.strip()
+            else None
+        )
+        if not file_id:
+            continue
+        try:
+            mirror_result = mirror_drive_pdf_to_intake(
+                drive_client=drive_client,
+                intake_bucket=cfg.intake_gcs_bucket,
+                drive_file_id=file_id,
+                source_folder_id=cfg.drive_input_folder_id,
+                drive_shared_drive_id=cfg.drive_shared_drive_id,
+                file_name=file_name,
+                resource_key=resource_key,
+            )
+        except Exception as exc:  # pragma: no cover - defensive fail-safe
+            structured_log(
+                _API_LOG,
+                logging.ERROR,
+                "drive_poll_mirror_failed",
+                trace_id=trace_id,
+                request_id=request_id,
+                drive_file_id=file_id,
+                error=str(exc),
+            )
+            failures.append({"drive_file_id": file_id, "error": "mirror_failed"})
+            continue
+
+        result_payload = {
+            "drive_file_id": mirror_result.drive_file_id,
+            "object_uri": mirror_result.object_uri,
+        }
+        if mirror_result.created:
+            mirrored.append(result_payload)
+        else:
+            duplicates.append(result_payload)
+
+    structured_log(
+        _API_LOG,
+        logging.INFO,
+        "drive_poll_complete",
+        trace_id=trace_id,
+        request_id=request_id,
+        listed_count=len(candidates),
+        mirrored_count=len(mirrored),
+        duplicate_count=len(duplicates),
+        failed_count=len(failures),
+    )
+    response_payload = {
+        "listed_count": len(candidates),
+        "mirrored_count": len(mirrored),
+        "duplicate_count": len(duplicates),
+        "failed_count": len(failures),
+        "mirrored": mirrored,
+        "duplicates": duplicates,
+        "failures": failures,
+    }
+    status_code = 207 if failures else 200
+    return JSONResponse(response_payload, status_code=status_code)

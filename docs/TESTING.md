@@ -39,6 +39,7 @@ If routes, startup, config, or deploy behavior changed:
 Suggested route checks:
 - GET `/healthz`
 - GET `/ingest/status/{job_id}`
+- POST `/process/drive/poll` (when Drive bridge behavior is touched)
 
 ## Live large-PDF regression checks
 When validating known Drive regression samples, run the human-invoked flow in

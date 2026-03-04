@@ -32,6 +32,7 @@ Why it matters:
 - sync processing path
 - external side effects
 - request/response contract
+- Drive poll bridge (`/process/drive/poll`) for Drive->GCS ingress handoff
 ### `src/services/pipeline.py`
 Why it matters:
 - state backend selection
@@ -92,4 +93,3 @@ Do not change these without a scoped plan and validation:
 - If a task starts from the wrong hotspot, stop and remap the task here first.
 - If multiple layers are changing at once (API + deploy + IAM), split the work.
 - If a file’s responsibility is unclear, document it here before making broad edits.
-

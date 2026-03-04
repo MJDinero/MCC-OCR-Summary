@@ -9,6 +9,7 @@ proves otherwise.
 ### Primary route groups
 - `/ingest`
 - `/process`
+- `/process/drive/poll` (Drive intake bridge that mirrors to `INTAKE_GCS_BUCKET` for Eventarc `/ingest`)
 - health endpoints
 ### Primary deploy artifacts
 - `cloudbuild.yaml`
@@ -86,4 +87,3 @@ evidence.
 - If current and target architecture are conflated, split them back into separate sections.
 - If a dependency is undocumented, add it here before relying on it in plans.
 - If the agent proposes service decomposition before P0/P1 are complete, reject that change.
-

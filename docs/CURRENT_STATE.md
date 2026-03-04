@@ -1,13 +1,71 @@
 # docs/CURRENT_STATE.md — Verified Current State Register
 
-Last updated: 2026-03-03 16:54:57 PST
-Updated by: Codex (thread: final-hardening-and-regression-orchestration)
-Repo branch: `codex/feat/final-hardening-and-regression-orchestration`
-Repo commit (branch baseline): `1ba97151432d517c7ef5ba46566acf59ddb3d1c6`
-Task id: `final-hardening-and-regression-orchestration`
+Last updated: 2026-03-04 08:14:07 PST
+Updated by: Codex (thread: drive-poll-ingress-remediation)
+Repo branch: `codex/feat/drive-poll-ingress-bridge`
+Repo commit (branch baseline): `a3426f3985640d6c51c3dbab8e816feac12d42c5`
+Task id: `drive-poll-ingress-remediation`
 Target GCP project: `quantify-agent` (canonical target)
 Target region: `us-central1` (canonical target)
 Cloud audit status: `NOT RUN (repo-local phases only; no cloud writes performed)`
+
+## Phase Queue Status (current pass)
+- Phase 0: `DONE` (read-first docs + baseline repo validation completed before edits)
+- Phase 1: `DONE` (repo ingress audit proved `/ingest` is authoritative and `/process/drive/poll` was missing)
+- Phase 2: `DONE` (selected bounded fix B: add Drive->GCS bridge endpoint without changing downstream `/ingest` pipeline)
+- Phase 3: `DONE` (implemented `POST /process/drive/poll` + idempotent Drive mirror helper + regression tests/docs)
+- Phase 4: `DONE` (required validation matrix executed; all required checks passed except expected low-only Bandit findings)
+- Phase 5: `QUEUED` (commit/push/PR/merge lifecycle)
+- Phase 6: `QUEUED` (human-run cloud update/redeploy/verification commands)
+
+## Forensic Conclusion (current pass)
+- Repo-supported authoritative downstream ingest is still `GCS finalize -> Eventarc -> POST /ingest -> workflow`.
+- Live scheduler target `/process/drive/poll` was external drift relative to current repo routes (404 in live forensics), which explains why Drive uploads never reached `mcc-intake` or `/ingest`.
+- Minimal safe repo remediation is to add the missing poll bridge endpoint that mirrors Drive input PDFs to `INTAKE_GCS_BUCKET` under deterministic object keys, preserving existing Eventarc + workflow behavior and direct GCS ingest.
+
+## Repo Evidence (current pass)
+- `create_app()` route inventory includes `POST /ingest`, `GET /process/drive`, and no `/process/drive/poll` before this patch.
+- `src/api/ingest.py` remains the only path that dispatches workflow executions.
+- `cloudbuild.yaml` and config require `INTAKE_GCS_BUCKET` + Drive folder IDs, supporting a Drive->GCS bridge model.
+- No scheduler config for `mcc-drive-poller` exists in repo, confirming live scheduler drift was not test-gated.
+
+## Files Changed (current pass)
+- `src/api/process.py`
+- `src/services/drive_bridge.py`
+- `src/services/drive_client.py`
+- `tests/test_drive_poll_bridge.py`
+- `tests/test_drive_client_focus.py`
+- `README.md`
+- `docs/ARCHITECTURE.md`
+- `docs/CODEBASE_MAP.md`
+- `docs/TESTING.md`
+- `PLANS.md`
+- `docs/CURRENT_STATE.md`
+
+## Validation Evidence (current pass)
+- Baseline before patch:
+  - `.venv/bin/python -m ruff check src tests` -> `PASS`
+  - `.venv/bin/python -m mypy --strict src` -> `PASS`
+  - `.venv/bin/python -m pytest --cov=src --cov-branch --cov-report=term-missing` -> `PASS` (`206 passed`, `6 skipped`, coverage `97.14%`)
+- Post-patch required matrix:
+  - `.venv/bin/python -m ruff check src tests` -> `PASS`
+  - `.venv/bin/python -m mypy --strict src` -> `PASS` (`44 source files`)
+  - `.venv/bin/python -m pytest --cov=src --cov-branch --cov-report=term-missing` -> `PASS` (`210 passed`, `6 skipped`, coverage `95.91%`)
+  - `.venv/bin/python -m pylint --jobs=1 --score=y --fail-under=9.5 src/api/process.py src/services/drive_bridge.py src/services/drive_client.py src/api/ingest.py src/main.py tests/test_drive_poll_bridge.py tests/test_drive_client_focus.py` -> `PASS` (`9.84/10`)
+  - `.venv/bin/python -m bandit -r src` -> `LOW-ONLY FINDINGS` (`11 low`, `0 medium`, `0 high`; unchanged categories)
+- Additional targeted checks:
+  - `.venv/bin/python -m ruff check src/api/process.py src/services/drive_bridge.py src/services/drive_client.py tests/test_drive_poll_bridge.py tests/test_drive_client_focus.py` -> `PASS`
+  - `.venv/bin/python -m pytest tests/test_drive_poll_bridge.py tests/test_drive_client_focus.py -q --no-cov` -> `PASS` (`16 passed`)
+
+## Remaining Risks / Unknowns (current pass)
+- Cloud Scheduler and deployment are external; route fix is repo-local until a human redeploys.
+- Drive poll endpoint currently assumes one ingest object per Drive file id (`uploads/drive/<drive_file_id>.pdf`); updates to an existing Drive file id will be treated as duplicates.
+- Bandit low-severity backlog remains in unchanged legacy code.
+
+## Rollback (current pass)
+- Revert this pass commit on the feature branch to remove `/process/drive/poll` and restore previous repo behavior.
+
+## Historical Snapshot (2026-03-03 final-hardening-and-regression-orchestration)
 
 ## Phase Queue Status (current pass)
 - Phase 0: `DONE` (branch/log baseline and full local validation matrix collected; queue rebuilt)
