@@ -1,69 +1,48 @@
 # docs/CURRENT_STATE.md — Verified Current State Register
 
-Last updated: 2026-03-04 08:14:07 PST
-Updated by: Codex (thread: drive-poll-ingress-remediation)
-Repo branch: `codex/feat/drive-poll-ingress-bridge`
-Repo commit (branch baseline): `a3426f3985640d6c51c3dbab8e816feac12d42c5`
-Task id: `drive-poll-ingress-remediation`
+Last updated: 2026-03-04 13:06:06 PST
+Updated by: Codex (thread: cmek-default-alignment)
+Repo branch: `codex/fix-cmek-default-mcc-cmek`
+Repo commit (branch baseline): `109160d09c4712cde5fb5655c4e6f5b867e06fe0`
+Task id: `cmek-default-alignment`
 Target GCP project: `quantify-agent` (canonical target)
 Target region: `us-central1` (canonical target)
 Cloud audit status: `NOT RUN (repo-local phases only; no cloud writes performed)`
 
 ## Phase Queue Status (current pass)
-- Phase 0: `DONE` (read-first docs + baseline repo validation completed before edits)
-- Phase 1: `DONE` (repo ingress audit proved `/ingest` is authoritative and `/process/drive/poll` was missing)
-- Phase 2: `DONE` (selected bounded fix B: add Drive->GCS bridge endpoint without changing downstream `/ingest` pipeline)
-- Phase 3: `DONE` (implemented `POST /process/drive/poll` + idempotent Drive mirror helper + regression tests/docs)
-- Phase 4: `DONE` (required validation matrix executed; all required checks passed except expected low-only Bandit findings)
+- Phase 0: `DONE` (read-first docs completed; branch/commit/task baseline captured before edits)
+- Phase 1: `DONE` (deploy-hardening priority item selected: remove stale CMEK default pointing to deleted key)
+- Phase 2: `DONE` (updated `cloudbuild.yaml` default `_CMEK_KEY_NAME` to existing `mcc-keyring/mcc-cmek`)
+- Phase 3: `DONE` (updated direct operator guidance in `REPORT.md` to the same CMEK key path)
+- Phase 4: `DONE` (required scoped validation executed successfully)
 - Phase 5: `QUEUED` (commit/push/PR/merge lifecycle)
-- Phase 6: `QUEUED` (human-run cloud update/redeploy/verification commands)
+- Phase 6: `QUEUED` (human-run cloud write/update + runtime proof commands)
 
 ## Forensic Conclusion (current pass)
-- Repo-supported authoritative downstream ingest is still `GCS finalize -> Eventarc -> POST /ingest -> workflow`.
-- Live scheduler target `/process/drive/poll` was external drift relative to current repo routes (404 in live forensics), which explains why Drive uploads never reached `mcc-intake` or `/ingest`.
-- Minimal safe repo remediation is to add the missing poll bridge endpoint that mirrors Drive input PDFs to `INTAKE_GCS_BUCKET` under deterministic object keys, preserving existing Eventarc + workflow behavior and direct GCS ingest.
+- Live failures are consistent with runtime/config drift where `CMEK_KEY_NAME` resolves to a non-existent key (`.../mcc-phi-key`).
+- Repo deploy truth (`cloudbuild.yaml`) now defaults to the existing key (`projects/quantify-agent/locations/us-central1/keyRings/mcc-keyring/cryptoKeys/mcc-cmek`) while still supporting substitution overrides.
+- A remaining human-run Cloud Run env update + trigger cycle is required to align the already-deployed service revision.
 
 ## Repo Evidence (current pass)
-- `create_app()` route inventory includes `POST /ingest`, `GET /process/drive`, and no `/process/drive/poll` before this patch.
-- `src/api/ingest.py` remains the only path that dispatches workflow executions.
-- `cloudbuild.yaml` and config require `INTAKE_GCS_BUCKET` + Drive folder IDs, supporting a Drive->GCS bridge model.
-- No scheduler config for `mcc-drive-poller` exists in repo, confirming live scheduler drift was not test-gated.
+- `cloudbuild.yaml` still injects `CMEK_KEY_NAME=$_CMEK_KEY_NAME` into Cloud Run env, so correcting the substitution default removes recurring deploy-time drift.
+- `rg -n "mcc-phi-key|keyRings/mcc-phi|mcc-phi"` now reports no active deploy/operator references to the deleted key path.
+- Only historical archive docs reference legacy `mcc-phi-artifacts` buckets and were intentionally left unchanged.
 
 ## Files Changed (current pass)
-- `src/api/process.py`
-- `src/services/drive_bridge.py`
-- `src/services/drive_client.py`
-- `tests/test_drive_poll_bridge.py`
-- `tests/test_drive_client_focus.py`
-- `README.md`
-- `docs/ARCHITECTURE.md`
-- `docs/CODEBASE_MAP.md`
-- `docs/TESTING.md`
+- `cloudbuild.yaml`
+- `REPORT.md`
 - `PLANS.md`
 - `docs/CURRENT_STATE.md`
 
 ## Validation Evidence (current pass)
-- Baseline before patch:
-  - `.venv/bin/python -m ruff check src tests` -> `PASS`
-  - `.venv/bin/python -m mypy --strict src` -> `PASS`
-  - `.venv/bin/python -m pytest --cov=src --cov-branch --cov-report=term-missing` -> `PASS` (`206 passed`, `6 skipped`, coverage `97.14%`)
-- Post-patch required matrix:
-  - `.venv/bin/python -m ruff check src tests` -> `PASS`
-  - `.venv/bin/python -m mypy --strict src` -> `PASS` (`44 source files`)
-  - `.venv/bin/python -m pytest --cov=src --cov-branch --cov-report=term-missing` -> `PASS` (`210 passed`, `6 skipped`, coverage `95.91%`)
-  - `.venv/bin/python -m pylint --jobs=1 --score=y --fail-under=9.5 src/api/process.py src/services/drive_bridge.py src/services/drive_client.py src/api/ingest.py src/main.py tests/test_drive_poll_bridge.py tests/test_drive_client_focus.py` -> `PASS` (`9.84/10`)
-  - `.venv/bin/python -m bandit -r src` -> `LOW-ONLY FINDINGS` (`11 low`, `0 medium`, `0 high`; unchanged categories)
-- Additional targeted checks:
-  - `.venv/bin/python -m ruff check src/api/process.py src/services/drive_bridge.py src/services/drive_client.py tests/test_drive_poll_bridge.py tests/test_drive_client_focus.py` -> `PASS`
-  - `.venv/bin/python -m pytest tests/test_drive_poll_bridge.py tests/test_drive_client_focus.py -q --no-cov` -> `PASS` (`16 passed`)
+- `.venv/bin/python -m ruff check src tests` -> `PASS`
 
 ## Remaining Risks / Unknowns (current pass)
-- Cloud Scheduler and deployment are external; route fix is repo-local until a human redeploys.
-- Drive poll endpoint currently assumes one ingest object per Drive file id (`uploads/drive/<drive_file_id>.pdf`); updates to an existing Drive file id will be treated as duplicates.
-- Bandit low-severity backlog remains in unchanged legacy code.
+- Live Cloud Run service env may still contain stale `CMEK_KEY_NAME` until the human-run update command is applied.
+- Cloud write verification (`scheduler run`, logging/workflow/storage proof) is still pending and outside repo-local execution.
 
 ## Rollback (current pass)
-- Revert this pass commit on the feature branch to remove `/process/drive/poll` and restore previous repo behavior.
+- Revert this pass commit on the feature branch to restore previous deploy default and operator note.
 
 ## Historical Snapshot (2026-03-03 final-hardening-and-regression-orchestration)
 
