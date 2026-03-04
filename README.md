@@ -152,6 +152,11 @@ Provision the service with:
 
 `cloudbuild.yaml` is the authoritative deploy path for these values. Prefer Cloud Build deploys over ad hoc `gcloud run services update` edits to avoid runtime drift.
 
+### Drive Poll Bridge
+
+- `POST /process/drive/poll` lists PDFs in `DRIVE_INPUT_FOLDER_ID`, mirrors new files into `INTAKE_GCS_BUCKET` under `uploads/drive/<drive_file_id>.pdf`, and relies on Eventarc object-finalize to call `/ingest`.
+- The endpoint is idempotent on `drive_file_id`; already mirrored files are reported as duplicates and are not re-downloaded.
+
 ---
 
 ## Security & Privacy

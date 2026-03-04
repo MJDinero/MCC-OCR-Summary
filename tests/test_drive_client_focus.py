@@ -352,6 +352,36 @@ def test_upload_pdf_validations(monkeypatch):
         drive_client.upload_pdf(b"%PDF-1.4\n...", "name.pdf")
 
 
+def test_list_input_pdfs_limits_and_normalises(monkeypatch):
+    service = _DriveUploadService(fail_shared_drive=False)
+    service.list_responses = [
+        {
+            "files": [
+                {"id": "file-1", "name": "scan.pdf", "resourceKey": "rk-1"},
+                {"id": "file-2"},
+            ]
+        }
+    ]
+    monkeypatch.setattr(drive_client, "_drive_service", lambda: service)
+    files = drive_client.list_input_pdfs(
+        "input-folder",
+        drive_id="0AFPP3mbSAh_oUk9PVA",
+        limit=1,
+    )
+    assert files == [{"id": "file-1", "name": "scan.pdf", "resource_key": "rk-1"}]
+    assert service.list_calls, "expected drive list call"
+    query = str(service.list_calls[0]["q"])
+    assert "mimeType = 'application/pdf'" in query
+    assert "'input-folder' in parents" in query
+
+
+def test_list_input_pdfs_validation():
+    with pytest.raises(ValueError):
+        drive_client.list_input_pdfs("", limit=1)
+    with pytest.raises(ValueError):
+        drive_client.list_input_pdfs("input-folder", limit=0)
+
+
 def test_metrics_module_exercised(monkeypatch):
     metrics = PrometheusMetrics.default()
     metrics.observe_latency("drive_upload", 0.05, stage="drive")

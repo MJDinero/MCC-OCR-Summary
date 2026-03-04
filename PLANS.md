@@ -22,6 +22,23 @@ Always work one item at a time in this order:
 6. decide next item
 Never jump ahead to architecture cleanup while P0/P1 remain open.
 
+## Autonomous phase queue ledger (2026-03-04 drive-poll-ingress-remediation)
+- Phase 0: `Done` (read-first order completed; branch/commit/task baseline captured; required pre-change validation run)
+- Phase 1: `Done` (ingress architecture audit confirmed authoritative downstream path is GCS finalize -> Eventarc -> `/ingest`)
+- Phase 2: `Done` (selected bounded remediation B: add repo-supported Drive poll bridge endpoint to feed intake bucket)
+- Phase 3: `Done` (implemented `POST /process/drive/poll` + idempotent Drive->GCS mirror helper + tests/docs updates)
+- Phase 4: `Done` (required validation matrix executed; gates pass with low-only Bandit findings)
+- Phase 5: `Queued` (commit/push/PR/merge lifecycle)
+- Phase 6: `Queued` (human-run scheduler/deploy verification commands)
+
+### Remaining queue after phases 0-4
+1. `phase 5 PR lifecycle`
+- commit, push, open PR to `main`, watch checks, merge when green.
+2. `phase 6 runtime alignment`
+- HUMAN MUST RUN cloud commands to update scheduler target behavior expectations and redeploy route fix.
+3. `phase 6 live proof`
+- HUMAN MUST RUN proof that Drive upload produces intake object, `/ingest` call, workflow execution, and downstream artifact.
+
 ## Autonomous phase queue ledger (2026-03-03 final-hardening-and-regression-orchestration)
 - Phase 0: `Done` (branch/log baseline captured and full validation matrix rerun)
 - Phase 1: `Done` (formalized intentional `deptry` exceptions and retired stale lock workflow)
