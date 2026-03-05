@@ -33,7 +33,7 @@ substitutions:
   _CONTAINER_CONCURRENCY: '1'
   _TIMEOUT_SECONDS: '3600'
   _MAX_INSTANCES: '1'
-  _CMEK_KEY_NAME: projects/quantify-agent/locations/us-central1/keyRings/mcc-phi/cryptoKeys/mcc-phi-key
+  _CMEK_KEY_NAME: projects/quantify-agent/locations/us-central1/keyRings/mcc-keyring/cryptoKeys/mcc-cmek
   _PIPELINE_STATE_BUCKET: mcc-state-quantify-agent-us-central1-322786
 
 images:

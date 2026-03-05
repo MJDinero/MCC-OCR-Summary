@@ -22,6 +22,21 @@ Always work one item at a time in this order:
 6. decide next item
 Never jump ahead to architecture cleanup while P0/P1 remain open.
 
+## Autonomous phase queue ledger (2026-03-04 cmek-default-alignment)
+- Phase 0: `Done` (read-first order completed, repo baseline captured on feature branch)
+- Phase 1: `Done` (selected highest-priority unresolved deploy-hardening item: eliminate stale CMEK default drift)
+- Phase 2: `Done` (patched deploy truth in `cloudbuild.yaml` while preserving `_CMEK_KEY_NAME` substitution override)
+- Phase 3: `Done` (updated direct operator guidance in `REPORT.md` to avoid reintroducing the deleted key path)
+- Phase 4: `Done` (required scoped validation executed: `.venv/bin/python -m ruff check src tests`)
+- Phase 5: `Queued` (commit/push/PR lifecycle)
+- Phase 6: `Queued` (human-run cloud write checkpoint to update live env and trigger verification cycle)
+
+### Remaining queue after phases 0-4
+1. `phase 5 PR lifecycle`
+- commit, push, open PR to `main`, and request merge approval.
+2. `phase 6 runtime verification`
+- HUMAN MUST RUN: update Cloud Run `CMEK_KEY_NAME`, trigger scheduler once, and capture logs/workflow/storage proof.
+
 ## Autonomous phase queue ledger (2026-03-04 drive-poll-ingress-remediation)
 - Phase 0: `Done` (read-first order completed; branch/commit/task baseline captured; required pre-change validation run)
 - Phase 1: `Done` (ingress architecture audit confirmed authoritative downstream path is GCS finalize -> Eventarc -> `/ingest`)
