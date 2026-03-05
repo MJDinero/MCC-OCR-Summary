@@ -15,7 +15,7 @@ Cloud audit status: `NOT RUN (repo-local phases only; no cloud writes performed)
 - Phase 2: `DONE` (patched `src/api/ingest.py` to always send workflow-init keys and added `gcs_uri` parity)
 - Phase 3: `DONE` (patched callback auth compatibility for both `X-Internal-Event-Token` and `X-Internal-Token`, with tests)
 - Phase 4: `DONE` (required validation commands passed: ruff, mypy strict, pytest coverage on `src`)
-- Phase 5: `QUEUED` (commit/push/PR lifecycle)
+- Phase 5: `DONE` (commit `323d13f` pushed to `origin/codex/fix-workflow-init-contract`; PR opened: `#34`)
 - Phase 6: `BLOCKED` (human-run cloud deploy + live synthetic proof required)
 
 ## Forensic Conclusion (current pass)

@@ -28,13 +28,11 @@ Never jump ahead to architecture cleanup while P0/P1 remain open.
 - Phase 2: `Done` (patched `src/api/ingest.py` workflow payload contract to always include workflow-init keys, including `project_id` and `gcs_uri`)
 - Phase 3: `Done` (added backward-compatible callback auth support for both `X-Internal-Event-Token` and `X-Internal-Token`)
 - Phase 4: `Done` (required validation gates passed: ruff, mypy strict, pytest coverage on `src`; focused pylint/bandit run captured)
-- Phase 5: `Queued` (commit/push/PR lifecycle)
+- Phase 5: `Done` (commit `323d13f` pushed; PR opened: `https://github.com/MJDinero/MCC-OCR-Summary/pull/34`)
 - Phase 6: `Blocked` (human-run cloud deploy + live synthetic PDF verification required)
 
 ### Remaining queue after phases 0-4
-1. `phase 5 PR lifecycle`
-- commit, push, open PR to `main`, and request merge approval.
-2. `phase 6 live verification boundary`
+1. `phase 6 live verification boundary`
 - HUMAN MUST RUN: deploy updated Cloud Run service and workflow definition, upload one fresh synthetic PDF, run scheduler once, and capture `/process/drive/poll` + `/ingest` + workflow execution + summary/PDF artifact evidence.
 
 ## Autonomous phase queue ledger (2026-03-04 cmek-default-alignment)
