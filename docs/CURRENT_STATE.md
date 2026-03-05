@@ -1,48 +1,57 @@
 # docs/CURRENT_STATE.md — Verified Current State Register
 
-Last updated: 2026-03-04 13:06:06 PST
-Updated by: Codex (thread: cmek-default-alignment)
-Repo branch: `codex/fix-cmek-default-mcc-cmek`
-Repo commit (branch baseline): `109160d09c4712cde5fb5655c4e6f5b867e06fe0`
-Task id: `cmek-default-alignment`
+Last updated: 2026-03-05 07:57:25 PST
+Updated by: Codex (thread: workflow-init-contract-repair)
+Repo branch: `codex/fix-workflow-init-contract`
+Repo commit (branch baseline): `158b8b0c1fcbaace638fe9b4530e4194b18101af`
+Task id: `workflow-init-contract-repair`
 Target GCP project: `quantify-agent` (canonical target)
 Target region: `us-central1` (canonical target)
 Cloud audit status: `NOT RUN (repo-local phases only; no cloud writes performed)`
 
 ## Phase Queue Status (current pass)
-- Phase 0: `DONE` (read-first docs completed; branch/commit/task baseline captured before edits)
-- Phase 1: `DONE` (deploy-hardening priority item selected: remove stale CMEK default pointing to deleted key)
-- Phase 2: `DONE` (updated `cloudbuild.yaml` default `_CMEK_KEY_NAME` to existing `mcc-keyring/mcc-cmek`)
-- Phase 3: `DONE` (updated direct operator guidance in `REPORT.md` to the same CMEK key path)
-- Phase 4: `DONE` (required scoped validation executed successfully)
-- Phase 5: `QUEUED` (commit/push/PR/merge lifecycle)
-- Phase 6: `QUEUED` (human-run cloud write/update + runtime proof commands)
+- Phase 0: `DONE` (read-first docs completed; `main` fast-forward baseline confirmed at `158b8b0c1fcbaace638fe9b4530e4194b18101af`)
+- Phase 1: `DONE` (workflow init contract audit completed; hard-required `event.*` keys enumerated from `workflows/pipeline.yaml`)
+- Phase 2: `DONE` (patched `src/api/ingest.py` to always send workflow-init keys and added `gcs_uri` parity)
+- Phase 3: `DONE` (patched callback auth compatibility for both `X-Internal-Event-Token` and `X-Internal-Token`, with tests)
+- Phase 4: `DONE` (required validation commands passed: ruff, mypy strict, pytest coverage on `src`)
+- Phase 5: `DONE` (commit `323d13f` pushed to `origin/codex/fix-workflow-init-contract`; PR opened: `#34`)
+- Phase 6: `BLOCKED` (human-run cloud deploy + live synthetic proof required)
 
 ## Forensic Conclusion (current pass)
-- Live failures are consistent with runtime/config drift where `CMEK_KEY_NAME` resolves to a non-existent key (`.../mcc-phi-key`).
-- Repo deploy truth (`cloudbuild.yaml`) now defaults to the existing key (`projects/quantify-agent/locations/us-central1/keyRings/mcc-keyring/cryptoKeys/mcc-cmek`) while still supporting substitution overrides.
-- A remaining human-run Cloud Run env update + trigger cycle is required to align the already-deployed service revision.
+- Current repo workflow failure root cause is contract drift: `workflows/pipeline.yaml:init` hard-dereferenced keys not guaranteed by `src/api/ingest.py`.
+- Ingest dispatch now includes all workflow init keys so runtime missing-key failures (for example `project_id`) are prevented at the source.
+- Internal callback auth now accepts both header variants to tolerate observed live workflow source drift without relaxing token validation.
+- End-to-end live proof still requires HUMAN MUST RUN deploy and synthetic upload/scheduler checks.
 
 ## Repo Evidence (current pass)
-- `cloudbuild.yaml` still injects `CMEK_KEY_NAME=$_CMEK_KEY_NAME` into Cloud Run env, so correcting the substitution default removes recurring deploy-time drift.
-- `rg -n "mcc-phi-key|keyRings/mcc-phi|mcc-phi"` now reports no active deploy/operator references to the deleted key path.
-- Only historical archive docs reference legacy `mcc-phi-artifacts` buckets and were intentionally left unchanged.
+- `workflows/pipeline.yaml` init step hard-dereferences `event.pipeline_service_base_url`, `event.project_id`, `event.region`, `event.doc_ai_processor_id`, `event.max_shard_concurrency`, `event.pipeline_dlq_topic`, `event.doc_ai_location`, and related keys before hydration/default steps.
+- `src/api/ingest.py` now always includes those keys in `workflow_parameters` (using config/env truth with explicit `None` for optional values) and includes `gcs_uri`.
+- `src/api/ingest.py` internal event endpoint now validates token against either `x-internal-event-token` or `x-internal-token`.
+- `tests/test_pipeline_endpoints.py` now proves workflow launch payload contract completeness and legacy header compatibility/rejection behavior.
 
 ## Files Changed (current pass)
-- `cloudbuild.yaml`
-- `REPORT.md`
+- `src/api/ingest.py`
+- `tests/test_pipeline_endpoints.py`
 - `PLANS.md`
 - `docs/CURRENT_STATE.md`
 
 ## Validation Evidence (current pass)
-- `.venv/bin/python -m ruff check src tests` -> `PASS`
+- `/Users/quantanalytics/dev/MCC-OCR-Summary/.venv/bin/python -m ruff check src tests` -> `PASS`
+- `/Users/quantanalytics/dev/MCC-OCR-Summary/.venv/bin/python -m mypy --strict src` -> `PASS`
+- `/Users/quantanalytics/dev/MCC-OCR-Summary/.venv/bin/python -m pytest --cov=src --cov-report=term-missing` -> `PASS` (`213 passed`, `6 skipped`, coverage `97.55%`)
+- `/Users/quantanalytics/dev/MCC-OCR-Summary/.venv/bin/python -m pylint --jobs=1 --score=y --fail-under=9.5 src/api/ingest.py tests/test_pipeline_endpoints.py` -> `PASS` (`10.00/10`, cache write warning only)
+- `/Users/quantanalytics/dev/MCC-OCR-Summary/.venv/bin/python -m bandit -r src` -> `LOW-ONLY FINDINGS` (`11 low`, `0 medium`, `0 high`)
 
 ## Remaining Risks / Unknowns (current pass)
-- Live Cloud Run service env may still contain stale `CMEK_KEY_NAME` until the human-run update command is applied.
-- Cloud write verification (`scheduler run`, logging/workflow/storage proof) is still pending and outside repo-local execution.
+- Live Cloud Run/Workflow revisions must be redeployed to pick up repo fixes.
+- Live workflow source may still contain additional drift beyond header name mismatch and is unverified until post-deploy execution.
+- Fresh synthetic PDF artifact proof remains pending human-run cloud steps.
 
 ## Rollback (current pass)
-- Revert this pass commit on the feature branch to restore previous deploy default and operator note.
+- Revert this pass commit on `codex/fix-workflow-init-contract` to restore prior ingest payload/header behavior.
+
+## Historical Snapshot (2026-03-04 cmek-default-alignment)
 
 ## Historical Snapshot (2026-03-03 final-hardening-and-regression-orchestration)
 

@@ -22,6 +22,19 @@ Always work one item at a time in this order:
 6. decide next item
 Never jump ahead to architecture cleanup while P0/P1 remain open.
 
+## Autonomous phase queue ledger (2026-03-05 workflow-init-contract-repair)
+- Phase 0: `Done` (read-first docs completed; `main` baseline confirmed clean at `158b8b0c1fcbaace638fe9b4530e4194b18101af`)
+- Phase 1: `Done` (workflow init contract audit completed; hard-required `event.*` keys enumerated from `workflows/pipeline.yaml`)
+- Phase 2: `Done` (patched `src/api/ingest.py` workflow payload contract to always include workflow-init keys, including `project_id` and `gcs_uri`)
+- Phase 3: `Done` (added backward-compatible callback auth support for both `X-Internal-Event-Token` and `X-Internal-Token`)
+- Phase 4: `Done` (required validation gates passed: ruff, mypy strict, pytest coverage on `src`; focused pylint/bandit run captured)
+- Phase 5: `Done` (commit `323d13f` pushed; PR opened: `https://github.com/MJDinero/MCC-OCR-Summary/pull/34`)
+- Phase 6: `Blocked` (human-run cloud deploy + live synthetic PDF verification required)
+
+### Remaining queue after phases 0-4
+1. `phase 6 live verification boundary`
+- HUMAN MUST RUN: deploy updated Cloud Run service and workflow definition, upload one fresh synthetic PDF, run scheduler once, and capture `/process/drive/poll` + `/ingest` + workflow execution + summary/PDF artifact evidence.
+
 ## Autonomous phase queue ledger (2026-03-04 cmek-default-alignment)
 - Phase 0: `Done` (read-first order completed, repo baseline captured on feature branch)
 - Phase 1: `Done` (selected highest-priority unresolved deploy-hardening item: eliminate stale CMEK default drift)

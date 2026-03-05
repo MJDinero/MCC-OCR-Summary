@@ -18,6 +18,28 @@ class StubWorkflowLauncher:
         return "executions/mock"
 
 
+class ContractCapturingLauncher:
+    def __init__(self):
+        self.payload: dict[str, object] | None = None
+
+    def launch(self, *, job, parameters=None, trace_context=None):
+        payload: dict[str, object] = {
+            "job_id": job.job_id,
+            "object_uri": job.object_uri,
+            "dedupe_key": job.dedupe_key,
+            "trace_id": job.trace_id,
+            "request_id": job.request_id,
+            "object_hash": job.object_hash,
+            "metadata": job.metadata,
+        }
+        if trace_context:
+            payload["trace_context"] = trace_context
+        if parameters:
+            payload.update(parameters)
+        self.payload = payload
+        return "executions/mock"
+
+
 def _set_env(monkeypatch):
     monkeypatch.setenv("PROJECT_ID", "proj")
     monkeypatch.setenv("REGION", "us")
@@ -88,6 +110,61 @@ def test_ingest_creates_job_and_dispatches_workflow(monkeypatch):
     assert job.history[-1]["status"] == PipelineStatus.WORKFLOW_DISPATCHED.value
 
 
+def test_ingest_launch_payload_satisfies_workflow_init_contract(monkeypatch):
+    _set_env(monkeypatch)
+    monkeypatch.delenv("PIPELINE_SERVICE_BASE_URL", raising=False)
+    monkeypatch.delenv("PIPELINE_DLQ_TOPIC", raising=False)
+    monkeypatch.delenv("SUMMARISER_JOB_NAME", raising=False)
+    monkeypatch.delenv("PDF_JOB_NAME", raising=False)
+    monkeypatch.delenv("DOC_AI_SPLITTER_PROCESSOR_ID", raising=False)
+
+    app = create_app()
+    launcher = ContractCapturingLauncher()
+    app.state.workflow_launcher = launcher
+    client = TestClient(app)
+
+    resp = client.post("/ingest", json=_ingest_payload())
+    assert resp.status_code == 202
+    payload = launcher.payload
+    assert payload is not None
+
+    workflow_init_keys = {
+        "job_id",
+        "trace_id",
+        "request_id",
+        "dedupe_key",
+        "object_uri",
+        "pipeline_service_base_url",
+        "internal_event_token",
+        "project_id",
+        "region",
+        "doc_ai_splitter_processor_id",
+        "doc_ai_processor_id",
+        "summariser_job_name",
+        "pdf_job_name",
+        "intake_bucket",
+        "output_bucket",
+        "summary_bucket",
+        "max_shard_concurrency",
+        "pipeline_dlq_topic",
+        "doc_ai_location",
+        "gcs_uri",
+    }
+    assert workflow_init_keys.issubset(payload)
+    assert payload["project_id"] == "proj"
+    assert payload["region"] == "us"
+    assert payload["doc_ai_processor_id"] == "pid"
+    assert payload["doc_ai_splitter_processor_id"] is None
+    assert payload["max_shard_concurrency"] == 12
+    assert payload["doc_ai_location"] == "us"
+    assert payload["pipeline_service_base_url"] is None
+    assert payload["pipeline_dlq_topic"] is None
+    assert payload["summariser_job_name"] is None
+    assert payload["pdf_job_name"] is None
+    assert payload["internal_event_token"] == "secret-token"
+    assert payload["gcs_uri"] == payload["object_uri"]
+
+
 def test_ingest_returns_existing_job_on_duplicate(monkeypatch):
     app, _ = _build_app(monkeypatch)
     client = TestClient(app)
@@ -121,6 +198,40 @@ def test_internal_event_updates_status(monkeypatch):
     assert job.status is PipelineStatus.SUMMARY_DONE
     assert job.metadata["summary_uri"] == "gs://bucket/summary.json"
     assert job.history[-1]["stage"] == "summary"
+
+
+def test_internal_event_accepts_legacy_token_header(monkeypatch):
+    app, _ = _build_app(monkeypatch)
+    client = TestClient(app)
+    ingest = client.post("/ingest", json=_ingest_payload())
+    job_id = ingest.json()["job_id"]
+    headers = {"X-Internal-Token": "secret-token"}
+    update_payload = {
+        "status": "OCR_DONE",
+        "stage": "ocr",
+        "message": "ocr complete",
+    }
+    resp = client.post(
+        f"/ingest/internal/jobs/{job_id}/events", headers=headers, json=update_payload
+    )
+    assert resp.status_code == 200
+    job = app.state.state_store.get_job(job_id)
+    assert job.status is PipelineStatus.OCR_DONE
+    assert job.history[-1]["stage"] == "ocr"
+
+
+def test_internal_event_rejects_invalid_legacy_token_header(monkeypatch):
+    app, _ = _build_app(monkeypatch)
+    client = TestClient(app)
+    ingest = client.post("/ingest", json=_ingest_payload())
+    job_id = ingest.json()["job_id"]
+    headers = {"X-Internal-Token": "wrong-token"}
+    resp = client.post(
+        f"/ingest/internal/jobs/{job_id}/events",
+        headers=headers,
+        json={"status": "OCR_DONE"},
+    )
+    assert resp.status_code == 401
 
 
 def test_ingest_accepts_pubsub_envelope(monkeypatch):

@@ -301,34 +301,37 @@ async def ingest(request: Request):
         if dispatcher is None:
             raise RuntimeError("Workflow launcher not configured")
 
+        pipeline_base = os.getenv("PIPELINE_SERVICE_BASE_URL")
+        dlq_topic = os.getenv("PIPELINE_DLQ_TOPIC")
+        summariser_job = os.getenv("SUMMARISER_JOB_NAME")
+        pdf_job = os.getenv("PDF_JOB_NAME")
+        internal_token = getattr(request.app.state, "internal_event_token", None)
+
         workflow_parameters: Dict[str, Any] = {
             "bucket": gcs_obj.bucket,
             "object": gcs_obj.name,
             "trace_id": trace_id,
             "job_id": job.job_id,
             "object_uri": job.object_uri,
+            "gcs_uri": job.object_uri,
             "object_name": gcs_obj.name,
             "request_id": job.request_id,
             "intake_bucket": cfg.intake_gcs_bucket,
             "output_bucket": cfg.output_gcs_bucket,
             "summary_bucket": cfg.summary_bucket,
             "summary_schema_version": cfg.summary_schema_version,
+            "pipeline_service_base_url": pipeline_base or None,
+            "pipeline_dlq_topic": dlq_topic or None,
+            "summariser_job_name": summariser_job or None,
+            "pdf_job_name": pdf_job or None,
+            "internal_event_token": internal_token or None,
+            "project_id": cfg.project_id or None,
+            "region": cfg.region or None,
+            "doc_ai_splitter_processor_id": cfg.doc_ai_splitter_id or None,
+            "doc_ai_processor_id": cfg.doc_ai_processor_id or None,
+            "max_shard_concurrency": cfg.max_shard_concurrency,
+            "doc_ai_location": (cfg.doc_ai_location or cfg.region) or None,
         }
-        pipeline_base = os.getenv("PIPELINE_SERVICE_BASE_URL")
-        if pipeline_base:
-            workflow_parameters["pipeline_service_base_url"] = pipeline_base
-        dlq_topic = os.getenv("PIPELINE_DLQ_TOPIC")
-        if dlq_topic:
-            workflow_parameters["pipeline_dlq_topic"] = dlq_topic
-        summariser_job = os.getenv("SUMMARISER_JOB_NAME")
-        if summariser_job:
-            workflow_parameters["summariser_job_name"] = summariser_job
-        pdf_job = os.getenv("PDF_JOB_NAME")
-        if pdf_job:
-            workflow_parameters["pdf_job_name"] = pdf_job
-        internal_token = getattr(request.app.state, "internal_event_token", None)
-        if internal_token:
-            workflow_parameters["internal_event_token"] = internal_token
         if payload.source:
             workflow_parameters["source"] = payload.source
         if payload.drive_file_id:
@@ -405,8 +408,15 @@ def _merge_metadata(base: Dict[str, Any], patch: Dict[str, Any]) -> Dict[str, An
 @router.post("/internal/jobs/{job_id}/events", tags=["ingest"])
 async def record_job_event(request: Request, job_id: str, event: JobEventPayload):
     expected_token = request.app.state.internal_event_token
-    provided = request.headers.get("x-internal-event-token", "")
-    if not expected_token or not provided or not secrets.compare_digest(provided, expected_token):  # type: ignore[name-defined]
+    provided_tokens = (
+        request.headers.get("x-internal-event-token", ""),
+        request.headers.get("x-internal-token", ""),
+    )
+    token_is_valid = bool(expected_token) and any(
+        token and secrets.compare_digest(token, expected_token)
+        for token in provided_tokens
+    )
+    if not token_is_valid:
         raise HTTPException(status_code=401, detail="Missing or invalid internal token")
 
     state_store: PipelineStateStore = request.app.state.state_store
