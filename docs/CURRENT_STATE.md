@@ -1,54 +1,52 @@
 # docs/CURRENT_STATE.md — Verified Current State Register
 
-Last updated: 2026-03-05 18:34:00 PST
-Updated by: Codex (thread: workflow-yaml-indentation-repair)
-Repo branch: `codex/fix-workflow-yaml-indentation`
-Repo commit (branch baseline): `125219442d0a974208e9acfa3d58ba3ff1b47cef`
-Task id: `workflow-yaml-indentation-repair`
+Last updated: 2026-03-06 06:40:40 PST
+Updated by: Codex (thread: hardening-checklist-audit-trail)
+Repo branch: `codex/hardening-doc-audit-trail`
+Repo commit (branch baseline): `6d143130825048a9f6bd82b0f0d1a53576b8e9dd`
+Task id: `hardening-checklist-audit-trail`
 Target GCP project: `quantify-agent` (canonical target)
 Target region: `us-central1` (canonical target)
-Cloud audit status: `DONE (cloud writes + live synthetic trigger executed with explicit approval)`
+Cloud audit status: `DONE (read-only cloud verification of latest synthetic proof evidence)`
+Pipeline status classification: `LIVE_PIPELINE_WORKS`
 
 ## Phase Queue Status (current pass)
-- Phase 0: `DONE` (PR #36 merged; `main` fast-forwarded to `125219442d0a974208e9acfa3d58ba3ff1b47cef`)
-- Phase 1: `DONE` (workflow deploy attempt surfaced parse error at `workflows/pipeline.yaml` line `193`)
-- Phase 2: `DONE` (minimal YAML indentation fix applied to callback `url:` keys in workflow)
-- Phase 3: `DONE` (infra test hardened to parse workflow YAML before callback assertions)
-- Phase 4: `DONE` (required local validation commands passed on indentation-fix branch)
-- Phase 5: `QUEUED` (commit/push/PR lifecycle for indentation fix)
-- Phase 6: `QUEUED` (merge + workflow deploy + fresh synthetic rerun for end-to-end artifact proof)
+- Phase 0: `DONE` (baseline synced on `main` and verified clean at `6d143130825048a9f6bd82b0f0d1a53576b8e9dd`)
+- Phase 1: `DONE` (required read-first docs and repo invariants verified)
+- Phase 2A: `DONE` (latest synthetic live-proof evidence recorded in repo docs with concrete IDs/timestamps)
+- Phase 2B: `QUEUED` (operator smoke script + contract-lock tests + codex gotchas updates)
 
-## Forensic Conclusion (current pass)
-- PR #36 resolved the callback path mismatch semantically, but introduced YAML indentation drift in `workflows/pipeline.yaml` that prevented deployment (`INVALID_ARGUMENT` parse error).
-- The new first blocker is now deployability of workflow YAML, not runtime behavior.
-- The smallest safe repo-local fix is indentation-only on the affected callback `url:` keys plus a regression guard that ensures the workflow file parses.
+## Most Recent Successful Synthetic Proof (authoritative)
+- Classification: `LIVE_PIPELINE_WORKS`
+- Synthetic source (non-PHI):
+  - `drive_file_name`: `synthetic-proof-2026-03-06T02-48-58Z.pdf`
+  - `drive_file_id`: `1vTpQwbB-mokyQ-K5k2514YDcgvTZF9kd`
+  - input GCS object: `gs://mcc-intake/uploads/drive/1vTpQwbB-mokyQ-K5k2514YDcgvTZF9kd.pdf`
+- Request/ingest evidence:
+  - `/process/drive/poll` -> `200` at `2026-03-06T02:49:06.668969Z`
+  - `/ingest` -> `202` at `2026-03-06T02:49:08.648690Z`
+- Workflow execution evidence:
+  - execution: `projects/720850296638/locations/us-central1/workflows/docai-pipeline/executions/cb500981-28e8-4d88-b4d6-ac3ea00406e3`
+  - state: `SUCCEEDED`
+  - start: `2026-03-06T02:49:09.296574608Z`
+  - end: `2026-03-06T02:55:58.072328925Z`
+  - `job_id`: `d66c7940b81549698e406d53418e8db1`
+- Artifact evidence (exists):
+  - `gs://mcc-output/summaries/d66c7940b81549698e406d53418e8db1.json`
+  - `gs://mcc-output/pdf/d66c7940b81549698e406d53418e8db1.pdf`
 
-## Repo Evidence (current pass)
-- `gh pr merge 36 --merge` completed (`mergeCommit: 125219442d0a974208e9acfa3d58ba3ff1b47cef`).
-- `gcloud workflows deploy docai-pipeline --source workflows/pipeline.yaml` failed with:
-  - `INVALID_ARGUMENT`
-  - `main.yaml:193:23: parse error: expected end of input (bad indentation?)`
-- Inspection confirmed callback `url:` lines at top-level `http.post` blocks were indented deeper than sibling `auth:` keys.
-- This branch normalizes those `url:` indentation levels and extends `tests/test_infra_manifest.py` to `yaml.safe_load` the workflow file before callback-path assertions.
-
-## Files Changed (current pass)
-- `workflows/pipeline.yaml`
-- `tests/test_infra_manifest.py`
-- `PLANS.md`
-- `docs/CURRENT_STATE.md`
-
-## Validation Evidence (current pass)
-- `RUFF_CACHE_DIR=/tmp/ruff_cache_wf_indent /Users/quantanalytics/dev/MCC-OCR-Summary/.venv/bin/python -m ruff check src tests` -> `PASS`
-- `/Users/quantanalytics/dev/MCC-OCR-Summary/.venv/bin/python -m mypy --strict src` -> `PASS`
-- `COVERAGE_FILE=/tmp/.coverage-wf-indent /Users/quantanalytics/dev/MCC-OCR-Summary/.venv/bin/python -m pytest --cov=src --cov-report=term-missing` -> `PASS` (`214 passed`, `6 skipped`, coverage `97.55%`)
+## Evidence Commands (current pass)
+- `gcloud workflows executions list docai-pipeline --location us-central1 --project quantify-agent --limit 10 --format='table(name,state,startTime,endTime)'`
+- `gcloud workflows executions describe cb500981-28e8-4d88-b4d6-ac3ea00406e3 --workflow=docai-pipeline --location=us-central1 --project=quantify-agent --format='yaml(name,state,startTime,endTime,argument,result,error)'`
+- `gcloud storage ls gs://mcc-output/summaries/d66c7940b81549698e406d53418e8db1.json gs://mcc-output/pdf/d66c7940b81549698e406d53418e8db1.pdf`
+- `gcloud logging read "resource.type=\"cloud_run_revision\" AND resource.labels.service_name=\"mcc-ocr-summary\" AND timestamp>=\"2026-03-06T02:47:00Z\" AND timestamp<=\"2026-03-06T03:00:00Z\" AND httpRequest.requestUrl:\"/process/drive/poll\"" --project quantify-agent --limit 10 --order=desc --format='table(timestamp,severity,httpRequest.requestMethod,httpRequest.requestUrl,httpRequest.status)'`
+- `gcloud logging read "resource.type=\"cloud_run_revision\" AND resource.labels.service_name=\"mcc-ocr-summary\" AND timestamp>=\"2026-03-06T02:47:00Z\" AND timestamp<=\"2026-03-06T03:00:00Z\" AND httpRequest.requestUrl:\"/ingest\"" --project quantify-agent --limit 20 --order=asc --format='table(timestamp,severity,httpRequest.requestMethod,httpRequest.requestUrl,httpRequest.status,jsonPayload.job_id,jsonPayload.trace_id)'`
 
 ## Remaining Risks / Unknowns (current pass)
-- Until this indentation-fix branch is merged and workflow redeploy succeeds, live proof remains blocked at workflow deploy time.
-- `PIPELINE_DLQ_TOPIC` remains null in runtime arguments; it is not currently a blocking validator requirement but should remain monitored.
-- Downstream OCR/summariser/pdf success path is not yet proven in this pass because workflow deploy did not complete.
+- Hardening checklist items `B-D` remain open in this task thread and require code/test/docs patches.
 
 ## Rollback (current pass)
-- Revert indentation-fix commit to restore prior workflow file formatting if needed.
+- Revert this docs-only commit to restore the previous state register if evidence wording needs correction.
 
 ## Historical Snapshot (2026-03-05 workflow-callback-path-repair)
 

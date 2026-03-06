@@ -22,6 +22,26 @@ Always work one item at a time in this order:
 6. decide next item
 Never jump ahead to architecture cleanup while P0/P1 remain open.
 
+## Autonomous phase queue ledger (2026-03-06 hardening-and-regression-prevention)
+- Phase 0: `Done` (baseline synced on `main` at `6d143130825048a9f6bd82b0f0d1a53576b8e9dd` with clean status)
+- Phase 1: `Done` (read-first docs + repo invariant audit + read-only cloud evidence audit)
+- Phase 2A: `Done` (documentation evidence updated with latest successful synthetic run and classification)
+
+### Latest successful synthetic proof evidence (authoritative)
+- Classification: `LIVE_PIPELINE_WORKS`
+- Synthetic source: Drive PDF `synthetic-proof-2026-03-06T02-48-58Z.pdf` (`drive_file_id=1vTpQwbB-mokyQ-K5k2514YDcgvTZF9kd`; non-PHI synthetic input)
+- Scheduler/bridge evidence: `/process/drive/poll` returned `200` at `2026-03-06T02:49:06.668969Z`
+- Ingest evidence: `/ingest` returned `202` at `2026-03-06T02:49:08.648690Z`
+- Workflow evidence:
+  - execution: `projects/720850296638/locations/us-central1/workflows/docai-pipeline/executions/cb500981-28e8-4d88-b4d6-ac3ea00406e3`
+  - state: `SUCCEEDED`
+  - start: `2026-03-06T02:49:09.296574608Z`
+  - end: `2026-03-06T02:55:58.072328925Z`
+  - `job_id`: `d66c7940b81549698e406d53418e8db1`
+- Artifact evidence:
+  - `gs://mcc-output/summaries/d66c7940b81549698e406d53418e8db1.json`
+  - `gs://mcc-output/pdf/d66c7940b81549698e406d53418e8db1.pdf`
+
 ## Autonomous phase queue ledger (2026-03-05 workflow-yaml-indentation-repair)
 - Phase 0: `Done` (PR #36 merged and `main` fast-forwarded to `125219442d0a974208e9acfa3d58ba3ff1b47cef`)
 - Phase 1: `Done` (workflow deploy failed with parse error at `workflows/pipeline.yaml` line `193`, confirming YAML indentation drift)
