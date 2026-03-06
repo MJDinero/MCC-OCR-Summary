@@ -22,6 +22,21 @@ Always work one item at a time in this order:
 6. decide next item
 Never jump ahead to architecture cleanup while P0/P1 remain open.
 
+## Autonomous phase queue ledger (2026-03-05 workflow-yaml-indentation-repair)
+- Phase 0: `Done` (PR #36 merged and `main` fast-forwarded to `125219442d0a974208e9acfa3d58ba3ff1b47cef`)
+- Phase 1: `Done` (workflow deploy failed with parse error at `workflows/pipeline.yaml` line `193`, confirming YAML indentation drift)
+- Phase 2: `Done` (normalized callback `url:` indentation across affected `http.post` blocks)
+- Phase 3: `Done` (infra test strengthened to parse workflow YAML before callback URL assertions)
+- Phase 4: `Done` (required local validation gates passed on indentation-fix branch)
+- Phase 5: `Queued` (commit/push/PR lifecycle for indentation fix)
+- Phase 6: `Queued` (merge + workflow deploy + synthetic rerun to confirm summary/PDF artifacts)
+
+### Remaining queue after phases 0-4
+1. `phase 5 PR lifecycle`
+- commit indentation fix, push, open PR to `main`, merge when checks pass.
+2. `phase 6 live verification`
+- deploy workflow from merged `main`, upload one fresh synthetic PDF, run scheduler once, and verify `/process/drive/poll`, `/ingest`, workflow success, and summary/PDF artifacts.
+
 ## Autonomous phase queue ledger (2026-03-05 workflow-callback-path-repair)
 - Phase 0: `Done` (PR #35 merged and redeployed; Cloud Run revision `mcc-ocr-summary-00382-8rr` confirmed with restored pipeline env contract)
 - Phase 1: `Done` (fresh synthetic Drive upload + scheduler trigger + log/workflow evidence collected)

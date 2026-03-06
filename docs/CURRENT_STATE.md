@@ -1,36 +1,35 @@
 # docs/CURRENT_STATE.md — Verified Current State Register
 
-Last updated: 2026-03-05 18:20:00 PST
-Updated by: Codex (thread: workflow-callback-path-repair)
-Repo branch: `codex/fix-workflow-callback-path`
-Repo commit (branch baseline): `81107549f3989e1b0816994d7fae1ad932c24a87`
-Task id: `workflow-callback-path-repair`
+Last updated: 2026-03-05 18:34:00 PST
+Updated by: Codex (thread: workflow-yaml-indentation-repair)
+Repo branch: `codex/fix-workflow-yaml-indentation`
+Repo commit (branch baseline): `125219442d0a974208e9acfa3d58ba3ff1b47cef`
+Task id: `workflow-yaml-indentation-repair`
 Target GCP project: `quantify-agent` (canonical target)
 Target region: `us-central1` (canonical target)
 Cloud audit status: `DONE (cloud writes + live synthetic trigger executed with explicit approval)`
 
 ## Phase Queue Status (current pass)
-- Phase 0: `DONE` (PR #35 merged; `main` fast-forwarded to `81107549f3989e1b0816994d7fae1ad932c24a87`)
-- Phase 1: `DONE` (Cloud Run redeploy from merged `main` completed; revision `mcc-ocr-summary-00382-8rr`)
-- Phase 2: `DONE` (fresh synthetic Drive upload + scheduler run + log/workflow capture executed)
-- Phase 3: `DONE` (new first failing live stage isolated from fresh evidence: workflow callback URL path missing `/ingest` prefix causes `404`)
-- Phase 4: `DONE` (minimal workflow callback path fix + infra guard test applied on dedicated branch)
-- Phase 5: `DONE` (required local validation commands passed on callback-path fix branch)
-- Phase 6: `QUEUED` (commit/push/PR lifecycle for callback-path fix)
-- Phase 7: `QUEUED` (merge + workflow redeploy + fresh synthetic rerun to prove summary/PDF artifacts)
+- Phase 0: `DONE` (PR #36 merged; `main` fast-forwarded to `125219442d0a974208e9acfa3d58ba3ff1b47cef`)
+- Phase 1: `DONE` (workflow deploy attempt surfaced parse error at `workflows/pipeline.yaml` line `193`)
+- Phase 2: `DONE` (minimal YAML indentation fix applied to callback `url:` keys in workflow)
+- Phase 3: `DONE` (infra test hardened to parse workflow YAML before callback assertions)
+- Phase 4: `DONE` (required local validation commands passed on indentation-fix branch)
+- Phase 5: `QUEUED` (commit/push/PR lifecycle for indentation fix)
+- Phase 6: `QUEUED` (merge + workflow deploy + fresh synthetic rerun for end-to-end artifact proof)
 
 ## Forensic Conclusion (current pass)
-- PR #35 resolved the prior `validateConfig` blocker by restoring pipeline callback/job env vars in Cloud Run.
-- The next first failing stage is now workflow-to-ingest callback path: workflow posts to `/internal/jobs/{job_id}/events`, but FastAPI route is mounted under `/ingest/internal/jobs/{job_id}/events`; this yields `404` and terminates execution in failure handling.
-- The smallest safe repo-local fix is workflow YAML path-only: update all callback URLs to `/ingest/internal/jobs/{job_id}/events` and lock with an infra regression test.
+- PR #36 resolved the callback path mismatch semantically, but introduced YAML indentation drift in `workflows/pipeline.yaml` that prevented deployment (`INVALID_ARGUMENT` parse error).
+- The new first blocker is now deployability of workflow YAML, not runtime behavior.
+- The smallest safe repo-local fix is indentation-only on the affected callback `url:` keys plus a regression guard that ensures the workflow file parses.
 
 ## Repo Evidence (current pass)
-- `gh pr merge 35 --merge` completed (`mergeCommit: 81107549f3989e1b0816994d7fae1ad932c24a87`).
-- Cloud deploy succeeded with tag `ops-pr35-20260306-020818`; Cloud Run moved to revision `mcc-ocr-summary-00382-8rr` with `PIPELINE_SERVICE_BASE_URL`, `SUMMARISER_JOB_NAME`, and `PDF_JOB_NAME` present.
-- Fresh synthetic upload succeeded: Drive file `1rH6Kp5zar9U0LkjQ1rs0FlN0jVcNLEZ0` (`mcc-proof-pr35-20260306T021103Z.pdf`) into intake folder `1eyMO0126VfLBK3bBQEpWlVOL6tWxriCE`.
-- `/process/drive/poll` returned `200`; `/ingest` returned `202` in the proof window.
-- New workflow execution `1be5257b-65a9-488f-88ba-08aef64b179a` failed with `HTTP 404` at step `markFailed` while posting to `/internal/jobs/...`; execution argument confirms callback base URL and job envs are now populated.
-- Callback-path fix branch now updates all workflow callback URLs to `/ingest/internal/jobs/{job_id}/events` and adds an infra test asserting every callback URL uses that prefix.
+- `gh pr merge 36 --merge` completed (`mergeCommit: 125219442d0a974208e9acfa3d58ba3ff1b47cef`).
+- `gcloud workflows deploy docai-pipeline --source workflows/pipeline.yaml` failed with:
+  - `INVALID_ARGUMENT`
+  - `main.yaml:193:23: parse error: expected end of input (bad indentation?)`
+- Inspection confirmed callback `url:` lines at top-level `http.post` blocks were indented deeper than sibling `auth:` keys.
+- This branch normalizes those `url:` indentation levels and extends `tests/test_infra_manifest.py` to `yaml.safe_load` the workflow file before callback-path assertions.
 
 ## Files Changed (current pass)
 - `workflows/pipeline.yaml`
@@ -39,17 +38,19 @@ Cloud audit status: `DONE (cloud writes + live synthetic trigger executed with e
 - `docs/CURRENT_STATE.md`
 
 ## Validation Evidence (current pass)
-- `RUFF_CACHE_DIR=/tmp/ruff_cache_callback /Users/quantanalytics/dev/MCC-OCR-Summary/.venv/bin/python -m ruff check src tests` -> `PASS`
+- `RUFF_CACHE_DIR=/tmp/ruff_cache_wf_indent /Users/quantanalytics/dev/MCC-OCR-Summary/.venv/bin/python -m ruff check src tests` -> `PASS`
 - `/Users/quantanalytics/dev/MCC-OCR-Summary/.venv/bin/python -m mypy --strict src` -> `PASS`
-- `COVERAGE_FILE=/tmp/.coverage-callback /Users/quantanalytics/dev/MCC-OCR-Summary/.venv/bin/python -m pytest --cov=src --cov-report=term-missing` -> `PASS` (`214 passed`, `6 skipped`, coverage `97.55%`)
+- `COVERAGE_FILE=/tmp/.coverage-wf-indent /Users/quantanalytics/dev/MCC-OCR-Summary/.venv/bin/python -m pytest --cov=src --cov-report=term-missing` -> `PASS` (`214 passed`, `6 skipped`, coverage `97.55%`)
 
 ## Remaining Risks / Unknowns (current pass)
-- Until this callback-path fix branch is merged and workflow is redeployed, live pipeline remains blocked by callback `404`.
+- Until this indentation-fix branch is merged and workflow redeploy succeeds, live proof remains blocked at workflow deploy time.
 - `PIPELINE_DLQ_TOPIC` remains null in runtime arguments; it is not currently a blocking validator requirement but should remain monitored.
-- Downstream OCR/summariser/pdf success path is not yet proven in this pass because execution stopped at callback failure.
+- Downstream OCR/summariser/pdf success path is not yet proven in this pass because workflow deploy did not complete.
 
 ## Rollback (current pass)
-- Revert fix-branch commit to restore prior workflow callback URL behavior if needed.
+- Revert indentation-fix commit to restore prior workflow file formatting if needed.
+
+## Historical Snapshot (2026-03-05 workflow-callback-path-repair)
 
 ## Historical Snapshot (2026-03-05 pipeline-runtime-env-contract-repair)
 
