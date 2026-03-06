@@ -18,6 +18,12 @@ python -m mypy --strict src
 python -m pytest --cov=src --cov-report=term-missing
 ```
 
+## Codex/worktree gotchas
+- If Ruff cache writes fail in a worktree, run with `RUFF_CACHE_DIR=/tmp/<cache-dir>`.
+- If `.coverage` writes fail in a worktree, run with `COVERAGE_FILE=/tmp/<coverage-file>`.
+- For Drive token minting in non-interactive sessions, call IAMCredentials with a user access token to mint a service-account-scoped Drive token.
+- If gcloud cannot write to `~/.config/gcloud`, set `CLOUDSDK_CONFIG=$PWD/.gcloud`.
+
 ## Dependency policy checks
 When dependency metadata is touched, also run:
 
