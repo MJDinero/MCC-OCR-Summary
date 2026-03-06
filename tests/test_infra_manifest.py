@@ -55,7 +55,11 @@ def test_cloudbuild_sets_fail_closed_pipeline_env_vars():
 
 
 def test_workflow_internal_event_callbacks_use_ingest_prefix():
-    lines = pathlib.Path("workflows/pipeline.yaml").read_text().splitlines()
+    workflow_text = pathlib.Path("workflows/pipeline.yaml").read_text()
+    workflow_doc = yaml.safe_load(workflow_text)
+    assert workflow_doc["main"]["steps"]
+
+    lines = workflow_text.splitlines()
     callback_lines = [
         line for line in lines if "url:" in line and "internal/jobs/" in line
     ]
