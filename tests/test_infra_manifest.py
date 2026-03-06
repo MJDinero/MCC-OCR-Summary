@@ -44,3 +44,11 @@ def test_cloudbuild_sets_fail_closed_pipeline_env_vars():
         env_map["PIPELINE_WORKFLOW_NAME"]
         == "projects/$_PROJECT_ID/locations/$_REGION/workflows/docai-pipeline"
     )
+    assert env_map["PIPELINE_SERVICE_BASE_URL"] == "$_PIPELINE_SERVICE_BASE_URL"
+    assert env_map["SUMMARISER_JOB_NAME"] == "$_SUMMARISER_JOB_NAME"
+    assert env_map["PDF_JOB_NAME"] == "$_PDF_JOB_NAME"
+
+    substitutions = doc.get("substitutions", {})
+    assert substitutions["_PIPELINE_SERVICE_BASE_URL"]
+    assert substitutions["_SUMMARISER_JOB_NAME"]
+    assert substitutions["_PDF_JOB_NAME"]
