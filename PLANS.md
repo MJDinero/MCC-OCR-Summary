@@ -22,6 +22,22 @@ Always work one item at a time in this order:
 6. decide next item
 Never jump ahead to architecture cleanup while P0/P1 remain open.
 
+## Autonomous phase queue ledger (2026-03-05 pipeline-runtime-env-contract-repair)
+- Phase 0: `Done` (PR #34 merged, `main` fast-forwarded to `df889ebad83ef93a7a37a17a69c30911c6070f4c`)
+- Phase 1: `Done` (Cloud Run redeploy + workflow deploy + fresh synthetic Drive upload + scheduler run executed)
+- Phase 2: `Done` (fresh workflow failure isolated: `validateConfig` missing `PIPELINE_SERVICE_BASE_URL`)
+- Phase 3: `Done` (minimal deploy contract patch: restore pipeline callback/job env vars in `cloudbuild.yaml`)
+- Phase 4: `Done` (infra guard extended in `tests/test_infra_manifest.py`)
+- Phase 5: `Done` (required local validation gates passed on fix branch)
+- Phase 6: `Queued` (commit/push/PR lifecycle for env-contract fix)
+- Phase 7: `Queued` (merge + redeploy + rerun synthetic proof to confirm summary/PDF artifacts)
+
+### Remaining queue after phases 0-5
+1. `phase 6 PR lifecycle`
+- commit fix branch, push, open PR to `main`, and merge when checks pass.
+2. `phase 7 live verification`
+- redeploy from merged `main`, upload one fresh synthetic PDF, run scheduler once, then verify `/process/drive/poll`, `/ingest`, workflow execution, and summary/PDF artifacts.
+
 ## Autonomous phase queue ledger (2026-03-05 workflow-init-contract-repair)
 - Phase 0: `Done` (read-first docs completed; `main` baseline confirmed clean at `158b8b0c1fcbaace638fe9b4530e4194b18101af`)
 - Phase 1: `Done` (workflow init contract audit completed; hard-required `event.*` keys enumerated from `workflows/pipeline.yaml`)
