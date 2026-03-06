@@ -52,3 +52,13 @@ def test_cloudbuild_sets_fail_closed_pipeline_env_vars():
     assert substitutions["_PIPELINE_SERVICE_BASE_URL"]
     assert substitutions["_SUMMARISER_JOB_NAME"]
     assert substitutions["_PDF_JOB_NAME"]
+
+
+def test_workflow_internal_event_callbacks_use_ingest_prefix():
+    lines = pathlib.Path("workflows/pipeline.yaml").read_text().splitlines()
+    callback_lines = [
+        line for line in lines if "url:" in line and "internal/jobs/" in line
+    ]
+
+    assert callback_lines
+    assert all("/ingest/internal/jobs/" in line for line in callback_lines)

@@ -22,6 +22,22 @@ Always work one item at a time in this order:
 6. decide next item
 Never jump ahead to architecture cleanup while P0/P1 remain open.
 
+## Autonomous phase queue ledger (2026-03-05 workflow-callback-path-repair)
+- Phase 0: `Done` (PR #35 merged and redeployed; Cloud Run revision `mcc-ocr-summary-00382-8rr` confirmed with restored pipeline env contract)
+- Phase 1: `Done` (fresh synthetic Drive upload + scheduler trigger + log/workflow evidence collected)
+- Phase 2: `Done` (new first failing stage isolated: workflow callback requests `/internal/jobs/...` return `404`)
+- Phase 3: `Done` (minimal workflow patch: callback URLs now target `/ingest/internal/jobs/{job_id}/events`)
+- Phase 4: `Done` (infra regression guard added to assert callback URL prefix)
+- Phase 5: `Done` (required local validation gates passed on callback-path branch)
+- Phase 6: `Queued` (commit/push/PR lifecycle for callback-path fix)
+- Phase 7: `Queued` (merge + workflow redeploy + fresh synthetic rerun to prove summary/PDF artifacts)
+
+### Remaining queue after phases 0-5
+1. `phase 6 PR lifecycle`
+- commit callback-path fix, push, open PR to `main`, merge when checks pass.
+2. `phase 7 live verification`
+- deploy merged workflow fix, upload one fresh synthetic PDF, run scheduler once, and verify `/process/drive/poll`, `/ingest`, workflow success, and summary/PDF artifacts.
+
 ## Autonomous phase queue ledger (2026-03-05 pipeline-runtime-env-contract-repair)
 - Phase 0: `Done` (PR #34 merged, `main` fast-forwarded to `df889ebad83ef93a7a37a17a69c30911c6070f4c`)
 - Phase 1: `Done` (Cloud Run redeploy + workflow deploy + fresh synthetic Drive upload + scheduler run executed)

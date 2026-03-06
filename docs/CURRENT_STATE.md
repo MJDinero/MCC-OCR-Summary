@@ -1,57 +1,57 @@
 # docs/CURRENT_STATE.md — Verified Current State Register
 
-Last updated: 2026-03-05 17:52:00 PST
-Updated by: Codex (thread: pipeline-runtime-env-contract-repair)
-Repo branch: `codex/fix-cloudbuild-pipeline-runtime-env`
-Repo commit (branch baseline): `df889ebad83ef93a7a37a17a69c30911c6070f4c`
-Task id: `pipeline-runtime-env-contract-repair`
+Last updated: 2026-03-05 18:20:00 PST
+Updated by: Codex (thread: workflow-callback-path-repair)
+Repo branch: `codex/fix-workflow-callback-path`
+Repo commit (branch baseline): `81107549f3989e1b0816994d7fae1ad932c24a87`
+Task id: `workflow-callback-path-repair`
 Target GCP project: `quantify-agent` (canonical target)
 Target region: `us-central1` (canonical target)
 Cloud audit status: `DONE (cloud writes + live synthetic trigger executed with explicit approval)`
 
 ## Phase Queue Status (current pass)
-- Phase 0: `DONE` (baseline/merge/deploy chain executed; `main` now at merged PR #34 commit `df889ebad83ef93a7a37a17a69c30911c6070f4c`)
-- Phase 1: `DONE` (Cloud Run redeploy + workflow deploy + fresh synthetic Drive upload + scheduler trigger executed)
-- Phase 2: `DONE` (new first failing live stage isolated from fresh evidence: workflow `validateConfig` fails on missing `PIPELINE_SERVICE_BASE_URL`)
-- Phase 3: `DONE` (minimal repo-local deploy contract fix applied in `cloudbuild.yaml` + infra guard test)
-- Phase 4: `DONE` (required local validation commands passed on fix branch)
-- Phase 5: `QUEUED` (commit/push/PR lifecycle for env-contract fix)
-- Phase 6: `QUEUED` (redeploy from fix branch + rerun synthetic proof)
+- Phase 0: `DONE` (PR #35 merged; `main` fast-forwarded to `81107549f3989e1b0816994d7fae1ad932c24a87`)
+- Phase 1: `DONE` (Cloud Run redeploy from merged `main` completed; revision `mcc-ocr-summary-00382-8rr`)
+- Phase 2: `DONE` (fresh synthetic Drive upload + scheduler run + log/workflow capture executed)
+- Phase 3: `DONE` (new first failing live stage isolated from fresh evidence: workflow callback URL path missing `/ingest` prefix causes `404`)
+- Phase 4: `DONE` (minimal workflow callback path fix + infra guard test applied on dedicated branch)
+- Phase 5: `DONE` (required local validation commands passed on callback-path fix branch)
+- Phase 6: `QUEUED` (commit/push/PR lifecycle for callback-path fix)
+- Phase 7: `QUEUED` (merge + workflow redeploy + fresh synthetic rerun to prove summary/PDF artifacts)
 
 ## Forensic Conclusion (current pass)
-- PR #34 successfully resolved the original workflow-init key error (`KeyError: project_id`), confirmed by fresh execution arguments now containing `project_id`, `region`, `doc_ai_*`, `max_shard_concurrency`, and `gcs_uri`.
-- A new downstream runtime contract drift is now the first blocker: workflow `validateConfig` fails because Cloud Run env after Cloud Build deploy omitted `PIPELINE_SERVICE_BASE_URL`; summariser/pdf job envs were also null in the same execution payload.
-- The smallest safe repo-local fix is deploy-config only: restore `PIPELINE_SERVICE_BASE_URL`, `SUMMARISER_JOB_NAME`, and `PDF_JOB_NAME` in `cloudbuild.yaml` via substitutions and guard them in infra tests.
+- PR #35 resolved the prior `validateConfig` blocker by restoring pipeline callback/job env vars in Cloud Run.
+- The next first failing stage is now workflow-to-ingest callback path: workflow posts to `/internal/jobs/{job_id}/events`, but FastAPI route is mounted under `/ingest/internal/jobs/{job_id}/events`; this yields `404` and terminates execution in failure handling.
+- The smallest safe repo-local fix is workflow YAML path-only: update all callback URLs to `/ingest/internal/jobs/{job_id}/events` and lock with an infra regression test.
 
 ## Repo Evidence (current pass)
-- `gh pr merge 34 --merge` completed (`mergeCommit: df889ebad83ef93a7a37a17a69c30911c6070f4c`).
-- Cloud deploy succeeded with tag `ops-pr34-20260305-225511`; Cloud Run moved to revision `mcc-ocr-summary-00381-lxt`.
-- Fresh synthetic upload succeeded: Drive file `1WfQ0csG007UZ2cK1wwAzMD1AhCE6kQ1p` (`mcc-proof-20260306T014313Z.pdf`) into intake folder `1eyMO0126VfLBK3bBQEpWlVOL6tWxriCE`.
+- `gh pr merge 35 --merge` completed (`mergeCommit: 81107549f3989e1b0816994d7fae1ad932c24a87`).
+- Cloud deploy succeeded with tag `ops-pr35-20260306-020818`; Cloud Run moved to revision `mcc-ocr-summary-00382-8rr` with `PIPELINE_SERVICE_BASE_URL`, `SUMMARISER_JOB_NAME`, and `PDF_JOB_NAME` present.
+- Fresh synthetic upload succeeded: Drive file `1rH6Kp5zar9U0LkjQ1rs0FlN0jVcNLEZ0` (`mcc-proof-pr35-20260306T021103Z.pdf`) into intake folder `1eyMO0126VfLBK3bBQEpWlVOL6tWxriCE`.
 - `/process/drive/poll` returned `200`; `/ingest` returned `202` in the proof window.
-- New workflow execution `283682d5-a77b-4169-aa64-a2a4d23a42cf` failed at `validateConfig` with `"PIPELINE_SERVICE_BASE_URL must be configured"`; execution argument shows `pipeline_service_base_url: null`, `summariser_job_name: null`, `pdf_job_name: null`.
-- Fix branch now adds `PIPELINE_SERVICE_BASE_URL=$_PIPELINE_SERVICE_BASE_URL`, `SUMMARISER_JOB_NAME=$_SUMMARISER_JOB_NAME`, and `PDF_JOB_NAME=$_PDF_JOB_NAME` to Cloud Run deploy env and adds matching infra test assertions.
+- New workflow execution `1be5257b-65a9-488f-88ba-08aef64b179a` failed with `HTTP 404` at step `markFailed` while posting to `/internal/jobs/...`; execution argument confirms callback base URL and job envs are now populated.
+- Callback-path fix branch now updates all workflow callback URLs to `/ingest/internal/jobs/{job_id}/events` and adds an infra test asserting every callback URL uses that prefix.
 
 ## Files Changed (current pass)
-- `cloudbuild.yaml`
+- `workflows/pipeline.yaml`
 - `tests/test_infra_manifest.py`
 - `PLANS.md`
 - `docs/CURRENT_STATE.md`
 
 ## Validation Evidence (current pass)
-- `/Users/quantanalytics/dev/MCC-OCR-Summary/.venv/bin/python -m ruff check src tests` -> `PASS` (main, post-merge check)
-- `/Users/quantanalytics/dev/MCC-OCR-Summary/.venv/bin/python -m mypy --strict src` -> `PASS` (main, post-merge check)
-- `/Users/quantanalytics/dev/MCC-OCR-Summary/.venv/bin/python -m pytest --cov=src --cov-report=term-missing` -> `PASS` (`213 passed`, `6 skipped`, coverage `97.55%`) on main
-- `RUFF_CACHE_DIR=/tmp/ruff_cache_envfix /Users/quantanalytics/dev/MCC-OCR-Summary/.venv/bin/python -m ruff check src tests` -> `PASS` (fix branch)
-- `/Users/quantanalytics/dev/MCC-OCR-Summary/.venv/bin/python -m mypy --strict src` -> `PASS` (fix branch)
-- `COVERAGE_FILE=/tmp/.coverage-envfix /Users/quantanalytics/dev/MCC-OCR-Summary/.venv/bin/python -m pytest --cov=src --cov-report=term-missing` -> `PASS` (`213 passed`, `6 skipped`, coverage `97.55%`) on fix branch
+- `RUFF_CACHE_DIR=/tmp/ruff_cache_callback /Users/quantanalytics/dev/MCC-OCR-Summary/.venv/bin/python -m ruff check src tests` -> `PASS`
+- `/Users/quantanalytics/dev/MCC-OCR-Summary/.venv/bin/python -m mypy --strict src` -> `PASS`
+- `COVERAGE_FILE=/tmp/.coverage-callback /Users/quantanalytics/dev/MCC-OCR-Summary/.venv/bin/python -m pytest --cov=src --cov-report=term-missing` -> `PASS` (`214 passed`, `6 skipped`, coverage `97.55%`)
 
 ## Remaining Risks / Unknowns (current pass)
-- Until this fix branch is merged and redeployed, live pipeline remains blocked at workflow `validateConfig`.
+- Until this callback-path fix branch is merged and workflow is redeployed, live pipeline remains blocked by callback `404`.
 - `PIPELINE_DLQ_TOPIC` remains null in runtime arguments; it is not currently a blocking validator requirement but should remain monitored.
-- Downstream OCR/summariser/pdf success path is not yet proven in this pass because execution stopped at config validation.
+- Downstream OCR/summariser/pdf success path is not yet proven in this pass because execution stopped at callback failure.
 
 ## Rollback (current pass)
-- Revert fix-branch commit to restore prior Cloud Build env contract if needed.
+- Revert fix-branch commit to restore prior workflow callback URL behavior if needed.
+
+## Historical Snapshot (2026-03-05 pipeline-runtime-env-contract-repair)
 
 ## Historical Snapshot (2026-03-05 workflow-init-contract-repair)
 
