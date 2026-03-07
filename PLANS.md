@@ -22,6 +22,23 @@ Always work one item at a time in this order:
 6. decide next item
 Never jump ahead to architecture cleanup while P0/P1 remain open.
 
+## Autonomous phase queue ledger (2026-03-07 summary-p0-live-output-mismatch-livefix-smoke-guard)
+- Phase 0: `Done` (read-first docs loaded; baseline captured on rescue branch `codex/summary-p0-live-output-mismatch-livefix-main-rescue-20260307` at `28b01d15da6783ceb1fbd5ca35fe7cc604afea1c`; authoritative live-fix commit `9215f5e509f58461a700f1848e7f8460c98671e5` located and new branch created from it)
+- Phase 1: `Done` (deploy contract reverified from authoritative branch content: `cloudbuild.yaml` deploys service, summariser job, PDF job, and workflow, and all three runtimes share `$_IMAGE_REPO:$_TAG`)
+- Phase 2: `Blocked` (read-only live describe/artifact commands could not be rerun because local gcloud auth now requires interactive reauthentication)
+- Phase 3: `Done` (repo-local smoke proof hardened so end-to-end verification now rejects legacy summary JSON and exposes summary contract metadata in the proof output)
+- Phase 4: `Done` (required validation gates passed: focused smoke tests, `ruff`, `mypy --strict src`, and repo-wide `pytest --cov=src`)
+- Phase 5: `Blocked` (next step is human reauthentication plus human-run deploy/live proof)
+
+### Current highest-priority unresolved item
+1. `human reauth + deploy + live proof`
+- HUMAN MUST RUN: reauthenticate local gcloud because read-only describe commands currently fail with `Reauthentication failed. cannot prompt during non-interactive execution.`
+- HUMAN MUST RUN: once reauthenticated, deploy the authoritative manifest from this repo:
+  - `gcloud builds submit --config cloudbuild.yaml --project quantify-agent --substitutions "_TAG=ops-$(date -u +%Y%m%d-%H%M%S)"`
+- HUMAN MUST RUN: then rerun the guarded smoke proof so it validates summary JSON structure, not just artifact existence:
+  - `CONFIRM_LIVE_RUN=1 bash scripts/e2e_smoke.sh --project-id quantify-agent --region us-central1 --workflow-name docai-pipeline --scheduler-job mcc-drive-poller --drive-folder-id 1eyMO0126VfLBK3bBQEpWlVOL6tWxriCE --drive-output-folder-id 130jJzsl3OBzMD8weGfBOaXikfEnD2KVg --service-account mcc-orch-sa@quantify-agent.iam.gserviceaccount.com --state-bucket mcc-state-quantify-agent-us-central1-322786 --state-prefix pipeline-state --output-bucket mcc-output`
+- Repo-local boundary status: no further repo-local blocker is known in this lane; the remaining blocker is human-only access/deploy.
+
 ## Autonomous phase queue ledger (2026-03-06 summary-p0-live-output-mismatch-livefix)
 - Phase 0: `Done` (read-first docs loaded; paired synthetic/real PDFs confirmed present; fresh task branch `codex/summary-p0-live-output-mismatch-livefix` created from the validated async lane baseline `76fe30cfb221bde1f3adf1178876814fb18456e9`)
 - Phase 1: `Done` (paired PDF inspection plus read-only GCS/job audit isolated the first failing stage to summary JSON generation before PDF rendering)

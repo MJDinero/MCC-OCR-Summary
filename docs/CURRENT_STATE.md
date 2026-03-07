@@ -1,16 +1,86 @@
 # docs/CURRENT_STATE.md — Verified Current State Register
 
-Last updated: 2026-03-06 21:00:02 PST
-Updated by: Codex (thread: summary-p0-live-output-mismatch-livefix)
-Repo branch: `codex/summary-p0-live-output-mismatch-livefix`
-Repo commit (branch baseline): `76fe30cfb221bde1f3adf1178876814fb18456e9`
-Task id: `summary-p0-live-output-mismatch-livefix`
+Last updated: 2026-03-07 03:40:50 PST
+Updated by: Codex (thread: summary-p0-live-output-mismatch-livefix-smoke-guard)
+Repo branch: `codex/summary-p0-live-output-mismatch-livefix-smoke-guard`
+Repo commit (branch baseline): `9215f5e509f58461a700f1848e7f8460c98671e5`
+Task id: `summary-p0-live-output-mismatch-livefix-smoke-guard`
 Target GCP project: `quantify-agent` (canonical target)
 Target region: `us-central1` (canonical target)
-Cloud audit status: `DONE (read-only live audit confirmed stale summariser/PDF jobs and corrupted summary JSON before PDF rendering)`
-Pipeline status classification: `LIVE_SUMMARY_JOB_DEPLOY_DRIFT_PATCHED_LOCALLY`
+Cloud audit status: `BLOCKED (2026-03-07 read-only describe attempts failed because local gcloud auth requires interactive reauthentication)`
+Pipeline status classification: `REPO_SMOKE_PROOF_HARDENED_AWAITING_HUMAN_GCLOUD_REAUTH`
 
 ## Phase Queue Status (current pass)
+- Phase 0: `DONE` (read-first docs loaded; initial baseline captured on rescue branch `codex/summary-p0-live-output-mismatch-livefix-main-rescue-20260307` at `28b01d15da6783ceb1fbd5ca35fe7cc604afea1c`; authoritative live-fix commit `9215f5e509f58461a700f1848e7f8460c98671e5` identified and new working branch created from it)
+- Phase 1: `DONE` (deploy contract reverified from authoritative branch content: `cloudbuild.yaml` deploys Cloud Run service, summariser job, PDF job, and workflow, and all three runtimes use `$_IMAGE_REPO:$_TAG`)
+- Phase 2: `BLOCKED` (read-only gcloud checks for service/workflow/job drift and newest artifacts could not be rerun because `gcloud ... describe` failed with `Reauthentication failed. cannot prompt during non-interactive execution.`)
+- Phase 3: `DONE` (repo-local smoke proof hardened so end-to-end verification now fails closed when summary JSON is legacy-shaped or still contains `Document processed in N chunk(s)` telemetry)
+- Phase 4: `DONE` (required validation passed: `bash -n`, focused smoke tests, `ruff`, `mypy --strict src`, and repo-wide `pytest --cov=src --cov-report=term-missing`)
+- Phase 5: `BLOCKED` (next meaningful step is human reauthentication followed by human-run deploy/live proof)
+
+## Current Investigation Evidence (2026-03-07 smoke proof hardening)
+- Baseline / branch proof:
+  - initial `git status --short --branch` -> branch `codex/summary-p0-live-output-mismatch-livefix-main-rescue-20260307`, dirty only in local `.gcloud/*` state.
+  - initial `git rev-parse HEAD` -> `28b01d15da6783ceb1fbd5ca35fe7cc604afea1c`.
+  - `git fetch origin` completed successfully.
+  - authoritative live-fix branch exists locally but is attached to another worktree: `codex/summary-p0-live-output-mismatch-livefix` -> `9215f5e`.
+  - working branch for this pass: `codex/summary-p0-live-output-mismatch-livefix-smoke-guard` created from `9215f5e509f58461a700f1848e7f8460c98671e5`.
+- Repo deploy-contract proof:
+  - the initial rescue-branch working tree `cloudbuild.yaml` did not contain `gcloud run jobs deploy` steps.
+  - `git show codex/summary-p0-live-output-mismatch-livefix:cloudbuild.yaml` confirmed the authoritative live-fix branch deploys:
+    - Cloud Run service `mcc-ocr-summary`
+    - Cloud Run job `mcc-ocr-summariser`
+    - Cloud Run job `mcc-ocr-pdf-writer`
+    - workflow `docai-pipeline`
+  - the same authoritative manifest uses `--image=$_IMAGE_REPO:$_TAG` for the service and both jobs, which is the required deploy contract for eliminating async image drift.
+- Read-only live-audit blocker proof:
+  - attempted commands:
+    - `gcloud run services describe mcc-ocr-summary --region us-central1 --project quantify-agent --format=json`
+    - `gcloud run jobs describe mcc-ocr-summariser --region us-central1 --project quantify-agent --format=json`
+    - `gcloud run jobs describe mcc-ocr-pdf-writer --region us-central1 --project quantify-agent --format=json`
+    - `gcloud workflows describe docai-pipeline --location us-central1 --project quantify-agent --format=json`
+  - all four failed with the same error: `Reauthentication failed. cannot prompt during non-interactive execution.`
+  - local config still points at the intended target: `.gcloud/configurations/config_default` -> account `Matt@moneymediausa.com`, project `quantify-agent`.
+- Repo-local smoke-proof gap proof:
+  - before this patch, `scripts/e2e_smoke.sh` verified summary/PDF existence via `gcloud storage ls` but never inspected the summary JSON payload itself.
+  - because of that gap, a stale summariser image could still satisfy the script so long as it produced any JSON object and PDF artifact.
+
+## Patch Summary (current pass)
+- `scripts/e2e_smoke.sh`
+  - ported the testable/sourceable smoke harness shape onto the authoritative live-fix branch while preserving existing state-bucket/state-prefix arguments.
+  - added `validate_refactored_summary_json` so the live proof now requires:
+    - non-empty `schema_version`
+    - non-empty `sections` array
+    - per-section `slug`, `title`, `content`, and numeric `ordinal`
+    - absence of top-level `Medical Summary`
+    - absence of `Document processed in N chunk(s)` legacy marker text
+  - dry-run output now explicitly includes the summary-contract validation step.
+  - successful live output now includes `state_uri`, `summary_schema_version`, and `summary_sections`.
+- `tests/test_e2e_smoke_script.py`
+  - replaced text-inspection-only checks with executable source-mode tests for helper functions and contract validation behavior.
+  - expanded coverage to dry-run/help output, URI helpers, Drive query construction, workflow execution matching, contract acceptance/rejection, cleanup behavior, and deterministic success output.
+
+## Validation (current pass)
+- `bash -n scripts/e2e_smoke.sh` -> `PASS`
+- `.venv/bin/python -m pytest --no-cov tests/test_e2e_smoke_script.py` -> `PASS` (`21 passed`)
+- `RUFF_CACHE_DIR=/tmp/mcc_ruff .venv/bin/python -m ruff check src tests` -> `PASS`
+- `.venv/bin/python -m mypy --strict src` -> `PASS`
+- `COVERAGE_FILE=/tmp/mcc_summary_smoke_guard.coverage .venv/bin/python -m pytest --cov=src --cov-report=term-missing` -> `PASS` (`249 passed`, `6 skipped`, total coverage `97.55%`)
+
+## Remaining Risks / Unknowns (current pass)
+- Live job/service/workflow drift was not revalidated in this pass because local gcloud auth is expired for non-interactive use.
+- The repo now fails closed on legacy summary JSON during smoke proof, but a human still has to rerun live verification after reauthentication and any required deploy.
+- Local `.gcloud/*` dirt remains intentionally unmodified and excluded from repo conclusions.
+
+## Rollback (current pass)
+- Revert `scripts/e2e_smoke.sh` and `tests/test_e2e_smoke_script.py` on `codex/summary-p0-live-output-mismatch-livefix-smoke-guard` to restore the previous smoke-proof behavior.
+
+## Next Human Action (current pass)
+- Reauthenticate local gcloud, then run the authoritative deploy and smoke-proof commands from this repo so live drift can be rechecked and, if needed, the summariser/PDF jobs can be updated.
+
+## Historical Snapshot (2026-03-06 summary-p0-live-output-mismatch-livefix)
+
+## Phase Queue Status (historical snapshot)
 - Phase 0: `DONE` (read-first docs loaded; paired synthetic/real PDFs confirmed present; branch created from the validated async lane)
 - Phase 1: `DONE` (paired PDF extraction plus live GCS/job inspection isolated the first failing stage to summary JSON generation before PDF rendering)
 - Phase 2: `DONE` (repo deploy truth patched so Cloud Build now redeploys the summariser/PDF jobs that the async workflow actually runs, and explicitly reapplies workflow env vars from repo truth)
