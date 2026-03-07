@@ -61,6 +61,30 @@ def test_normalise_summary_handles_contract():
     assert indices["Diagnoses"] == ["Dx"]
 
 
+def test_normalise_summary_prefers_sections_over_legacy_fields():
+    payload = {
+        "schema_version": "test",
+        "sections": [
+            {
+                "slug": "medical_summary",
+                "title": "Medical Summary",
+                "content": "Structured output",
+                "ordinal": 1,
+                "kind": "narrative",
+            }
+        ],
+        "Medical Summary": "Intro Overview:\nDocument processed in 1 chunk(s).",
+        "_claims": [],
+        "_evidence_spans": [],
+    }
+
+    sections, indices, schema_version = pdf_mod._normalise_summary(payload)
+    assert schema_version == "test"
+    assert sections == [("Medical Summary", "Structured output")]
+    assert not any("Document processed in " in body for _, body in sections)
+    assert all(not values for values in indices.values())
+
+
 def test_ensure_bytes_handles_variants():
     assert pdf_mod._ensure_bytes(b"abc") == b"abc"
     assert pdf_mod._ensure_bytes(bytearray(b"xyz")) == b"xyz"

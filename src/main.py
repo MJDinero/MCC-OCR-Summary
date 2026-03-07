@@ -74,23 +74,28 @@ class _DriveClientAdapter:
         file_bytes: bytes,
         folder_id: str | None = None,
         *,
+        report_name: str | None = None,
         log_context: dict[str, Any] | None = None,
     ) -> str:
-        report_name = f"summary-{os.getenv('REPORT_PREFIX', '')}{secrets.token_hex(8)}.pdf"  # pylint: disable=no-member
+        resolved_report_name = (
+            report_name.strip()
+            if isinstance(report_name, str) and report_name.strip()
+            else f"summary-{os.getenv('REPORT_PREFIX', '')}{secrets.token_hex(8)}.pdf"
+        )  # pylint: disable=no-member
         if self._stub:
             structured_log(
                 _API_LOG,
                 logging.INFO,
                 "drive_upload_stub",
-                report_name=report_name,
+                report_name=resolved_report_name,
                 folder_id=folder_id,
                 bytes=len(file_bytes),
             )
-            return f"stub-{report_name}"
+            return f"stub-{resolved_report_name}"
         parent_folder = folder_id or self._config.drive_report_folder_id
         return drive_client_module.upload_pdf(
             file_bytes,
-            report_name,
+            resolved_report_name,
             parent_folder_id=parent_folder,
             log_context=(log_context or {}) | {"component": "process_api"},
         )

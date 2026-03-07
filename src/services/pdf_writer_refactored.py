@@ -28,6 +28,7 @@ from src.services.pdf_writer import (
     PDFBackend,
     _wrap_text as _legacy_wrap_text,  # reuse the proven text wrapper
 )
+from src.utils.logging_utils import structured_log
 
 _LOG = logging.getLogger("pdf_writer.refactored")
 
@@ -502,6 +503,7 @@ def _cli(argv: Optional[Iterable[str]] = None) -> None:
             )
             state_store = None
 
+    pdf_started = time.perf_counter()
     try:
         summary_payload = _load_summary(summary_path)
         pdf_log_context: Dict[str, Any] = {
@@ -605,6 +607,27 @@ def _cli(argv: Optional[Iterable[str]] = None) -> None:
             _LOG.exception(
                 "pdf_job_state_complete_failed", extra={"job_id": args.job_id}
             )
+
+    duration_ms = int((time.perf_counter() - pdf_started) * 1000)
+    trace_field: Optional[str] = None
+    if trace_id:
+        trace_field = f"projects/{cfg.project_id}/traces/{trace_id}"
+    log_fields = {
+        "job_id": args.job_id,
+        "trace_id": trace_id,
+        "request_id": getattr(job_snapshot, "request_id", None),
+        "stage": "PDF_JOB",
+        "duration_ms": duration_ms,
+        "pdf_uri": pdf_uri,
+    }
+    if input_arg.startswith("gs://"):
+        log_fields["summary_uri"] = input_arg
+    object_uri = getattr(job_snapshot, "object_uri", None) if job_snapshot else None
+    if object_uri:
+        log_fields["object_uri"] = object_uri
+    if trace_field and trace_id:
+        log_fields["logging.googleapis.com/trace"] = trace_field
+    structured_log(_LOG, logging.INFO, "pdf_done", **log_fields)
 
 
 if __name__ == "__main__":  # pragma: no cover - CLI entrypoint

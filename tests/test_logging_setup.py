@@ -60,16 +60,24 @@ def test_structured_log_allowlist_filters_unknown_fields():
             "unit_event",
             stage="ocr",
             status="started",
+            job_id="job-123",
             trace_id="t-123",
             request_id="req-456",
+            summary_uri="gs://bucket/summaries/job-123.json",
+            pdf_uri="gs://bucket/pdf/job-123.pdf",
+            report_file_id="drive-file-123",
             text_length=120,
             disallowed_field="secret-value",
         )
         handler.flush()
         payload = json.loads(buffer.getvalue().strip())
         assert payload["stage"] == "ocr"
+        assert payload["job_id"] == "job-123"
         assert payload["trace_id"] == "t-123"
         assert payload["request_id"] == "req-456"
+        assert payload["summary_uri"] == "gs://bucket/summaries/job-123.json"
+        assert payload["pdf_uri"] == "gs://bucket/pdf/job-123.pdf"
+        assert payload["report_file_id"] == "drive-file-123"
         assert "disallowed_field" not in payload
     finally:
         logger.removeHandler(handler)

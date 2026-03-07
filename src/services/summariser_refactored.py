@@ -48,6 +48,7 @@ from src.services.summarization import (
 )
 from src.services.supervisor import CommonSenseSupervisor
 from src.utils.secrets import SecretResolutionError, resolve_secret_env
+from src.utils.logging_utils import structured_log
 
 _LOG = logging.getLogger("summariser.refactored")
 
@@ -1649,9 +1650,7 @@ def _cli(argv: Optional[Iterable[str]] = None) -> None:
     state_store: PipelineStateStore | None = None
     base_metadata: Dict[str, Any] = {}
     job_snapshot = None
-    attempt_value = 1
     trace_id: Optional[str] = None
-    document_id: Optional[str] = None
     if args.job_id:
         try:
             state_store = create_state_store_from_env()
@@ -1659,9 +1658,6 @@ def _cli(argv: Optional[Iterable[str]] = None) -> None:
             if job_snapshot:
                 base_metadata = dict(job_snapshot.metadata)
                 trace_id = job_snapshot.trace_id
-                document_id = job_snapshot.object_uri or job_snapshot.object_name
-                if isinstance(job_snapshot.retries, dict):
-                    attempt_value = job_snapshot.retries.get("SUMMARY_JOB", 0) + 1
             state_store.mark_status(
                 args.job_id,
                 PipelineStatus.SUMMARY_SCHEDULED,
@@ -1876,22 +1872,25 @@ def _cli(argv: Optional[Iterable[str]] = None) -> None:
         project_id = os.getenv("PROJECT_ID") or get_config().project_id
         if project_id:
             trace_field = f"projects/{project_id}/traces/{trace_id}"
-    log_extra = {
+    log_fields = {
         "job_id": args.job_id,
         "trace_id": trace_id,
-        "document_id": document_id,
-        "shard_id": "aggregate",
+        "request_id": getattr(job_snapshot, "request_id", None),
+        "stage": "SUMMARY_JOB",
         "duration_ms": duration_ms,
-        "schema_version": schema_version,
-        "attempt": attempt_value,
-        "component": "summary_job",
-        "severity": "INFO",
+        "summary_chars": summary_metadata["summary_char_length"]
+        if state_store and args.job_id
+        else None,
+        "supervisor_passed": bool(validation.get("supervisor_passed")),
     }
+    object_uri = getattr(job_snapshot, "object_uri", None) if job_snapshot else None
+    if object_uri:
+        log_fields["object_uri"] = object_uri
     if summary_gcs_uri:
-        log_extra["summary_gcs_uri"] = summary_gcs_uri
+        log_fields["summary_uri"] = summary_gcs_uri
     if trace_field and trace_id:
-        log_extra["logging.googleapis.com/trace"] = trace_field
-    _LOG.info("summary_done", extra=log_extra)
+        log_fields["logging.googleapis.com/trace"] = trace_field
+    structured_log(_LOG, logging.INFO, "summary_done", **log_fields)
     print(json.dumps(summary, indent=2, ensure_ascii=False))
 
 

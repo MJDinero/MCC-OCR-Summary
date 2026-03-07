@@ -22,6 +22,44 @@ Always work one item at a time in this order:
 6. decide next item
 Never jump ahead to architecture cleanup while P0/P1 remain open.
 
+## Autonomous phase queue ledger (2026-03-06 summary-p0-live-output-mismatch-livefix)
+- Phase 0: `Done` (read-first docs loaded; paired synthetic/real PDFs confirmed present; fresh task branch `codex/summary-p0-live-output-mismatch-livefix` created from the validated async lane baseline `76fe30cfb221bde1f3adf1178876814fb18456e9`)
+- Phase 1: `Done` (paired PDF inspection plus read-only GCS/job audit isolated the first failing stage to summary JSON generation before PDF rendering)
+- Phase 2: `Done` (root cause verified: live summariser/PDF jobs still run image `us-central1-docker.pkg.dev/quantify-agent/mcc/mcc-ocr-summary:b853eb6` last updated `2025-10-14`, while current repo/live service-workflow fixes are newer and current `RefactoredSummariser` source no longer injects chunk telemetry)
+- Phase 3: `Done` (minimal repo patch: `cloudbuild.yaml` now redeploys `mcc-ocr-summariser` and `mcc-ocr-pdf-writer`, and now also pins workflow deploy env vars so repo deploys do not depend on sticky live workflow config)
+- Phase 4: `Done` (structured async observability added: summary job, PDF job, and internal Drive upload now emit consistent `job_id` / `trace_id` / `stage` + artifact URI logs)
+- Phase 5: `Done` (validation passed: targeted summary/deploy/logging tests, route/config/smoke-adjacent checks, `ruff`, `mypy --strict`, and repo-wide `pytest --cov=src`)
+- Phase 6: `Done` (task-relevant tracked changes only; deploy candidate validated again and normalized into a reviewable local branch commit with no `.gcloud/*` state included)
+
+### Current highest-priority unresolved item
+1. `human deploy + live proof`
+- HUMAN MUST RUN: deploy the patched `cloudbuild.yaml` so the summariser/PDF jobs pick up the current image, then rerun the synthetic and real live proofs to confirm the GCS summary JSON and final PDF now match the structured contract.
+- Repo-local boundary status: validated deploy candidate is ready on `codex/summary-p0-live-output-mismatch-livefix`; the next unresolved step is the cloud-write approval boundary, not a repo ambiguity.
+- Latest blocking live facts:
+  - service `mcc-ocr-summary` is current on revision `mcc-ocr-summary-00387-cmr` with image tag `ops-20260307-024251`
+  - workflow `docai-pipeline` is current on revision `000023-49e`
+  - both async jobs remain stale on image tag `b853eb6`, last updated on `2025-10-14`
+  - latest successful build `f0290956-763f-4d3b-8961-a7534fe3bb5d` deployed workflow + service only; it did not redeploy the two jobs
+
+## Autonomous phase queue ledger (2026-03-06 drive-output-missing-investigation)
+- Phase 0: `Done` (baseline synced on `main` at `76fe30cfb221bde1f3adf1178876814fb18456e9`; scoped worktree branch created)
+- Phase 1: `Done` (read-only diagnosis completed: live workflow/service/job REST snapshot saved under `/tmp/drive-output-audit`)
+- Phase 2: `Done` (minimal fix patched: workflow now performs internal Drive upload call and keeps PDF job focused on GCS artifact creation)
+- Phase 3: `Done` (closeout audit repaired adapter/runtime, workflow state contract, deploy/proof tooling drift, and proof-path regression coverage; required validation gates passed)
+- Phase 4: `Done` (service redeployed, workflow revision `000021-b51` deployed directly, live synthetic proof succeeded, and the macOS smoke-script portability defect was repaired)
+
+### Root cause and first failing stage (this pass)
+1. First failing stage: `NO DRIVE EXPORT STEP IN LIVE WORKFLOW`
+- Live workflow revision `000020-078` contains only internal status callbacks to `/ingest/internal/jobs/{job_id}/events`.
+- `upload-report`, `report_file_id`, `drive`, and `--skip-signed-url` markers are absent from the live workflow `sourceContents`.
+2. Runtime alignment finding
+- The live Cloud Run service has Drive output config and `WRITE_TO_DRIVE=true`.
+- The live Cloud Run jobs use a different service account and have no Drive env vars, so Drive export is intended to happen in the service layer, not inside the jobs.
+
+### Remaining queue after phases 0-4
+1. `external deploy boundary`
+- HUMAN MUST RUN / IAM: the Cloud Build worker identity `720850296638-compute@developer.gserviceaccount.com` still lacks `workflows.workflows.get` on `docai-pipeline`, so the one-command Cloud Build service+workflow deploy path remains blocked by cloud permissions rather than repo code.
+
 ## Autonomous phase queue ledger (2026-03-06 hardening-and-regression-prevention)
 - Phase 0: `Done` (baseline synced on `main` at `6d143130825048a9f6bd82b0f0d1a53576b8e9dd` with clean status)
 - Phase 1: `Done` (read-first docs + repo invariant audit + read-only cloud evidence audit)

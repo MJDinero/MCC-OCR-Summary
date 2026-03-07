@@ -87,20 +87,14 @@ The validator CLI enforces structural headings for every PDF and inspects `_clai
 
 ### Cloud Run Deployment
 
-1. Build the image:
+1. Deploy the repo-authoritative service and workflow:
    ```bash
    gcloud builds submit --config cloudbuild.yaml \
-     --substitutions=_PROJECT=$PROJECT_ID,_REGION=$REGION
+     --substitutions=_PROJECT_ID="$PROJECT_ID",_REGION="$REGION",_TAG="$TAG"
    ```
-2. Deploy services (Pub/Sub handlers can run as Cloud Run jobs or GKE workloads). Example:
-   ```bash
-   make deploy \
-     PROJECT_ID=$PROJECT_ID \
-     REGION=$REGION \
-     SERVICE=mcc-ocr-summary
-   ```
-   The Makefile deploy target enforces `--no-allow-unauthenticated`, so ensure IAM-based callers (service accounts or internal IAP identities) are granted `roles/run.invoker` before triggering a deployment.
-3. Terraform or scripts in `infra/` provision Pub/Sub topics, subscriptions, and service accounts with least-privilege IAM.
+   `cloudbuild.yaml` deploys the Cloud Run service and the `workflows/pipeline.yaml`
+   definition to `$_WORKFLOW_NAME`, keeping the service/workflow contract aligned.
+2. Terraform or scripts in `infra/` provision Pub/Sub topics, subscriptions, and service accounts with least-privilege IAM.
 
 ---
 
@@ -225,11 +219,14 @@ For further details, see `AGENTS.md` and
 
 - **Smoke Test (staging / prod)**
   ```bash
-  PROJECT_ID=... REGION=... INTAKE_BUCKET=... SERVICE_URL=https://mcc-ocr-summary-... \
-  ./scripts/e2e_smoke.sh
+  CONFIRM_LIVE_RUN=1 ./scripts/e2e_smoke.sh \
+    --project-id "${PROJECT_ID}" \
+    --region "${REGION}"
   ```
-  The script uploads a fixture PDF, waits for `/status` to reach `UPLOADED`, validates the signed URL,
-  asserts duplicate ingest returns `412`, and verifies log markers in chronological order.
+  The script uploads a NON-PHI synthetic PDF to the Drive input folder, triggers the scheduler,
+  waits for the matching workflow execution to succeed, verifies the GCS summary/PDF artifacts,
+  confirms `summary-<job_id>.pdf` appears in the Drive OUTPUT folder, and checks the persisted
+  pipeline state object carries the matching `pdf_uri` and `metadata.report_file_id`.
 
 - **Log inspection**
   ```bash
@@ -281,7 +278,7 @@ For further details, see `AGENTS.md` and
 
 ## Release Checklist
 
-- [ ] Confirm `scripts/e2e_smoke.sh` passes (signed URL 200, duplicate = 412, ordered markers).
+- [ ] Confirm `scripts/e2e_smoke.sh` passes (workflow `SUCCEEDED`, GCS artifacts present, Drive OUTPUT PDF present, persisted state `pdf_uri` / `metadata.report_file_id` match).
 - [ ] Review Cloud Logging for `ingest_received → split_done → ocr_lro_finished → summary_done → pdf_writer_complete → drive_upload_complete`.
 - [ ] Ensure alert policies deployed (`gcloud monitoring policies create --policy-from-file=infra/monitoring/alert_policies.yaml`).
 - [ ] Validate IAM via `infra/iam.sh` and `gcloud projects get-iam-policy`.

@@ -20,7 +20,7 @@ from pydantic import (
     field_validator,
 )
 
-from src.errors import ValidationError
+from src.errors import DriveServiceError, ValidationError
 from src.services.pipeline import (
     DuplicateJobError,
     PipelineJobCreate,
@@ -30,6 +30,7 @@ from src.services.pipeline import (
     extract_trace_id,
     job_public_view,
 )
+from src.utils.logging_utils import structured_log
 
 router = APIRouter()
 _INGEST_LOG = logging.getLogger("ingest")
@@ -88,6 +89,15 @@ class JobEventPayload(BaseModel):
     lro_name: str | None = Field(default=None, alias="lroName")
     last_error: dict[str, Any] | None = Field(default=None, alias="lastError")
     metadata_patch: dict[str, Any] | None = Field(default=None, alias="metadataPatch")
+
+    model_config = {"populate_by_name": True}
+
+
+class DriveUploadRequest(BaseModel):
+    """Internal request payload for uploading generated PDFs to Drive."""
+
+    pdf_uri: str | None = Field(default=None, alias="pdfUri")
+    report_name: str | None = Field(default=None, alias="reportName")
 
     model_config = {"populate_by_name": True}
 
@@ -198,6 +208,42 @@ async def _parse_ingest_request(request: Request) -> IngestRequest:
         return IngestRequest(**payload_dict)
     except PydanticValidationError as exc:
         raise ValidationError(f"Invalid ingest payload: {exc}") from exc
+
+
+def _require_internal_event_token(request: Request) -> None:
+    expected_token = request.app.state.internal_event_token
+    provided_tokens = (
+        request.headers.get("x-internal-event-token", ""),
+        request.headers.get("x-internal-token", ""),
+    )
+    token_is_valid = bool(expected_token) and any(
+        token and secrets.compare_digest(token, expected_token)
+        for token in provided_tokens
+    )
+    if not token_is_valid:
+        raise HTTPException(status_code=401, detail="Missing or invalid internal token")
+
+
+def _parse_gcs_uri(gcs_uri: str) -> tuple[str, str]:
+    token = gcs_uri.strip()
+    if not token.startswith("gs://"):
+        raise ValueError("pdfUri must start with gs://")
+    bucket_and_name = token.removeprefix("gs://")
+    bucket, sep, object_name = bucket_and_name.partition("/")
+    if not bucket or not sep or not object_name:
+        raise ValueError("pdfUri must be gs://bucket/object")
+    return bucket, object_name
+
+
+def _download_pdf_from_gcs(gcs_uri: str) -> bytes:
+    try:
+        from google.cloud import storage  # type: ignore
+    except Exception as exc:  # pragma: no cover - optional dependency
+        raise RuntimeError(f"google-cloud-storage unavailable: {exc}") from exc
+
+    bucket_name, object_name = _parse_gcs_uri(gcs_uri)
+    blob = storage.Client().bucket(bucket_name).blob(object_name)
+    return blob.download_as_bytes()
 
 
 @router.post("", tags=["ingest"])
@@ -405,19 +451,82 @@ def _merge_metadata(base: Dict[str, Any], patch: Dict[str, Any]) -> Dict[str, An
     return merged
 
 
+@router.post("/internal/jobs/{job_id}/upload-report", tags=["ingest"])
+async def upload_report_to_drive(
+    request: Request, job_id: str, payload: DriveUploadRequest
+):
+    _require_internal_event_token(request)
+
+    state_store: PipelineStateStore = request.app.state.state_store
+    job = state_store.get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    write_to_drive = os.getenv("WRITE_TO_DRIVE", "true").strip().lower() == "true"
+    if not write_to_drive:
+        raise HTTPException(status_code=503, detail="Drive upload disabled")
+
+    raw_pdf_uri = payload.pdf_uri or job.pdf_uri
+    pdf_uri = raw_pdf_uri.strip() if isinstance(raw_pdf_uri, str) else ""
+    if not pdf_uri:
+        raise HTTPException(status_code=400, detail="pdfUri is required")
+
+    report_name = (
+        payload.report_name.strip()
+        if isinstance(payload.report_name, str) and payload.report_name.strip()
+        else f"summary-{job_id}.pdf"
+    )
+
+    try:
+        pdf_bytes = _download_pdf_from_gcs(pdf_uri)
+    except (RuntimeError, ValueError) as exc:
+        raise HTTPException(
+            status_code=502, detail="Failed to download generated PDF from GCS"
+        ) from exc
+
+    try:
+        drive_file_id = request.app.state.drive_client.upload_pdf(
+            file_bytes=pdf_bytes,
+            report_name=report_name,
+            log_context={
+                "job_id": job_id,
+                "phase": "workflow_drive_upload",
+                "pdf_uri": pdf_uri,
+            },
+        )
+    except (DriveServiceError, RuntimeError, ValueError) as exc:
+        _INGEST_LOG.exception(
+            "workflow_drive_upload_failed",
+            extra={"job_id": job_id, "pdf_uri": pdf_uri},
+        )
+        raise HTTPException(
+            status_code=502, detail="Failed to upload PDF report to Drive"
+        ) from exc
+
+    structured_log(
+        _INGEST_LOG,
+        logging.INFO,
+        "workflow_drive_upload_complete",
+        job_id=job_id,
+        trace_id=job.trace_id,
+        request_id=job.request_id,
+        stage="DRIVE_UPLOAD",
+        pdf_uri=pdf_uri,
+        report_file_id=drive_file_id,
+    )
+
+    return JSONResponse(
+        {
+            "job_id": job_id,
+            "pdf_uri": pdf_uri,
+            "report_file_id": drive_file_id,
+        }
+    )
+
+
 @router.post("/internal/jobs/{job_id}/events", tags=["ingest"])
 async def record_job_event(request: Request, job_id: str, event: JobEventPayload):
-    expected_token = request.app.state.internal_event_token
-    provided_tokens = (
-        request.headers.get("x-internal-event-token", ""),
-        request.headers.get("x-internal-token", ""),
-    )
-    token_is_valid = bool(expected_token) and any(
-        token and secrets.compare_digest(token, expected_token)
-        for token in provided_tokens
-    )
-    if not token_is_valid:
-        raise HTTPException(status_code=401, detail="Missing or invalid internal token")
+    _require_internal_event_token(request)
 
     state_store: PipelineStateStore = request.app.state.state_store
     job = state_store.get_job(job_id)

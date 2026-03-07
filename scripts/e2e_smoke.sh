@@ -5,7 +5,9 @@ usage() {
   cat <<'EOF'
 Usage: scripts/e2e_smoke.sh [--dry-run] [--project-id ID] [--region REGION]
                             [--workflow-name NAME] [--scheduler-job NAME]
-                            [--drive-folder-id ID] [--service-account EMAIL]
+                            [--drive-folder-id ID] [--drive-output-folder-id ID]
+                            [--service-account EMAIL]
+                            [--state-bucket BUCKET] [--state-prefix PREFIX]
                             [--output-bucket BUCKET] [--timeout-seconds N]
                             [--poll-seconds N]
 
@@ -40,8 +42,11 @@ REGION="us-central1"
 WORKFLOW_NAME="docai-pipeline"
 SCHEDULER_JOB="mcc-drive-poller"
 DRIVE_FOLDER_ID="1eyMO0126VfLBK3bBQEpWlVOL6tWxriCE"
+DRIVE_OUTPUT_FOLDER_ID="130jJzsl3OBzMD8weGfBOaXikfEnD2KVg"
 SERVICE_ACCOUNT_EMAIL="mcc-orch-sa@quantify-agent.iam.gserviceaccount.com"
 OUTPUT_BUCKET="mcc-output"
+STATE_BUCKET="mcc-state-quantify-agent-us-central1-322786"
+STATE_PREFIX="pipeline-state"
 TIMEOUT_SECONDS=600
 POLL_SECONDS=10
 DRY_RUN=0
@@ -72,8 +77,20 @@ while [[ $# -gt 0 ]]; do
       DRIVE_FOLDER_ID="$2"
       shift 2
       ;;
+    --drive-output-folder-id)
+      DRIVE_OUTPUT_FOLDER_ID="$2"
+      shift 2
+      ;;
     --service-account)
       SERVICE_ACCOUNT_EMAIL="$2"
+      shift 2
+      ;;
+    --state-bucket)
+      STATE_BUCKET="$2"
+      shift 2
+      ;;
+    --state-prefix)
+      STATE_PREFIX="$2"
       shift 2
       ;;
     --output-bucket)
@@ -128,6 +145,8 @@ DRY RUN ONLY (no cloud actions):
   - Verify artifacts:
       gs://${OUTPUT_BUCKET}/summaries/<job_id>.json
       gs://${OUTPUT_BUCKET}/pdf/<job_id>.pdf
+      Drive folder ${DRIVE_OUTPUT_FOLDER_ID}: summary-<job_id>.pdf
+      gs://${STATE_BUCKET}/${STATE_PREFIX}/jobs/<job_id>.json (pdf_uri + metadata.report_file_id)
 EOF
   exit 0
 fi
@@ -202,7 +221,11 @@ WORKFLOW_END=""
 JOB_ID=""
 
 while [[ ${SECONDS} -lt ${DEADLINE} ]]; do
-  mapfile -t EXECUTION_NAMES < <(
+  EXECUTION_NAMES=()
+  while IFS= read -r execution_name; do
+    [[ -n "${execution_name}" ]] || continue
+    EXECUTION_NAMES+=("${execution_name}")
+  done < <(
     gcloud workflows executions list "${WORKFLOW_NAME}" \
       --location "${REGION}" \
       --project "${PROJECT_ID}" \
@@ -277,16 +300,61 @@ fi
 
 SUMMARY_URI="gs://${OUTPUT_BUCKET}/summaries/${JOB_ID}.json"
 PDF_URI="gs://${OUTPUT_BUCKET}/pdf/${JOB_ID}.pdf"
+REPORT_NAME="summary-${JOB_ID}.pdf"
+STATE_URI="gs://${STATE_BUCKET}/${STATE_PREFIX}/jobs/${JOB_ID}.json"
 
 echo "Verifying output artifacts exist"
 gcloud storage ls "${SUMMARY_URI}" "${PDF_URI}" >/dev/null
 
+echo "Verifying Drive output artifact exists in folder ${DRIVE_OUTPUT_FOLDER_ID}"
+OUTPUT_LOOKUP_RESPONSE="$(
+  curl -sS -G \
+    -H "Authorization: Bearer ${DRIVE_TOKEN}" \
+    --data-urlencode "q='${DRIVE_OUTPUT_FOLDER_ID}' in parents and name = '${REPORT_NAME}' and trashed = false" \
+    --data-urlencode "supportsAllDrives=true" \
+    --data-urlencode "includeItemsFromAllDrives=true" \
+    --data-urlencode "corpora=allDrives" \
+    --data-urlencode "fields=files(id,name,parents,driveId,createdTime)" \
+    "https://www.googleapis.com/drive/v3/files"
+)"
+REPORT_FILE_ID="$(
+  echo "${OUTPUT_LOOKUP_RESPONSE}" \
+    | jq -r --arg report_name "${REPORT_NAME}" '.files[]? | select(.name == $report_name) | .id' \
+    | head -n1
+)"
+if [[ -z "${REPORT_FILE_ID}" ]]; then
+  echo "Drive output artifact not found." >&2
+  echo "${OUTPUT_LOOKUP_RESPONSE}" >&2
+  exit 10
+fi
+
+echo "Verifying persisted pipeline state in ${STATE_URI}"
+STATE_JSON="$(gcloud storage cat "${STATE_URI}")"
+STATE_PDF_URI="$(echo "${STATE_JSON}" | jq -r '.pdf_uri // empty')"
+STATE_REPORT_FILE_ID="$(echo "${STATE_JSON}" | jq -r '.metadata.report_file_id // empty')"
+
+if [[ "${STATE_PDF_URI}" != "${PDF_URI}" ]]; then
+  echo "Persisted pipeline state pdf_uri mismatch." >&2
+  echo "expected=${PDF_URI}" >&2
+  echo "actual=${STATE_PDF_URI}" >&2
+  exit 11
+fi
+
+if [[ "${STATE_REPORT_FILE_ID}" != "${REPORT_FILE_ID}" ]]; then
+  echo "Persisted pipeline state report_file_id mismatch." >&2
+  echo "expected=${REPORT_FILE_ID}" >&2
+  echo "actual=${STATE_REPORT_FILE_ID}" >&2
+  exit 12
+fi
+
 echo "SMOKE_E2E_OK"
 echo "drive_file_id=${DRIVE_FILE_ID}"
 echo "drive_file_name=${DRIVE_FILE_NAME}"
+echo "report_file_id=${REPORT_FILE_ID}"
 echo "workflow_execution=${WORKFLOW_EXECUTION}"
 echo "workflow_start=${WORKFLOW_START}"
 echo "workflow_end=${WORKFLOW_END}"
 echo "job_id=${JOB_ID}"
 echo "summary_uri=${SUMMARY_URI}"
 echo "pdf_uri=${PDF_URI}"
+echo "state_uri=${STATE_URI}"

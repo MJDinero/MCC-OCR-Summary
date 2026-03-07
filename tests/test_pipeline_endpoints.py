@@ -3,6 +3,8 @@ import json
 
 from fastapi.testclient import TestClient
 
+import src.main as main_module
+from src.api import ingest as ingest_module
 from src.main import create_app
 from src.services.pipeline import PipelineStatus
 
@@ -198,6 +200,130 @@ def test_internal_event_updates_status(monkeypatch):
     assert job.status is PipelineStatus.SUMMARY_DONE
     assert job.metadata["summary_uri"] == "gs://bucket/summary.json"
     assert job.history[-1]["stage"] == "summary"
+
+
+def test_internal_event_persists_pdf_uri_and_metadata_patch(monkeypatch):
+    app, _ = _build_app(monkeypatch)
+    client = TestClient(app)
+    ingest = client.post("/ingest", json=_ingest_payload())
+    job_id = ingest.json()["job_id"]
+    headers = {"X-Internal-Event-Token": "secret-token"}
+
+    resp = client.post(
+        f"/ingest/internal/jobs/{job_id}/events",
+        headers=headers,
+        json={
+            "status": "UPLOADED",
+            "stage": "drive-upload",
+            "pdfUri": f"gs://summary-test/pdf/{job_id}.pdf",
+            "metadataPatch": {"report_file_id": "drive-report-123"},
+        },
+    )
+
+    assert resp.status_code == 200
+    job = app.state.state_store.get_job(job_id)
+    assert job is not None
+    assert job.pdf_uri == f"gs://summary-test/pdf/{job_id}.pdf"
+    assert job.metadata["report_file_id"] == "drive-report-123"
+
+    status = client.get(f"/ingest/status/{job_id}")
+    assert status.status_code == 200
+    status_body = status.json()
+    assert status_body["pdf_uri"] == f"gs://summary-test/pdf/{job_id}.pdf"
+    assert status_body["metadata"]["report_file_id"] == "drive-report-123"
+
+
+def test_internal_drive_upload_uploads_gcs_pdf(monkeypatch):
+    app, _ = _build_app(monkeypatch)
+    client = TestClient(app)
+    ingest = client.post("/ingest", json=_ingest_payload())
+    job_id = ingest.json()["job_id"]
+    job = app.state.state_store.get_job(job_id)
+    assert job is not None
+
+    upload_call: dict[str, object] = {}
+    log_events: list[dict[str, object]] = []
+
+    monkeypatch.setattr(
+        ingest_module,
+        "structured_log",
+        lambda _logger, _level, event, **fields: log_events.append(
+            {"event": event, "fields": fields}
+        ),
+    )
+
+    def _fake_upload_pdf(
+        file_bytes, report_name, *, parent_folder_id=None, log_context=None
+    ):
+        upload_call.update(
+            {
+                "file_bytes": file_bytes,
+                "report_name": report_name,
+                "parent_folder_id": parent_folder_id,
+                "log_context": log_context,
+            }
+        )
+        return "drive-report-123"
+
+    monkeypatch.setattr(main_module.drive_client_module, "upload_pdf", _fake_upload_pdf)
+    monkeypatch.setattr(
+        ingest_module, "_download_pdf_from_gcs", lambda _uri: b"%PDF-1.4\nmock\n%%EOF"
+    )
+
+    headers = {"X-Internal-Event-Token": "secret-token"}
+    payload = {
+        "pdfUri": f"gs://summary-test/pdf/{job_id}.pdf",
+        "reportName": "summary-custom.pdf",
+    }
+    resp = client.post(
+        f"/ingest/internal/jobs/{job_id}/upload-report", headers=headers, json=payload
+    )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["job_id"] == job_id
+    assert body["pdf_uri"] == payload["pdfUri"]
+    assert body["report_file_id"] == "drive-report-123"
+    assert upload_call["report_name"] == "summary-custom.pdf"
+    assert upload_call["parent_folder_id"] == "out"
+    assert isinstance(upload_call["file_bytes"], bytes)
+    assert upload_call["log_context"] == {
+        "component": "process_api",
+        "job_id": job_id,
+        "phase": "workflow_drive_upload",
+        "pdf_uri": payload["pdfUri"],
+    }
+    assert log_events == [
+        {
+            "event": "workflow_drive_upload_complete",
+            "fields": {
+                "job_id": job_id,
+                "trace_id": job.trace_id,
+                "request_id": job.request_id,
+                "stage": "DRIVE_UPLOAD",
+                "pdf_uri": payload["pdfUri"],
+                "report_file_id": "drive-report-123",
+            },
+        }
+    ]
+
+
+def test_internal_drive_upload_respects_write_to_drive_flag(monkeypatch):
+    monkeypatch.setenv("WRITE_TO_DRIVE", "false")
+    app, _ = _build_app(monkeypatch)
+    client = TestClient(app)
+    ingest = client.post("/ingest", json=_ingest_payload())
+    job_id = ingest.json()["job_id"]
+    headers = {"X-Internal-Event-Token": "secret-token"}
+
+    resp = client.post(
+        f"/ingest/internal/jobs/{job_id}/upload-report",
+        headers=headers,
+        json={"pdfUri": f"gs://summary-test/pdf/{job_id}.pdf"},
+    )
+
+    assert resp.status_code == 503
+    assert resp.json()["detail"] == "Drive upload disabled"
 
 
 def test_internal_event_accepts_legacy_token_header(monkeypatch):

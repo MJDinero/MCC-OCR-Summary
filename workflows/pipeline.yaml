@@ -480,6 +480,7 @@ main:
                             - ${jobId}
                             - "--if-generation-match"
                             - "0"
+                            - "--skip-signed-url"
                   - invokePdfJob:
                       call: googleapis.run.v2.projects.locations.jobs.run
                       args:
@@ -521,8 +522,21 @@ main:
                           status: PDF_DONE
                           stage: PDF_JOB
                           message: "PDF generation complete"
+                          pdfUri: ${finalPdfUri}
                           extra:
                             pdf_uri: ${finalPdfUri}
+            - uploadPdfToDrive:
+                call: http.post
+                args:
+                  url: ${workflowBase + "/ingest/internal/jobs/" + jobId + "/upload-report"}
+                  auth:
+                    type: OIDC
+                    audience: ${workflowBase}
+                  headers: ${httpHeaders}
+                  body:
+                    pdfUri: ${finalPdfUri}
+                    reportName: ${"summary-" + jobId + ".pdf"}
+                result: driveUploadResult
             - markUploaded:
                 call: http.post
                 args:
@@ -533,10 +547,13 @@ main:
                   headers: ${httpHeaders}
                   body:
                     status: UPLOADED
-                    stage: PDF_JOB
-                    message: "Signed PDF available"
+                    stage: DRIVE_UPLOAD
+                    message: "PDF uploaded to Drive output folder"
+                    metadataPatch:
+                      report_file_id: ${driveUploadResult.body.report_file_id}
                     extra:
                       pdf_uri: ${finalPdfUri}
+                      report_file_id: ${driveUploadResult.body.report_file_id}
         except:
           as: e
           steps:
