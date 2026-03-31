@@ -32,8 +32,9 @@ import time
 import uuid
 from dataclasses import dataclass, field, asdict
 from enum import Enum
-from typing import Any, Dict, MutableMapping, Protocol, TypedDict
+from typing import Any, Dict, Mapping, MutableMapping, Protocol, TypedDict
 
+from src.utils.error_reporting import sanitize_failure_details
 from src.utils.secrets import resolve_secret_env
 
 try:  # pragma: no cover - optional dependency for GCS persistence
@@ -216,6 +217,95 @@ def _initial_history_entry(status: PipelineStatus) -> JobHistoryEntry:
     return JobHistoryEntry(status=status.value, timestamp=_now_ts())
 
 
+def _status_needs_failure_redaction(
+    status: PipelineStatus,
+    updates: Mapping[str, Any] | None,
+) -> bool:
+    if status is PipelineStatus.FAILED:
+        return True
+    return bool(isinstance(updates, Mapping) and updates.get("last_error"))
+
+
+def _normalise_status_write(
+    *,
+    status: PipelineStatus,
+    stage: str | None,
+    message: str | None,
+    extra: Dict[str, Any] | None,
+    updates: Dict[str, Any] | None,
+) -> tuple[str | None, Dict[str, Any] | None, Dict[str, Any] | None]:
+    safe_message = message
+    safe_extra = dict(extra) if extra else None
+    safe_updates = dict(updates) if updates else None
+
+    if not _status_needs_failure_redaction(status, safe_updates):
+        return safe_message, safe_extra, safe_updates
+
+    last_error = (
+        safe_updates.get("last_error")
+        if isinstance(safe_updates, Mapping)
+        and isinstance(safe_updates.get("last_error"), Mapping)
+        else None
+    )
+    safe_message, safe_extra, safe_last_error = sanitize_failure_details(
+        stage=stage,
+        message=message,
+        extra=safe_extra,
+        last_error=last_error,
+    )
+    if safe_updates is None:
+        safe_updates = {}
+    if safe_last_error is not None:
+        safe_updates["last_error"] = safe_last_error
+    elif "last_error" in safe_updates:
+        safe_updates.pop("last_error", None)
+    return safe_message, safe_extra, safe_updates
+
+
+def _public_history_entry(entry: JobHistoryEntry) -> JobHistoryEntry:
+    safe_entry: JobHistoryEntry = JobHistoryEntry(
+        status=entry["status"],
+        timestamp=entry["timestamp"],
+    )
+    stage = entry.get("stage")
+    if stage:
+        safe_entry["stage"] = stage
+    message = entry.get("message")
+    extra = entry.get("extra")
+    has_failure_payload = bool(
+        entry.get("status") == PipelineStatus.FAILED.value
+        or (isinstance(extra, Mapping) and extra.get("error") is not None)
+    )
+    if has_failure_payload:
+        safe_message, safe_extra, _ = sanitize_failure_details(
+            stage=stage,
+            message=message,
+            extra=extra if isinstance(extra, Mapping) else None,
+        )
+        if safe_message:
+            safe_entry["message"] = safe_message
+        if safe_extra:
+            safe_entry["extra"] = safe_extra
+        return safe_entry
+
+    if message:
+        safe_entry["message"] = message
+    if extra:
+        safe_entry["extra"] = dict(extra)
+    return safe_entry
+
+
+def _public_last_error(last_error: Mapping[str, Any] | None) -> Dict[str, Any] | None:
+    if not isinstance(last_error, Mapping):
+        return None
+    _safe_message, _safe_extra, safe_last_error = sanitize_failure_details(
+        stage=str(last_error.get("stage")) if last_error.get("stage") else None,
+        message=None,
+        last_error=last_error,
+    )
+    return safe_last_error
+
+
 class InMemoryStateStore(PipelineStateStore):
     """Thread-safe in-memory store used for tests and local development."""
 
@@ -300,6 +390,13 @@ class InMemoryStateStore(PipelineStateStore):
     ) -> PipelineJob:
         with self._lock:
             job = self._jobs[job_id]
+            safe_message, safe_extra, safe_updates = _normalise_status_write(
+                status=status,
+                stage=stage,
+                message=message,
+                extra=extra,
+                updates=updates,
+            )
             job.status = status
             job.updated_at = _now_ts()
             entry: JobHistoryEntry = JobHistoryEntry(
@@ -308,13 +405,13 @@ class InMemoryStateStore(PipelineStateStore):
             )
             if stage:
                 entry["stage"] = stage
-            if message:
-                entry["message"] = message
-            if extra:
-                entry["extra"] = extra
+            if safe_message:
+                entry["message"] = safe_message
+            if safe_extra:
+                entry["extra"] = safe_extra
             job.history.append(entry)
-            if updates:
-                for key, value in updates.items():
+            if safe_updates:
+                for key, value in safe_updates.items():
                     setattr(job, key, value)
             log_extra: Dict[str, Any] = {
                 "job_id": job.job_id,
@@ -323,12 +420,16 @@ class InMemoryStateStore(PipelineStateStore):
             }
             if stage is not None:
                 log_extra["stage"] = stage
-            if message is not None:
-                log_extra["status_message"] = message
-            if extra:
+            if safe_message is not None:
+                log_extra["status_message"] = safe_message
+            if safe_extra:
                 # avoid mutating caller supplied dict
                 log_extra.update(
-                    {k: v for k, v in extra.items() if k not in {"message", "asctime"}}
+                    {
+                        k: v
+                        for k, v in safe_extra.items()
+                        if k not in {"message", "asctime"}
+                    }
                 )
             LOG.info("pipeline_status_transition", extra=log_extra)
             return _clone_job(job)
@@ -507,6 +608,13 @@ class GCSStateStore(PipelineStateStore):  # pragma: no cover - exercised via int
             current_generation = blob.generation
             payload = json.loads(blob.download_as_bytes().decode("utf-8"))
             job = _job_from_dict(payload)
+            safe_message, safe_extra, safe_updates = _normalise_status_write(
+                status=status,
+                stage=stage,
+                message=message,
+                extra=extra,
+                updates=updates,
+            )
             job.status = status
             job.updated_at = _now_ts()
             entry: JobHistoryEntry = JobHistoryEntry(
@@ -515,13 +623,13 @@ class GCSStateStore(PipelineStateStore):  # pragma: no cover - exercised via int
             )
             if stage:
                 entry["stage"] = stage
-            if message:
-                entry["message"] = message
-            if extra:
-                entry["extra"] = extra
+            if safe_message:
+                entry["message"] = safe_message
+            if safe_extra:
+                entry["extra"] = safe_extra
             job.history.append(entry)
-            if updates:
-                for key, value in updates.items():
+            if safe_updates:
+                for key, value in safe_updates.items():
                     setattr(job, key, value)
             try:
                 self._write_job(job, if_generation_match=current_generation)
@@ -532,13 +640,13 @@ class GCSStateStore(PipelineStateStore):  # pragma: no cover - exercised via int
                 }
                 if stage is not None:
                     log_extra["stage"] = stage
-                if message is not None:
-                    log_extra["status_message"] = message
-                if extra:
+                if safe_message is not None:
+                    log_extra["status_message"] = safe_message
+                if safe_extra:
                     log_extra.update(
                         {
                             k: v
-                            for k, v in extra.items()
+                            for k, v in safe_extra.items()
                             if k not in {"message", "asctime"}
                         }
                     )
@@ -844,10 +952,10 @@ def job_public_view(job: PipelineJob) -> Dict[str, Any]:
         "workflow_execution": job.workflow_execution,
         "pdf_uri": job.pdf_uri,
         "signed_url": job.signed_url,
-        "history": list(job.history),
+        "history": [_public_history_entry(entry) for entry in job.history],
         "retries": dict(job.retries),
         "metadata": dict(job.metadata),
-        "last_error": None if job.last_error is None else dict(job.last_error),
+        "last_error": _public_last_error(job.last_error),
         "created_at": job.created_at,
         "updated_at": job.updated_at,
     }

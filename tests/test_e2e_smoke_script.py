@@ -4,6 +4,8 @@ import shutil
 import subprocess
 from pathlib import Path
 
+from pypdf import PdfReader
+
 
 SCRIPT_PATH = Path("scripts/e2e_smoke.sh").resolve()
 
@@ -111,6 +113,50 @@ def test_resolve_python_falls_back_to_system_python(tmp_path: Path) -> None:
 
     assert result.returncode == 0
     assert result.stdout.strip() == expected
+
+
+def test_render_synthetic_smoke_text_is_supervisor_oriented() -> None:
+    result = _source_script('render_synthetic_smoke_text "2026-03-07T17-21-32Z"')
+
+    assert result.returncode == 0
+    text = result.stdout
+    assert "Patient Name: Jordan Carter" in text
+    assert "Date of Visit: 2026-03-07" in text
+    assert "Medical Record Number: SYN-20260307" in text
+    assert "Reason for Visit:" in text
+    assert "History of Present Illness:" in text
+    assert "Examination:" in text
+    assert "Assessment:" in text
+    assert "Diagnoses:" in text
+    assert "Medications:" in text
+    assert "Plan:" in text
+    assert "Follow-up:" in text
+    assert "Generated UTC:" not in text
+    assert "NON-PHI Fictional Clinical Follow-Up" not in text
+    assert text.lower().count("low back pain") >= 3
+    assert text.lower().count("lumbar strain") >= 2
+    assert text.lower().count("muscle spasm") >= 2
+    assert "ibuprofen 400 mg" in text
+    assert "cyclobenzaprine 5 mg" in text
+
+
+def test_write_synthetic_pdf_embeds_extractable_text(tmp_path: Path) -> None:
+    text_path = tmp_path / "synthetic.txt"
+    pdf_path = tmp_path / "synthetic.pdf"
+    text_path.write_text(
+        "Paragraph one with generic smoke-test text.\n\n"
+        "Paragraph two adds additional readable narrative for OCR.\n",
+        encoding="utf-8",
+    )
+
+    result = _source_script(
+        f'write_synthetic_pdf ".venv/bin/python" "{pdf_path}" "{text_path}"'
+    )
+
+    assert result.returncode == 0
+    extracted = "".join(page.extract_text() or "" for page in PdfReader(str(pdf_path)).pages)
+    assert "Paragraph one with generic smoke-test text." in extracted
+    assert "Paragraph two adds additional readable narrative for OCR." in extracted
 
 
 def test_build_artifact_uri_helpers_are_deterministic() -> None:

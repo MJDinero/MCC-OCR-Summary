@@ -37,6 +37,68 @@ resolve_python() {
   echo "python"
 }
 
+render_synthetic_smoke_text() {
+  local run_ts="$1"
+  local run_date="${run_ts%%T*}"
+
+  cat <<EOF
+Patient Name: Jordan Carter
+Date of Visit: ${run_date}
+Medical Record Number: SYN-${run_date//-/}
+
+Reason for Visit: Follow-up visit for low back pain after lifting storage boxes at work. Jordan Carter reports low back pain, lumbar strain, stiffness, and intermittent muscle spasm. Symptoms improve with rest, gentle stretching, and heat, and worsen after bending, lifting, or prolonged standing.
+
+History of Present Illness: The patient is improving but still has morning stiffness and pain with repeated lifting. Symptoms remain localized to the low back without leg weakness, bowel changes, or bladder changes.
+
+Examination: Lumbar paraspinal tenderness, reduced lumbar range of motion, mild muscle spasm, normal gait, normal strength, intact sensation, and negative straight leg raise bilaterally.
+
+Assessment: Low back pain with lumbar strain and associated muscle spasm after repetitive lifting. Symptoms are improving with conservative treatment and no red flag neurologic findings are present.
+
+Diagnoses: Low back pain; lumbar strain; muscle spasm.
+
+Medications: Ibuprofen 400 mg as needed and cyclobenzaprine 5 mg at bedtime.
+
+Plan: Continue ibuprofen 400 mg as needed, cyclobenzaprine 5 mg at bedtime, heating pad, daily stretching exercises, and modified duty for one week.
+
+Follow-up: Return in two weeks for reassessment of low back pain and lumbar strain.
+EOF
+}
+
+write_synthetic_pdf() {
+  local python_bin="$1"
+  local pdf_path="$2"
+  local text_path="$3"
+
+  "${python_bin}" - "${pdf_path}" "${text_path}" <<'PY'
+import sys
+import textwrap
+from pathlib import Path
+
+from reportlab.lib.pagesizes import letter
+from reportlab.pdfgen import canvas
+
+pdf_path = sys.argv[1]
+text_path = sys.argv[2]
+paragraphs = Path(text_path).read_text(encoding="utf-8").splitlines()
+
+doc = canvas.Canvas(pdf_path, pagesize=letter)
+y = 760
+doc.setFont("Helvetica", 13)
+for raw_line in paragraphs:
+    wrapped = textwrap.wrap(raw_line, width=78, break_long_words=False) or [""]
+    for line in wrapped:
+        if y < 72:
+            doc.showPage()
+            doc.setFont("Helvetica", 13)
+            y = 760
+        doc.drawString(72, y, line)
+        y -= 20
+    if raw_line.strip():
+        y -= 10
+doc.save()
+PY
+}
+
 build_summary_uri() {
   printf 'gs://%s/summaries/%s.json\n' "$1" "$2"
 }
@@ -278,6 +340,8 @@ main() {
   local PDF_PATH
   local PDF_NAME
   local PYTHON_BIN
+  local SYNTHETIC_TEXT
+  local TEXT_PATH
 
   RUN_TS="$(date -u +%Y-%m-%dT%H-%M-%SZ)"
   RUN_START_TS="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -287,7 +351,9 @@ main() {
 
   PDF_PATH="${TMP_DIR}/synthetic-non-phi-${RUN_TS}.pdf"
   PDF_NAME="$(basename "${PDF_PATH}")"
+  TEXT_PATH="${TMP_DIR}/synthetic-non-phi-${RUN_TS}.txt"
   PYTHON_BIN="$(resolve_python)"
+  SYNTHETIC_TEXT="$(render_synthetic_smoke_text "${RUN_TS}")"
 
   if [[ "${DRY_RUN}" == "1" ]]; then
     cat <<EOF
@@ -323,21 +389,8 @@ EOF
   require_cmd jq
 
   echo "Generating synthetic NON-PHI PDF at ${PDF_PATH}"
-  "${PYTHON_BIN}" - "${PDF_PATH}" "${RUN_TS}" <<'PY'
-import sys
-from reportlab.lib.pagesizes import letter
-from reportlab.pdfgen import canvas
-
-path = sys.argv[1]
-ts = sys.argv[2]
-
-doc = canvas.Canvas(path, pagesize=letter)
-doc.setFont("Helvetica", 12)
-doc.drawString(72, 760, "MCC OCR Smoke Test - NON-PHI Synthetic Document")
-doc.drawString(72, 736, f"Generated UTC: {ts}")
-doc.drawString(72, 712, "Content: synthetic operator proof only; no customer data.")
-doc.save()
-PY
+  printf '%s\n' "${SYNTHETIC_TEXT}" > "${TEXT_PATH}"
+  write_synthetic_pdf "${PYTHON_BIN}" "${PDF_PATH}" "${TEXT_PATH}"
 
   echo "Minting Drive-scoped token for service account ${SERVICE_ACCOUNT_EMAIL}"
   local BASE_TOKEN

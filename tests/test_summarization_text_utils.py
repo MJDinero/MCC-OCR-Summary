@@ -72,6 +72,12 @@ def test_prepare_clinical_findings_and_vitals_edge_cases():
     assert clinical == ["Objective tenderness present"]
     assert text_utils.summarize_vitals("") is None
     assert text_utils.summarize_vitals("no vital data here") is None
+    assert (
+        text_utils.summarize_vitals(
+            "Date of Visit: 2026-03-07 Medical Record Number: SYN-20260307"
+        )
+        is None
+    )
     assert not text_utils.looks_like_vitals_table("")
 
 

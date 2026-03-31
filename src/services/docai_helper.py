@@ -139,6 +139,75 @@ def clean_ocr_output(raw_text: str) -> str:
     return cleaned.strip()
 
 
+def _extract_layout_text(document_text: str, layout: Dict[str, Any]) -> str:
+    if not isinstance(layout, dict):
+        return ""
+    anchor = layout.get("textAnchor")
+    if not isinstance(anchor, dict):
+        return ""
+    parts: list[str] = []
+    for segment in anchor.get("textSegments") or []:
+        if not isinstance(segment, dict):
+            continue
+        try:
+            start_index = int(segment.get("startIndex") or 0)
+            end_index = int(segment.get("endIndex") or 0)
+        except (TypeError, ValueError):
+            continue
+        if end_index <= start_index:
+            continue
+        parts.append(document_text[start_index:end_index])
+    return "".join(parts).strip()
+
+
+def _merge_layout_fragments(fragments: Iterable[str]) -> list[str]:
+    merged: list[str] = []
+    for fragment in fragments:
+        cleaned = fragment.strip()
+        if not cleaned:
+            continue
+        if merged and not re.search(r"[.!?:]$", merged[-1]) and cleaned[:1].islower():
+            merged[-1] = f"{merged[-1]} {cleaned}".strip()
+            continue
+        merged.append(cleaned)
+    return merged
+
+
+def _extract_page_text(document_text: str, page: Dict[str, Any]) -> str:
+    if not isinstance(page, dict):
+        return ""
+
+    paragraphs = page.get("paragraphs")
+    paragraph_texts = _merge_layout_fragments(
+        _extract_layout_text(document_text, paragraph.get("layout") or {})
+        for paragraph in (paragraphs if isinstance(paragraphs, list) else [])
+        if isinstance(paragraph, dict)
+    )
+    if paragraph_texts:
+        return "\n\n".join(paragraph_texts).strip()
+
+    lines = page.get("lines")
+    line_texts = _merge_layout_fragments(
+        _extract_layout_text(document_text, line.get("layout") or {})
+        for line in (lines if isinstance(lines, list) else [])
+        if isinstance(line, dict)
+    )
+    if line_texts:
+        return "\n".join(line_texts).strip()
+
+    blocks = page.get("blocks")
+    block_texts = _merge_layout_fragments(
+        _extract_layout_text(document_text, block.get("layout") or {})
+        for block in (blocks if isinstance(blocks, list) else [])
+        if isinstance(block, dict)
+    )
+    if block_texts:
+        return "\n\n".join(block_texts).strip()
+
+    page_text = page.get("text")
+    return str(page_text).strip() if isinstance(page_text, str) else ""
+
+
 class _DocAIClientProtocol(Protocol):  # pragma: no cover - structural typing aid
     def process_document(self, request: Dict[str, Any]) -> Any:  # noqa: D401
         ...
@@ -183,15 +252,14 @@ def _normalise(doc: Dict[str, Any]) -> Dict[str, Any]:
     pages_out: list[dict[str, Any]] = []
     page_texts: list[str] = []
     pages = doc.get("pages") or []
+    full_text_source = doc.get("text") or ""
     for idx, p in enumerate(pages, start=1):
-        text = p.get("layout", {}).get("text", "") if isinstance(p, dict) else ""
-        if not text:
-            # Some simplified fixtures may already provide 'text'
-            text = p.get("text", "") if isinstance(p, dict) else ""
+        text = _extract_page_text(full_text_source, p) if isinstance(p, dict) else ""
         cleaned_text = _strip_noise(text)
         pages_out.append({"page_number": idx, "text": cleaned_text})
         page_texts.append(cleaned_text)
-    full_text_source = doc.get("text") or " ".join(page_texts)
+    if not full_text_source:
+        full_text_source = " ".join(page_texts)
     full_text = _strip_noise(full_text_source)
     return {"text": full_text, "pages": pages_out}
 
@@ -1012,9 +1080,13 @@ def run_splitter(  # pylint: disable=too-many-arguments
                     PipelineStatus.FAILED,
                     stage="DOC_AI_SPLITTER",
                     message=str(exc),
-                    extra={"input_uri": gcs_uri},
+                    extra={"input_uri": gcs_uri, "error_type": type(exc).__name__},
                     updates={
-                        "last_error": {"stage": "docai_splitter", "error": str(exc)}
+                        "last_error": {
+                            "stage": "docai_splitter",
+                            "error": str(exc),
+                            "error_type": type(exc).__name__,
+                        }
                     },
                 )
             except Exception:
@@ -1235,12 +1307,16 @@ def run_batch_ocr(  # pylint: disable=too-many-arguments
                         PipelineStatus.FAILED,
                         stage="DOC_AI_OCR",
                         message=str(exc),
-                        extra={"shard_uri": shard_uri},
+                        extra={
+                            "shard_uri": shard_uri,
+                            "error_type": type(exc).__name__,
+                        },
                         updates={
                             "last_error": {
                                 "stage": "ocr",
                                 "shard_uri": shard_uri,
                                 "error": str(exc),
+                                "error_type": type(exc).__name__,
                             }
                         },
                     )

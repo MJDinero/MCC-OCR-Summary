@@ -43,3 +43,22 @@ def test_metrics_endpoint_available(monkeypatch):
     else:
         # Graceful degradation (endpoint absent)
         assert r.status_code in {404, 500}
+
+
+def test_health_contract_matches_openapi(monkeypatch):
+    app = _build_app(monkeypatch)
+    client = TestClient(app)
+
+    top_level = client.get("/healthz")
+    process_level = client.get("/process/healthz")
+    schema = client.get("/openapi.json")
+
+    assert top_level.status_code == 200
+    assert process_level.status_code == 200
+    assert top_level.json() == {"status": "ok"}
+    assert process_level.json() == {"status": "ok"}
+    paths = schema.json()["paths"]
+    assert "/healthz" in paths
+    assert "/process/healthz" in paths
+    assert "/health" not in paths
+    assert "/" not in paths

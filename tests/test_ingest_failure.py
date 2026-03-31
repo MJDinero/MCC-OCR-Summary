@@ -3,6 +3,7 @@ from fastapi.testclient import TestClient
 
 from src.main import create_app
 from src.services.pipeline import PipelineStatus
+from src.utils.error_reporting import REDACTED_FAILURE_MESSAGE
 
 
 class FailingWorkflowLauncher:
@@ -38,3 +39,8 @@ def test_ingest_marks_job_failed_when_workflow_launch_errors():
     job = app.state.state_store.get_job(job_id)
     assert job.status is PipelineStatus.FAILED
     assert job.last_error["stage"] == "workflow_dispatch"
+    assert job.last_error["error"] == REDACTED_FAILURE_MESSAGE
+
+    status_resp = client.get(f"/ingest/status/{job_id}")
+    assert status_resp.status_code == 200
+    assert status_resp.json()["last_error"]["error"] == REDACTED_FAILURE_MESSAGE

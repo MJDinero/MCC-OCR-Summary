@@ -26,6 +26,8 @@ from src.services.pipeline import (
     create_workflow_launcher_from_env,
 )
 from src.services.summariser_refactored import (
+    AdaptiveSummariser,
+    OpenAIOneShotResponsesBackend,
     OpenAIResponsesBackend,
     RefactoredSummariser,
 )
@@ -161,12 +163,30 @@ def _build_summariser(stub_mode: bool, *, cfg) -> Any:
 
         return _StubSummariser()
 
-    backend = OpenAIResponsesBackend(
-        model=cfg.openai_model or "gpt-4o-mini",
+    chunked_backend = OpenAIResponsesBackend(
+        model=os.getenv("SUMMARY_CHUNKED_MODEL")
+        or cfg.openai_model
+        or "gpt-4.1-mini",
         api_key=cfg.openai_api_key,
     )
-    # Always rely on the refactored hierarchical summariser for production workloads.
-    return RefactoredSummariser(backend=backend)
+    one_shot_backend = OpenAIOneShotResponsesBackend(
+        model=os.getenv("SUMMARY_ONE_SHOT_MODEL") or "gpt-5.4",
+        api_key=cfg.openai_api_key,
+        reasoning_effort=os.getenv("SUMMARY_ONE_SHOT_REASONING_EFFORT") or "none",
+    )
+    chunked_summariser = RefactoredSummariser(backend=chunked_backend)
+    return AdaptiveSummariser(
+        chunked_summariser=chunked_summariser,
+        one_shot_backend=one_shot_backend,
+        requested_strategy=os.getenv("SUMMARY_STRATEGY", "auto"),
+        one_shot_token_threshold=int(
+            os.getenv("SUMMARY_ONE_SHOT_TOKEN_THRESHOLD", "120000")
+        ),
+        one_shot_max_pages=int(os.getenv("SUMMARY_ONE_SHOT_MAX_PAGES", "80")),
+        ocr_noise_ratio_threshold=float(
+            os.getenv("SUMMARY_OCR_NOISE_RATIO_THRESHOLD", "0.18")
+        ),
+    )
 
 
 def _configure_state_store() -> tuple["PipelineStateStore", "WorkflowLauncher"]:

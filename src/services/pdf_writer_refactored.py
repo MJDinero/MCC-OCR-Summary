@@ -499,7 +499,7 @@ def _cli(argv: Optional[Iterable[str]] = None) -> None:
         except Exception as exc:  # pragma: no cover - defensive
             _LOG.exception(
                 "pdf_job_state_init_failed",
-                extra={"job_id": args.job_id, "error": str(exc)},
+                extra={"job_id": args.job_id, "error_type": type(exc).__name__},
             )
             state_store = None
 
@@ -530,8 +530,17 @@ def _cli(argv: Optional[Iterable[str]] = None) -> None:
                     PipelineStatus.FAILED,
                     stage="PDF_JOB",
                     message=str(exc),
-                    extra={"error": str(exc), "phase": "pdf_generation"},
-                    updates={"last_error": {"stage": "pdf_writer", "error": str(exc)}},
+                    extra={
+                        "error_type": type(exc).__name__,
+                        "phase": "pdf_generation",
+                    },
+                    updates={
+                        "last_error": {
+                            "stage": "pdf_writer",
+                            "error": str(exc),
+                            "error_type": type(exc).__name__,
+                        }
+                    },
                 )
             except Exception:  # pragma: no cover - best effort
                 _LOG.exception(
@@ -565,9 +574,16 @@ def _cli(argv: Optional[Iterable[str]] = None) -> None:
                         PipelineStatus.FAILED,
                         stage="PDF_JOB_UPLOAD",
                         message=str(exc),
-                        extra={"error": str(exc), "phase": "pdf_upload"},
+                        extra={
+                            "error_type": type(exc).__name__,
+                            "phase": "pdf_upload",
+                        },
                         updates={
-                            "last_error": {"stage": "pdf_upload", "error": str(exc)}
+                            "last_error": {
+                                "stage": "pdf_upload",
+                                "error": str(exc),
+                                "error_type": type(exc).__name__,
+                            }
                         },
                     )
                 except Exception:  # pragma: no cover - best effort

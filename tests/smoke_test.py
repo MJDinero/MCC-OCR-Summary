@@ -15,7 +15,7 @@ class DummyBackend(ChunkSummaryBackend):
             "care_plan": ["Care plan"],
             "diagnoses": ["Dx"],
             "providers": ["Dr Test"],
-            "medications": ["Med"],
+            "medications": ["Ibuprofen 400mg"],
         }
 
 

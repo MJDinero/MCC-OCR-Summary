@@ -1,5 +1,6 @@
 import base64
 import json
+from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
 
@@ -306,6 +307,168 @@ def test_internal_drive_upload_uploads_gcs_pdf(monkeypatch):
             },
         }
     ]
+
+
+def test_internal_verify_artifact_checks_gcs_uri(monkeypatch):
+    app, _ = _build_app(monkeypatch)
+    client = TestClient(app)
+    ingest = client.post("/ingest", json=_ingest_payload())
+    job_id = ingest.json()["job_id"]
+
+    call: dict[str, object] = {}
+
+    def _fake_exists(gcs_uri: str, *, field_name: str = "gcsUri") -> bool:
+        call["gcs_uri"] = gcs_uri
+        call["field_name"] = field_name
+        return True
+
+    monkeypatch.setattr(ingest_module, "_gcs_blob_exists", _fake_exists)
+
+    payload = {"gcsUri": f"gs://summary-test/summaries/{job_id}.json"}
+    resp = client.post(
+        f"/ingest/internal/jobs/{job_id}/verify-artifact",
+        headers={"X-Internal-Event-Token": "secret-token"},
+        json=payload,
+    )
+
+    assert resp.status_code == 200
+    assert resp.json() == {
+        "job_id": job_id,
+        "gcs_uri": payload["gcsUri"],
+        "exists": True,
+    }
+    assert call == {"gcs_uri": payload["gcsUri"], "field_name": "gcsUri"}
+
+
+def test_internal_verify_artifact_returns_not_found(monkeypatch):
+    app, _ = _build_app(monkeypatch)
+    client = TestClient(app)
+    ingest = client.post("/ingest", json=_ingest_payload())
+    job_id = ingest.json()["job_id"]
+
+    monkeypatch.setattr(ingest_module, "_gcs_blob_exists", lambda *_args, **_kwargs: False)
+
+    resp = client.post(
+        f"/ingest/internal/jobs/{job_id}/verify-artifact",
+        headers={"X-Internal-Event-Token": "secret-token"},
+        json={"gcsUri": f"gs://summary-test/summaries/{job_id}.json"},
+    )
+
+    assert resp.status_code == 404
+    assert resp.json()["detail"] == "Artifact not found in GCS"
+
+
+def test_prepare_summary_input_persists_native_text_metadata(monkeypatch):
+    app, _ = _build_app(monkeypatch)
+    client = TestClient(app)
+    ingest = client.post("/ingest", json=_ingest_payload())
+    job_id = ingest.json()["job_id"]
+
+    monkeypatch.setattr(ingest_module, "_download_gcs_bytes", lambda _uri: b"%PDF-1.4")
+
+    prepared_payload = {
+        "text": "Readable native text.",
+        "pages": [{"page_number": 1, "text": "Readable native text."}],
+        "metadata": {"source": "test"},
+    }
+    monkeypatch.setattr(
+        ingest_module,
+        "prepare_summary_input_from_pdf_bytes",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            requires_ocr=False,
+            text_source="native_text",
+            route_reason="native_text_sufficient",
+            triage_metrics=SimpleNamespace(to_dict=lambda: {"page_count": 1}),
+            metadata_patch={
+                "summary_text_source": "native_text",
+                "summary_requires_ocr": False,
+                "summary_triage_reason": "native_text_sufficient",
+            },
+            to_payload=lambda base_metadata=None: {
+                **prepared_payload,
+                "metadata": {**(base_metadata or {}), **prepared_payload["metadata"]},
+            },
+        ),
+    )
+
+    upload_call: dict[str, object] = {}
+    monkeypatch.setattr(
+        ingest_module,
+        "_upload_json_to_gcs",
+        lambda gcs_uri, payload, **_kwargs: upload_call.update(
+            {"gcs_uri": gcs_uri, "payload": payload}
+        )
+        or gcs_uri,
+    )
+
+    resp = client.post(
+        f"/ingest/internal/jobs/{job_id}/prepare-summary-input",
+        headers={"X-Internal-Event-Token": "secret-token"},
+        json={
+            "gcsUri": "gs://intake-test/drive/file.pdf",
+            "outputGcsUri": f"gs://output-test/prepared-input/{job_id}.json",
+        },
+    )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["requires_ocr"] is False
+    assert body["text_source"] == "native_text"
+    assert body["summary_input_uri"] == f"gs://output-test/prepared-input/{job_id}.json"
+    assert upload_call["gcs_uri"] == f"gs://output-test/prepared-input/{job_id}.json"
+    job = app.state.state_store.get_job(job_id)
+    assert job is not None
+    assert job.metadata["summary_text_source"] == "native_text"
+    assert job.metadata["summary_requires_ocr"] is False
+    assert job.metadata["summary_input_uri"] == f"gs://output-test/prepared-input/{job_id}.json"
+
+
+def test_prepare_summary_input_returns_ocr_route_without_writing_payload(monkeypatch):
+    app, _ = _build_app(monkeypatch)
+    client = TestClient(app)
+    ingest = client.post("/ingest", json=_ingest_payload())
+    job_id = ingest.json()["job_id"]
+
+    monkeypatch.setattr(ingest_module, "_download_gcs_bytes", lambda _uri: b"%PDF-1.4")
+    monkeypatch.setattr(
+        ingest_module,
+        "prepare_summary_input_from_pdf_bytes",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            requires_ocr=True,
+            text_source="ocr",
+            route_reason="scan_or_image_only",
+            triage_metrics=SimpleNamespace(to_dict=lambda: {"page_count": 2}),
+            metadata_patch={
+                "summary_text_source": "ocr",
+                "summary_requires_ocr": True,
+                "summary_triage_reason": "scan_or_image_only",
+            },
+            to_payload=lambda base_metadata=None: {"metadata": dict(base_metadata or {})},
+        ),
+    )
+    monkeypatch.setattr(
+        ingest_module,
+        "_upload_json_to_gcs",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("native-text payload should not be written")
+        ),
+    )
+
+    resp = client.post(
+        f"/ingest/internal/jobs/{job_id}/prepare-summary-input",
+        headers={"X-Internal-Event-Token": "secret-token"},
+        json={"gcsUri": "gs://intake-test/drive/file.pdf"},
+    )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["requires_ocr"] is True
+    assert body["text_source"] == "ocr"
+    assert body["summary_input_uri"] is None
+    job = app.state.state_store.get_job(job_id)
+    assert job is not None
+    assert job.metadata["summary_text_source"] == "ocr"
+    assert job.metadata["summary_requires_ocr"] is True
 
 
 def test_internal_drive_upload_respects_write_to_drive_flag(monkeypatch):

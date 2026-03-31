@@ -17,6 +17,7 @@ from dataclasses import dataclass
 from pathlib import Path
 import json
 import logging
+import re
 import time
 import uuid
 from typing import Any, Dict, List, Optional
@@ -41,19 +42,75 @@ def _gcs_uri(bucket: str, prefix: str) -> str:
     return f"gs://{bucket}/{prefix}"
 
 
+def _extract_layout_text(document_text: str, layout: Dict[str, Any]) -> str:
+    if not isinstance(layout, dict):
+        return ""
+    anchor = layout.get("textAnchor")
+    if not isinstance(anchor, dict):
+        return layout.get("text", "") or ""
+    parts: list[str] = []
+    for segment in anchor.get("textSegments") or []:
+        if not isinstance(segment, dict):
+            continue
+        try:
+            start_index = int(segment.get("startIndex") or 0)
+            end_index = int(segment.get("endIndex") or 0)
+        except (TypeError, ValueError):
+            continue
+        if end_index <= start_index:
+            continue
+        parts.append(document_text[start_index:end_index])
+    return "".join(parts).strip()
+
+
+def _merge_layout_fragments(fragments: List[str]) -> List[str]:
+    merged: List[str] = []
+    for fragment in fragments:
+        cleaned = fragment.strip()
+        if not cleaned:
+            continue
+        if merged and not re.search(r"[.!?:]$", merged[-1]) and cleaned[:1].islower():
+            merged[-1] = f"{merged[-1]} {cleaned}".strip()
+            continue
+        merged.append(cleaned)
+    return merged
+
+
+def _extract_page_text(document_text: str, page: Dict[str, Any]) -> str:
+    if not isinstance(page, dict):
+        return ""
+
+    for key, joiner in (("paragraphs", "\n\n"), ("lines", "\n"), ("blocks", "\n\n")):
+        raw_items = page.get(key)
+        items = raw_items if isinstance(raw_items, list) else []
+        fragments = _merge_layout_fragments(
+            [
+                _extract_layout_text(document_text, item.get("layout") or {})
+                for item in items
+                if isinstance(item, dict)
+            ]
+        )
+        if fragments:
+            return joiner.join(fragments).strip()
+
+    layout = page.get("layout") or {}
+    if isinstance(layout, dict):
+        layout_text = _extract_layout_text(document_text, layout)
+        if layout_text:
+            return layout_text.strip()
+    page_text = page.get("text")
+    return str(page_text).strip() if isinstance(page_text, str) else ""
+
+
 def _normalise(doc: Dict[str, Any]) -> Dict[str, Any]:
     pages_out: List[Dict[str, Any]] = []
     pages = doc.get("pages") or []
+    full_text = doc.get("text") or ""
     for idx, p in enumerate(pages, start=1):
-        text = ""
-        if isinstance(p, dict):
-            layout = p.get("layout") or {}
-            if isinstance(layout, dict):
-                text = layout.get("text", "") or p.get("text", "")
-            else:  # pragma: no cover - defensive
-                text = p.get("text", "")
+        text = _extract_page_text(full_text, p) if isinstance(p, dict) else ""
         pages_out.append({"page_number": idx, "text": text})
-    full_text = doc.get("text") or " ".join(pg["text"] for pg in pages_out)
+    if not full_text:
+        full_text = " ".join(pg["text"] for pg in pages_out)
     return {"text": full_text, "pages": pages_out}
 
 

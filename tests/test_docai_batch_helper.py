@@ -3,7 +3,11 @@ from types import SimpleNamespace
 
 import pytest
 
-from src.services.docai_batch_helper import batch_process_documents_gcs, _BatchClients
+from src.services.docai_batch_helper import (
+    batch_process_documents_gcs,
+    _BatchClients,
+    _normalise,
+)
 from src.errors import OCRServiceError, ValidationError
 from src.config import get_config
 
@@ -190,3 +194,42 @@ def test_batch_failure_missing_output(monkeypatch, tmp_pdf):
         batch_process_documents_gcs(
             str(tmp_pdf), None, "pid", "us", project_id="proj", clients=clients
         )
+
+
+def test_batch_normalise_reconstructs_page_text_from_text_anchors():
+    full_text = "Assessment page one.\nPlan page two."
+
+    out = _normalise(
+        {
+            "text": full_text,
+            "pages": [
+                {
+                    "paragraphs": [
+                        {
+                            "layout": {
+                                "textAnchor": {
+                                    "textSegments": [{"startIndex": "0", "endIndex": "20"}]
+                                }
+                            }
+                        }
+                    ]
+                },
+                {
+                    "paragraphs": [
+                        {
+                            "layout": {
+                                "textAnchor": {
+                                    "textSegments": [{"startIndex": "21", "endIndex": str(len(full_text))}]
+                                }
+                            }
+                        }
+                    ]
+                },
+            ],
+        }
+    )
+
+    assert out["pages"] == [
+        {"page_number": 1, "text": "Assessment page one."},
+        {"page_number": 2, "text": "Plan page two."},
+    ]

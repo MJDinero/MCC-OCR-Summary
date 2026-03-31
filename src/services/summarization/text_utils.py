@@ -63,14 +63,26 @@ _DIAG_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
 )
 
 _VITAL_PATTERNS = {
-    "blood_pressure": re.compile(r"(?:blood\s+pressure|bp)\s*[:\-=]?\s*(\d{2,3}/\d{2,3})", re.IGNORECASE),
-    "heart_rate": re.compile(r"(?:heart\s+rate|pulse|hr)\s*[:\-=]?\s*(\d{2,3})", re.IGNORECASE),
-    "resp_rate": re.compile(r"(?:resp(?:iratory)?\s+rate|rr)\s*[:\-=]?\s*(\d{1,2})", re.IGNORECASE),
-    "temperature": re.compile(
-        r"(?:temp(?:erature)?|t)\s*[:\-=]?\s*(\d{2,3}(?:\.\d+)?)\s*([CF]|°F|°C)?",
+    "blood_pressure": re.compile(
+        r"\b(?:blood\s+pressure|bp)\b\s*[:\-=]?\s*(\d{2,3}/\d{2,3})\b",
         re.IGNORECASE,
     ),
-    "spo2": re.compile(r"(?:spo2|o2\s*(?:sat|saturation))\s*[:\-=]?\s*(\d{2,3})%?", re.IGNORECASE),
+    "heart_rate": re.compile(
+        r"\b(?:heart\s+rate|pulse|hr)\b\s*[:\-=]?\s*(\d{2,3})\b",
+        re.IGNORECASE,
+    ),
+    "resp_rate": re.compile(
+        r"\b(?:resp(?:iratory)?\s+rate|rr)\b\s*[:\-=]?\s*(\d{1,2})\b",
+        re.IGNORECASE,
+    ),
+    "temperature": re.compile(
+        r"\b(?:temp(?:erature)?)\b\s*[:\-=]?\s*(\d{2,3}(?:\.\d+)?)\s*([CF]|°F|°C)?\b",
+        re.IGNORECASE,
+    ),
+    "spo2": re.compile(
+        r"\b(?:spo2|o2\s*(?:sat|saturation))\b\s*[:\-=]?\s*(\d{2,3})%?\b",
+        re.IGNORECASE,
+    ),
 }
 _VITAL_TOKENS = (
     "bp",

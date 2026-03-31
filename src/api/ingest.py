@@ -30,6 +30,7 @@ from src.services.pipeline import (
     extract_trace_id,
     job_public_view,
 )
+from src.services.summary_input_preparer import prepare_summary_input_from_pdf_bytes
 from src.utils.logging_utils import structured_log
 
 router = APIRouter()
@@ -98,6 +99,23 @@ class DriveUploadRequest(BaseModel):
 
     pdf_uri: str | None = Field(default=None, alias="pdfUri")
     report_name: str | None = Field(default=None, alias="reportName")
+
+    model_config = {"populate_by_name": True}
+
+
+class ArtifactVerificationRequest(BaseModel):
+    """Internal request payload for verifying a generated GCS artifact."""
+
+    gcs_uri: str = Field(alias="gcsUri")
+
+    model_config = {"populate_by_name": True}
+
+
+class SummaryInputPreparationRequest(BaseModel):
+    """Internal request payload for native-text triage and summary input prep."""
+
+    gcs_uri: str = Field(alias="gcsUri")
+    output_gcs_uri: str | None = Field(default=None, alias="outputGcsUri")
 
     model_config = {"populate_by_name": True}
 
@@ -224,26 +242,67 @@ def _require_internal_event_token(request: Request) -> None:
         raise HTTPException(status_code=401, detail="Missing or invalid internal token")
 
 
-def _parse_gcs_uri(gcs_uri: str) -> tuple[str, str]:
+def _parse_gcs_uri(gcs_uri: str, *, field_name: str = "gcsUri") -> tuple[str, str]:
     token = gcs_uri.strip()
     if not token.startswith("gs://"):
-        raise ValueError("pdfUri must start with gs://")
+        raise ValueError(f"{field_name} must start with gs://")
     bucket_and_name = token.removeprefix("gs://")
     bucket, sep, object_name = bucket_and_name.partition("/")
     if not bucket or not sep or not object_name:
-        raise ValueError("pdfUri must be gs://bucket/object")
+        raise ValueError(f"{field_name} must be gs://bucket/object")
     return bucket, object_name
 
 
-def _download_pdf_from_gcs(gcs_uri: str) -> bytes:
+def _download_gcs_bytes(gcs_uri: str, *, field_name: str = "gcsUri") -> bytes:
     try:
         from google.cloud import storage  # type: ignore
     except Exception as exc:  # pragma: no cover - optional dependency
         raise RuntimeError(f"google-cloud-storage unavailable: {exc}") from exc
 
-    bucket_name, object_name = _parse_gcs_uri(gcs_uri)
+    bucket_name, object_name = _parse_gcs_uri(gcs_uri, field_name=field_name)
     blob = storage.Client().bucket(bucket_name).blob(object_name)
     return blob.download_as_bytes()
+
+
+def _download_pdf_from_gcs(gcs_uri: str) -> bytes:
+    return _download_gcs_bytes(gcs_uri, field_name="pdfUri")
+
+
+def _upload_json_to_gcs(
+    gcs_uri: str,
+    payload: Mapping[str, Any],
+    *,
+    field_name: str = "outputGcsUri",
+    if_generation_match: int | None = 0,
+) -> str:
+    try:
+        from google.api_core import exceptions as gexc  # type: ignore
+        from google.cloud import storage  # type: ignore
+    except Exception as exc:  # pragma: no cover - optional dependency
+        raise RuntimeError(f"google-cloud-storage unavailable: {exc}") from exc
+
+    bucket_name, object_name = _parse_gcs_uri(gcs_uri, field_name=field_name)
+    blob = storage.Client().bucket(bucket_name).blob(object_name)
+    upload_kwargs: dict[str, Any] = {"content_type": "application/json"}
+    if if_generation_match is not None:
+        upload_kwargs["if_generation_match"] = if_generation_match
+    body = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+    try:
+        blob.upload_from_string(body, **upload_kwargs)
+    except gexc.PreconditionFailed:
+        pass
+    return f"gs://{bucket_name}/{object_name}"
+
+
+def _gcs_blob_exists(gcs_uri: str, *, field_name: str = "gcsUri") -> bool:
+    try:
+        from google.cloud import storage  # type: ignore
+    except Exception as exc:  # pragma: no cover - optional dependency
+        raise RuntimeError(f"google-cloud-storage unavailable: {exc}") from exc
+
+    bucket_name, object_name = _parse_gcs_uri(gcs_uri, field_name=field_name)
+    blob = storage.Client().bucket(bucket_name).blob(object_name)
+    return bool(blob.exists())
 
 
 @router.post("", tags=["ingest"])
@@ -407,12 +466,22 @@ async def ingest(request: Request):
             PipelineStatus.FAILED,
             stage="WORKFLOW_DISPATCH",
             message=str(exc),
-            extra={"error": str(exc)},
-            updates={"last_error": {"stage": "workflow_dispatch", "error": str(exc)}},
+            extra={"error_type": type(exc).__name__},
+            updates={
+                "last_error": {
+                    "stage": "workflow_dispatch",
+                    "error": str(exc),
+                    "error_type": type(exc).__name__,
+                }
+            },
         )
         _INGEST_LOG.exception(
             "workflow_dispatch_failed",
-            extra={"job_id": job.job_id, "error": str(exc), "trace_id": job.trace_id},
+            extra={
+                "job_id": job.job_id,
+                "error_type": type(exc).__name__,
+                "trace_id": job.trace_id,
+            },
         )
         raise HTTPException(
             status_code=502, detail="Failed to dispatch workflow"
@@ -449,6 +518,120 @@ def _merge_metadata(base: Dict[str, Any], patch: Dict[str, Any]) -> Dict[str, An
     merged = dict(base)
     merged.update(patch)
     return merged
+
+
+@router.post("/internal/jobs/{job_id}/verify-artifact", tags=["ingest"])
+async def verify_job_artifact(
+    request: Request, job_id: str, payload: ArtifactVerificationRequest
+):
+    _require_internal_event_token(request)
+
+    state_store: PipelineStateStore = request.app.state.state_store
+    job = state_store.get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    gcs_uri = payload.gcs_uri.strip()
+    if not gcs_uri:
+        raise HTTPException(status_code=400, detail="gcsUri is required")
+
+    try:
+        exists = _gcs_blob_exists(gcs_uri)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(
+            status_code=502, detail="Failed to verify artifact in GCS"
+        ) from exc
+
+    if not exists:
+        raise HTTPException(status_code=404, detail="Artifact not found in GCS")
+
+    return JSONResponse({"job_id": job_id, "gcs_uri": gcs_uri, "exists": True})
+
+
+@router.post("/internal/jobs/{job_id}/prepare-summary-input", tags=["ingest"])
+async def prepare_summary_input(
+    request: Request, job_id: str, payload: SummaryInputPreparationRequest
+):
+    _require_internal_event_token(request)
+
+    state_store: PipelineStateStore = request.app.state.state_store
+    job = state_store.get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    gcs_uri = payload.gcs_uri.strip()
+    if not gcs_uri:
+        raise HTTPException(status_code=400, detail="gcsUri is required")
+
+    try:
+        pdf_bytes = _download_gcs_bytes(gcs_uri)
+    except (RuntimeError, ValueError) as exc:
+        raise HTTPException(
+            status_code=502, detail="Failed to download source PDF from GCS"
+        ) from exc
+
+    prepared = prepare_summary_input_from_pdf_bytes(
+        pdf_bytes,
+        job_metadata={
+            "job_id": job_id,
+            "object_uri": job.object_uri,
+            "document_id": job.request_id,
+            "source": job.metadata.get("source") or "workflow",
+        },
+    )
+
+    summary_input_uri: str | None = None
+    if not prepared.requires_ocr:
+        raw_output_uri = payload.output_gcs_uri.strip() if payload.output_gcs_uri else ""
+        if not raw_output_uri:
+            raise HTTPException(status_code=400, detail="outputGcsUri is required")
+        try:
+            summary_input_uri = _upload_json_to_gcs(
+                raw_output_uri,
+                prepared.to_payload(base_metadata=job.metadata),
+            )
+        except (RuntimeError, ValueError) as exc:
+            raise HTTPException(
+                status_code=502, detail="Failed to persist prepared summary input"
+            ) from exc
+
+    metadata_patch = dict(prepared.metadata_patch)
+    if summary_input_uri:
+        metadata_patch["summary_input_uri"] = summary_input_uri
+
+    try:
+        state_store.update_fields(
+            job_id,
+            metadata=_merge_metadata(dict(job.metadata), metadata_patch),
+        )
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    structured_log(
+        _INGEST_LOG,
+        logging.INFO,
+        "summary_input_prepared",
+        job_id=job_id,
+        trace_id=job.trace_id,
+        request_id=job.request_id,
+        requires_ocr=prepared.requires_ocr,
+        summary_text_source=prepared.text_source,
+        triage_reason=prepared.route_reason,
+        summary_input_uri=summary_input_uri,
+    )
+
+    return JSONResponse(
+        {
+            "job_id": job_id,
+            "requires_ocr": prepared.requires_ocr,
+            "text_source": prepared.text_source,
+            "triage_reason": prepared.route_reason,
+            "triage_metrics": prepared.triage_metrics.to_dict(),
+            "summary_input_uri": summary_input_uri,
+        }
+    )
 
 
 @router.post("/internal/jobs/{job_id}/upload-report", tags=["ingest"])

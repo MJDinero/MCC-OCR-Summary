@@ -121,3 +121,32 @@ def test_stage_marker_emits_start_and_completion_records():
         for existing in original_handlers:
             logger.addHandler(existing)
         logger.propagate = original_propagate
+
+
+def test_json_formatter_redacts_exception_message_bodies():
+    logger = logging.getLogger("exception-redaction-test")
+    original_handlers: List[logging.Handler] = list(logger.handlers)
+    original_propagate = logger.propagate
+    buffer = io.StringIO()
+    handler = logging.StreamHandler(buffer)
+    handler.setFormatter(JsonFormatter())
+    try:
+        for existing in list(logger.handlers):
+            logger.removeHandler(existing)
+        logger.addHandler(handler)
+        logger.setLevel(logging.ERROR)
+        logger.propagate = False
+        try:
+            raise RuntimeError("Patient Name: Jordan Carter")
+        except RuntimeError:
+            logger.exception("unit_failure")
+        handler.flush()
+        payload = json.loads(buffer.getvalue().strip())
+        assert "RuntimeError" in payload["exc_info"]
+        assert "Jordan Carter" not in payload["exc_info"]
+        assert "Patient Name" not in payload["exc_info"]
+    finally:
+        logger.removeHandler(handler)
+        for existing in original_handlers:
+            logger.addHandler(existing)
+        logger.propagate = original_propagate

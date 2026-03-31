@@ -96,10 +96,26 @@ def test_cloudbuild_sets_fail_closed_pipeline_env_vars():
         "SUMMARY_BUCKET",
         "DOC_AI_LOCATION",
         "DOC_AI_PROCESSOR_ID",
+        "SUMMARY_STRATEGY",
+        "SUMMARY_CHUNKED_MODEL",
+        "SUMMARY_ONE_SHOT_MODEL",
+        "SUMMARY_ONE_SHOT_REASONING_EFFORT",
+        "SUMMARY_ONE_SHOT_TOKEN_THRESHOLD",
+        "SUMMARY_ONE_SHOT_MAX_PAGES",
+        "SUMMARY_OCR_NOISE_RATIO_THRESHOLD",
+        "SUMMARY_NATIVE_TEXT_MIN_CHARS",
+        "SUMMARY_NATIVE_TEXT_MIN_PAGE_RATIO",
+        "SUMMARY_NATIVE_TEXT_MIN_AVG_PAGE_CHARS",
+        "SUMMARY_NATIVE_TEXT_MIN_ALPHA_RATIO",
+        "SUMMARY_NATIVE_TEXT_MAX_SHORT_PAGE_RATIO",
     }
     assert required_runtime_keys.issubset(env_map)
     assert all(env_map[key] != "" for key in required_runtime_keys)
     assert "INTERNAL_EVENT_TOKEN" in secret_map
+    assert env_map["SUMMARY_STRATEGY"] == "auto"
+    assert env_map["SUMMARY_CHUNKED_MODEL"] == "gpt-4.1-mini"
+    assert env_map["SUMMARY_ONE_SHOT_MODEL"] == "gpt-5.4"
+    assert env_map["SUMMARY_ONE_SHOT_REASONING_EFFORT"] == "none"
 
     substitutions = doc.get("substitutions", {})
     assert substitutions["_PIPELINE_SERVICE_BASE_URL"]
@@ -139,9 +155,9 @@ def test_cloudbuild_deploys_current_summary_jobs() -> None:
     )
     pdf_step = _cloudbuild_gcloud_step("run", "jobs", "deploy", "$_PDF_JOB_NAME")
 
-    for step, module_name in (
-        (summariser_step, "src.services.summariser_refactored"),
-        (pdf_step, "src.services.pdf_writer_refactored"),
+    for step, module_name, task_timeout in (
+        (summariser_step, "src.services.summariser_refactored", "10800s"),
+        (pdf_step, "src.services.pdf_writer_refactored", "900s"),
     ):
         args = step["args"]
         assert "--image=$_IMAGE_REPO:$_TAG" in args
@@ -150,11 +166,12 @@ def test_cloudbuild_deploys_current_summary_jobs() -> None:
         assert "--service-account=$_JOB_SERVICE_ACCOUNT" in args
         assert "--tasks=1" in args
         assert "--max-retries=3" in args
-        assert "--task-timeout=900s" in args
+        assert f"--task-timeout={task_timeout}" in args
         assert "--cpu=1" in args
         assert "--memory=2Gi" in args
-        assert "--command=python" in args
-        assert f"--args=-m,{module_name}" in args
+        assert f"--command=python,-m,{module_name}" in args
+        assert "--args=" in args
+        assert all(not arg.startswith("--args=-m,") for arg in args)
 
         env_map = _parse_arg_pairs(args, "--set-env-vars=")
         assert env_map["PROJECT_ID"] == "$_PROJECT_ID"
@@ -165,6 +182,14 @@ def test_cloudbuild_deploys_current_summary_jobs() -> None:
         assert env_map["SUMMARY_BUCKET"] == "mcc-output"
         assert env_map["OUTPUT_GCS_BUCKET"] == "mcc-output"
         assert env_map["SUMMARY_SCHEMA_VERSION"] == "2025-10-01"
+        if step is summariser_step:
+            assert env_map["SUMMARY_STRATEGY"] == "auto"
+            assert env_map["SUMMARY_CHUNKED_MODEL"] == "gpt-4.1-mini"
+            assert env_map["SUMMARY_ONE_SHOT_MODEL"] == "gpt-5.4"
+            assert env_map["SUMMARY_ONE_SHOT_REASONING_EFFORT"] == "none"
+            assert env_map["SUMMARY_ONE_SHOT_TOKEN_THRESHOLD"] == "120000"
+            assert env_map["SUMMARY_ONE_SHOT_MAX_PAGES"] == "80"
+            assert env_map["SUMMARY_OCR_NOISE_RATIO_THRESHOLD"] == "0.18"
 
     summariser_secrets = _parse_arg_pairs(
         summariser_step["args"], "--update-secrets="
@@ -187,6 +212,13 @@ def test_workflow_internal_event_callbacks_use_ingest_prefix():
 def test_workflow_includes_internal_drive_upload_callback():
     workflow_text = pathlib.Path("workflows/pipeline.yaml").read_text()
     assert '"/ingest/internal/jobs/" + jobId + "/upload-report"' in workflow_text
+
+
+def test_workflow_includes_summary_input_preparation_callback():
+    workflow_text = pathlib.Path("workflows/pipeline.yaml").read_text()
+    assert '"/ingest/internal/jobs/" + jobId + "/prepare-summary-input"' in workflow_text
+    assert "requiresOcr" in workflow_text
+    assert "summaryInputUri" in workflow_text
 
 
 def test_workflow_yaml_is_parseable():
@@ -223,3 +255,61 @@ def test_workflow_persists_pdf_uri_and_report_file_id():
     assert "status: UPLOADED" in workflow_text
     assert "metadataPatch:" in workflow_text
     assert "report_file_id: ${driveUploadResult.body.report_file_id}" in workflow_text
+
+
+def test_workflow_fails_closed_when_async_jobs_fail():
+    workflow_text = pathlib.Path("workflows/pipeline.yaml").read_text()
+    assert "googleapis.run.v2.projects.locations.jobs.executions.get" in workflow_text
+    assert '"/ingest/internal/jobs/" + jobId + "/verify-artifact"' in workflow_text
+    assert "Summariser execution failed:" in workflow_text
+    assert "Summariser execution cancelled:" in workflow_text
+    assert "Summariser execution did not succeed:" in workflow_text
+    assert "PDF execution failed:" in workflow_text
+    assert "PDF execution cancelled:" in workflow_text
+    assert "PDF execution did not succeed:" in workflow_text
+    assert 'default(map.get(summariserStatus, "failedCount"), 0)' in workflow_text
+    assert 'default(map.get(summariserStatus, "succeededCount"), 0)' in workflow_text
+    assert 'default(map.get(summariserStatus, "cancelledCount"), 0)' in workflow_text
+    assert 'default(map.get(pdfStatus, "failedCount"), 0)' in workflow_text
+    assert 'default(map.get(pdfStatus, "succeededCount"), 0)' in workflow_text
+    assert 'default(map.get(pdfStatus, "cancelledCount"), 0)' in workflow_text
+    assert 'gcsUri: ${"gs://" + summaryBucket + "/summaries/" + jobId + ".json"}' in workflow_text
+    assert "gcsUri: ${finalPdfUri}" in workflow_text
+    assert 'raise: \'${"Pipeline failed after markFailed: " + text.decode(json.encode(e))}\'' in workflow_text
+
+
+def test_workflow_verifies_artifacts_before_follow_on_callbacks():
+    workflow_text = pathlib.Path("workflows/pipeline.yaml").read_text()
+
+    assert workflow_text.index("- verifySummaryArtifact:") < workflow_text.index(
+        "- markSupervisorDone:"
+    )
+    assert workflow_text.index("- verifyPdfArtifact:") < workflow_text.index(
+        "- markPdfDone:"
+    )
+    assert workflow_text.index("- rethrowFailure:") < workflow_text.index("- complete:")
+
+
+def test_workflow_retries_summary_artifact_before_pdf_stage():
+    workflow_text = pathlib.Path("workflows/pipeline.yaml").read_text()
+
+    assert "summaryArtifactAttempts" in workflow_text
+    assert "Summary artifact missing after summariser success:" in workflow_text
+    assert workflow_text.count('"/ingest/internal/jobs/" + jobId + "/verify-artifact"') >= 2
+    assert workflow_text.index("- initSummaryArtifactWait:") < workflow_text.index(
+        "- markSupervisorDone:"
+    )
+    assert workflow_text.index("- sleepSummaryArtifact:") < workflow_text.index(
+        "- markSupervisorDone:"
+    )
+    assert workflow_text.index("- retrySummaryArtifactVerification:") < workflow_text.index(
+        "- markSupervisorDone:"
+    )
+
+
+def test_workflow_extends_summariser_timeouts_for_large_docs():
+    workflow_text = pathlib.Path("workflows/pipeline.yaml").read_text()
+
+    assert 'timeout: "10800s"' in workflow_text
+    assert "connector_params:" in workflow_text
+    assert "timeout: 21600" in workflow_text

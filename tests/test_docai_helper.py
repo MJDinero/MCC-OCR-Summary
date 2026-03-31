@@ -79,6 +79,49 @@ def test_success_first_try():
     assert client.calls == 1
 
 
+def test_success_reconstructs_page_text_from_text_anchors():
+    full_text = "Clinical note page one.\nPlan page two."
+    client = DummyClient(
+        [
+            {
+                "text": full_text,
+                "pages": [
+                    {
+                        "paragraphs": [
+                            {
+                                "layout": {
+                                    "textAnchor": {
+                                        "textSegments": [{"startIndex": "0", "endIndex": "23"}]
+                                    }
+                                }
+                            }
+                        ]
+                    },
+                    {
+                        "paragraphs": [
+                            {
+                                "layout": {
+                                    "textAnchor": {
+                                        "textSegments": [{"startIndex": "24", "endIndex": str(len(full_text))}]
+                                    }
+                                }
+                            }
+                        ]
+                    },
+                ],
+            }
+        ]
+    )
+    svc = OCRService("pid", config=make_cfg(), client_factory=lambda _ep: client)
+
+    out = svc.process(VALID_PDF)
+
+    assert out["pages"] == [
+        {"page_number": 1, "text": "Clinical note page one."},
+        {"page_number": 2, "text": "Plan page two."},
+    ]
+
+
 def test_retry_then_success():
     client = DummyClient(
         [

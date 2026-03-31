@@ -27,6 +27,8 @@ def test_refactored_cli_dry_run(tmp_path) -> None:
     assert "Patient Information" not in data
     assert "Billing Highlights" not in data
     assert "Legal / Notes" not in data
+    assert data["metadata"]["summary_strategy_requested"] == "auto"
+    assert data["metadata"]["summary_strategy_used"] == "one_shot"
     contract = SummaryContract.from_mapping(data)
     medical_summary = contract.as_text()
     assert len(medical_summary) >= 400
@@ -34,6 +36,36 @@ def test_refactored_cli_dry_run(tmp_path) -> None:
     assert "Provider Seen:" in medical_summary
     assert "Reason for Visit:" in medical_summary
     assert "Clinical Findings:" in medical_summary
+
+
+def test_refactored_cli_dry_run_routes_large_payload_to_chunked(tmp_path) -> None:
+    payload_path = tmp_path / "large_ocr.json"
+    output_path = tmp_path / "summary.json"
+    large_text = (
+        "Patient seen by Dr. Provider1 for lumbar pain, diagnosis DX-01, and medication Med-01. "
+        "Physical therapy phase 1 continues with reassessment planned in six weeks. "
+    ) * 500
+    payload_path.write_text(
+        json.dumps({"text": large_text, "metadata": {"facility": "Riverside Clinic"}}),
+        encoding="utf-8",
+    )
+
+    ref_mod._cli(
+        [
+            "--input",
+            str(payload_path),
+            "--output",
+            str(output_path),
+            "--dry-run",
+            "--one-shot-token-threshold",
+            "200",
+        ]
+    )
+
+    data = json.loads(output_path.read_text(encoding="utf-8"))
+    assert data["metadata"]["summary_strategy_requested"] == "auto"
+    assert data["metadata"]["summary_strategy_selected"] == "chunked"
+    assert data["metadata"]["summary_strategy_used"] == "chunked"
 
 
 def test_refactored_cli_logs_summary_artifact_context(monkeypatch, tmp_path) -> None:
