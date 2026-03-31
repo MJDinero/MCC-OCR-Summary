@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# ruff: noqa: E402
 """Lightweight PDF validator for MCC summaries.
 
 The script verifies that the rendered PDF has the expected number of pages and
@@ -9,12 +10,11 @@ intended to be used as a fast preflight guard before running larger pipelines.
 from __future__ import annotations
 
 import argparse
-import sys
 import json
+import sys
 from dataclasses import dataclass
 from pathlib import Path
-import sys
-from typing import Iterable, Sequence, Any, Mapping
+from typing import Any, Iterable, Mapping, Sequence
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:

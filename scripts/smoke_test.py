@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# ruff: noqa: E402
 """Lightweight smoke test for the refactored summariser.
 
 Generates a synthetic OCR payload, runs through RefactoredSummariser with a
@@ -6,8 +7,8 @@ stub backend (no OpenAI call) and asserts SummaryContract structure."""
 from __future__ import annotations
 
 import importlib.util
-from pathlib import Path
 import sys
+from pathlib import Path
 from typing import Sequence
 
 ROOT = Path(__file__).resolve().parents[1]

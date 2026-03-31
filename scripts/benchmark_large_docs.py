@@ -1,16 +1,17 @@
 #!/usr/bin/env python3
+# ruff: noqa: E402
 """Benchmark MCC OCR Summary pipeline on synthetic large documents."""
 
 from __future__ import annotations
 
 import argparse
 import asyncio
-import time
-from pathlib import Path
 import sys
+import time
 from dataclasses import dataclass
+from pathlib import Path
 from statistics import mean
-from typing import Any, AsyncIterator, Iterable, Sequence
+from typing import AsyncIterator, Sequence
 
 # Ensure the repository root is on sys.path for script execution.
 PROJECT_ROOT = Path(__file__).resolve().parents[1]

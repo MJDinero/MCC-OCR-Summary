@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# ruff: noqa: E402
 """Offline benchmark harness for one-shot-first summary routing."""
 
 from __future__ import annotations
